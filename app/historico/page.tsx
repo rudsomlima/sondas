@@ -418,27 +418,15 @@ export default function HistoricoPage() {
 
                     {isOpen && launches.length > 0 && (
                       <div className="px-5 pb-4 bg-[#111111]">
-                        <div className="overflow-x-auto">
-                          <table className="w-full text-sm mt-1">
-                            <thead>
-                              <tr className="text-xs text-gray-600 border-b border-[#2a2a2a]">
-                                <th className="text-left pb-2 font-medium">Data</th>
-                                <th className="text-left pb-2 font-medium">Hora (GMT-3)</th>
-                                <th className="text-left pb-2 font-medium">Hora (UTC)</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {launches.map((l, i) => (
-                                <tr key={i} className="border-b border-[#1a1a1a]">
-                                  <td className="py-1.5 text-gray-400">
-                                    {new Date(l.date + 'T12:00:00').toLocaleDateString('pt-BR')}
-                                  </td>
-                                  <td className="py-1.5 mono text-white">{l.time_local}</td>
-                                  <td className="py-1.5 mono text-gray-500">{l.time_utc}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
+                        <div className="grid grid-cols-3 gap-3 mt-3">
+                          {launches.map((l, i) => (
+                            <div key={i} className="p-3 bg-[#1a1a1a] border border-[#2a2a2a] rounded text-xs">
+                              <div className="text-gray-500 text-[11px] mb-1">
+                                {new Date(l.date + 'T12:00:00').toLocaleDateString('pt-BR', { month: 'short', day: 'numeric' })}
+                              </div>
+                              <div className="mono text-white font-semibold">{l.time_local}</div>
+                            </div>
+                          ))}
                         </div>
                       </div>
                     )}
