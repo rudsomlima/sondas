@@ -38,11 +38,20 @@ async function fetchWithTimeout(url: string, timeout: number): Promise<string> {
 
 async function fetchSounding(year: number, month: number): Promise<string> {
   const cacheKey = `sounding_${year}_${String(month).padStart(2, '0')}`
+  const now = new Date()
+  const isCurrentMonth = year === now.getFullYear() && month === now.getMonth() + 1
   
-  // Verifica cache em memória (válido por 1 hora)
+  // Verifica cache em memória
   const cached = memoryCache.get(cacheKey)
-  if (cached && Date.now() - cached.timestamp < 3600000) {
-    return cached.data
+  if (cached) {
+    // Mês atual: válido por 1 hora
+    if (isCurrentMonth && Date.now() - cached.timestamp < 3600000) {
+      return cached.data
+    }
+    // Meses passados: permanente
+    if (!isCurrentMonth) {
+      return cached.data
+    }
   }
 
   const url = `https://weather.uwyo.edu/cgi-bin/sounding?region=${REGION}&TYPE=TEXT%3ALIST&YEAR=${year}&MONTH=${String(month).padStart(2, '0')}&FROM=0100&TO=3123&STNM=${STATION_ID}`
@@ -71,12 +80,12 @@ interface Launch {
 function validateLaunch(launch: Launch): boolean {
   // Validação básica
   return (
-    launch.date && /^\d{4}-\d{2}-\d{2}$/.test(launch.date) &&
-    launch.time_local && /^\d{2}:\d{2}$/.test(launch.time_local) &&
-    launch.time_utc && /^\d{2}:\d{2}Z$/.test(launch.time_utc) &&
-    launch.day >= 1 && launch.day <= 31 &&
-    launch.month >= 1 && launch.month <= 12 &&
-    launch.year >= 2020 && launch.year <= 2100
+    typeof launch.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(launch.date) &&
+    typeof launch.time_local === 'string' && /^\d{2}:\d{2}$/.test(launch.time_local) &&
+    typeof launch.time_utc === 'string' && /^\d{2}:\d{2}Z$/.test(launch.time_utc) &&
+    typeof launch.day === 'number' && launch.day >= 1 && launch.day <= 31 &&
+    typeof launch.month === 'number' && launch.month >= 1 && launch.month <= 12 &&
+    typeof launch.year === 'number' && launch.year >= 2020 && launch.year <= 2100
   )
 }
 
