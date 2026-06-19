@@ -9,12 +9,27 @@ Dados extraídos em tempo real do servidor da [University of Wyoming](https://we
 - ✅ **Status do dia** — verifica se houve lançamento de balão sonda no dia corrente
 - 📅 **Histórico anual** — lançamentos agrupados por mês com gráfico de barras
 - ⚙️ **Configurações** — ajuste de estação, região e período de extração
+- 💾 **Cache persistente** — dados armazenados localmente (localStorage) e em memória do servidor
+- 🗑️ **Exclusão por mês/ano** — remova dados do histórico como desejar
+
+## Estratégia de Cache
+
+### Servidor (Vercel)
+- **Mês atual**: cache em memória válido por **1 hora** (sempre consulta Wyoming após 1h)
+- **Meses anteriores**: cache em memória **permanente** (nunca expira durante sessão)
+- Reduz latência e custos de requisições à Wyoming
+
+### Cliente (Browser)
+- **localStorage**: armazena histórico anual completo
+- Sobrevive a recargas, closes, mudança de aba
+- Exportável como JSON para backup
+- Pode ser deletado por mês ou ano inteiro
 
 ## Stack
 
-- **Frontend:** Next.js 14 + TypeScript + Tailwind CSS
-- **Backend:** Next.js API Routes (Edge-compatible)
-- **Gráficos:** Recharts
+- **Frontend:** Next.js 15 + TypeScript + Tailwind CSS + Recharts
+- **Backend:** Next.js API Routes com cache em memória
+- **Persistência:** localStorage (browser) + memoryCache (servidor)
 - **Deploy:** Vercel
 - **Dados:** University of Wyoming Radiosonde Archive
 
@@ -42,6 +57,14 @@ Acesse em: http://localhost:3000
 | Nome    | Natal Aeroporto |
 | Região  | naconf |
 | Fuso    | GMT-3  |
+
+## Robustez
+
+- ✅ **Timeout de 15s** — requisições longas são abortadas
+- ✅ **Validação de dados** — verifica datas, horas, estrutura
+- ✅ **Remoção de duplicatas** — compara por `date + time_utc`
+- ✅ **Erro parcial** — falha em um mês não quebra o ano inteiro
+- ✅ **Confirmação de exclusão** — aviso antes de deletar dados
 
 ## Fonte dos dados
 
