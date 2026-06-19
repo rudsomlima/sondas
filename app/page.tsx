@@ -213,7 +213,6 @@ export default function HomePage() {
                     <tr className="text-xs text-gray-600 border-b border-[#2a2a2a]">
                       <th className="text-left pb-2 font-medium">Data</th>
                       <th className="text-left pb-2 font-medium">Hora (GMT-3)</th>
-                      <th className="text-left pb-2 font-medium">Hora (UTC)</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -231,7 +230,6 @@ export default function HomePage() {
                           )}
                         </td>
                         <td className="py-2 mono text-white font-medium">{l.time_local}</td>
-                        <td className="py-2 mono text-gray-500">{l.time_utc}</td>
                       </tr>
                     ))}
                   </tbody>
