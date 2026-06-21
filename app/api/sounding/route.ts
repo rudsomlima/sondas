@@ -167,17 +167,23 @@ function parseLaunches(html: string, year: number, month: number): Launch[] {
 }
 
 /**
- * Remove do YearStore qualquer mês posterior ao mês corrente (defesa contra
- * dados de meses futuros que possam ter sido gravados por engano, ex.: por
- * um cálculo de "hoje" incorreto em algum deploy anterior).
+ * Limpa o YearStore de entradas inválidas que podem ter sido gravadas por
+ * versões antigas do código:
+ * - lançamentos de outro ano (ex.: um "31/Dez" de virada de ano armazenado
+ *   por engano dentro do arquivo do ano seguinte, antes da correção de
+ *   fronteira de mês/ano existir);
+ * - meses posteriores ao mês corrente (defesa contra cálculo de "hoje"
+ *   incorreto em algum deploy anterior).
  */
-function sanitizeFutureMonths(store: YearStore, currentYear: number, currentMonth: number): boolean {
-  if (store.year < currentYear) return false
-  const maxMonth = store.year === currentYear ? currentMonth : 0
+function sanitizeStore(store: YearStore, currentYear: number, currentMonth: number): boolean {
+  const maxMonth = store.year < currentYear ? 12 : store.year === currentYear ? currentMonth : 0
   const before = store.launches.length
-  store.launches = store.launches.filter(l => l.month <= maxMonth)
-  store.monthsComplete = store.monthsComplete.filter(m => m <= maxMonth)
-  return store.launches.length !== before
+  store.launches = store.launches.filter(l => l.year === store.year && l.month <= maxMonth)
+  const changed = store.launches.length !== before
+  // Algo de inválido foi removido: força um resync (ainda incremental, a
+  // partir do que restou de cada mês) para reparar o dado em vez de só apagar.
+  if (changed) store.monthsComplete = []
+  return changed
 }
 
 /**
@@ -254,7 +260,7 @@ export async function GET(request: NextRequest) {
 
       const isCurrentMonth = year === currentYear && month === currentMonth
       const store = (await readYearStore(year)) ?? { year, launches: [] as Launch[], monthsComplete: [] as number[], updatedAt: 0 }
-      const sanitized = sanitizeFutureMonths(store, currentYear, currentMonth)
+      const sanitized = sanitizeStore(store, currentYear, currentMonth)
       const { launches, updated } = await syncMonth(store, year, month, isCurrentMonth)
 
       if (updated || sanitized) {
@@ -283,7 +289,7 @@ export async function GET(request: NextRequest) {
 
       const maxMonth = year === currentYear ? currentMonth : 12
       const store = (await readYearStore(year)) ?? { year, launches: [] as Launch[], monthsComplete: [] as number[], updatedAt: 0 }
-      let changed = sanitizeFutureMonths(store, currentYear, currentMonth)
+      let changed = sanitizeStore(store, currentYear, currentMonth)
 
       for (let m = 1; m <= maxMonth; m++) {
         const isCurrentMonth = year === currentYear && m === currentMonth
