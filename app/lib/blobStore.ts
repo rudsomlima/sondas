@@ -1,10 +1,19 @@
 /**
  * Persistência do histórico anual no Vercel Blob Storage.
  * Um arquivo JSON por ano, atualizado incrementalmente.
- * Requer a env var BLOB_READ_WRITE_TOKEN (criada ao conectar um Blob Store
- * ao projeto no painel da Vercel). Sem ela, as funções abaixo são no-op.
+ *
+ * A Vercel autentica o SDK de duas formas: a antiga (BLOB_READ_WRITE_TOKEN)
+ * ou a atual, via OIDC — quando o Blob Store é conectado ao projeto pelo
+ * painel, ele expõe BLOB_STORE_ID e a plataforma injeta o token OIDC
+ * automaticamente em runtime (sem precisar de uma env var extra). Por isso
+ * checamos os dois; sem nenhum dos dois (ex.: rodando localmente sem
+ * `vercel env pull`), as funções abaixo são no-op.
  */
 import { put, list } from '@vercel/blob'
+
+function hasBlobCredentials(): boolean {
+  return !!(process.env.BLOB_READ_WRITE_TOKEN || process.env.BLOB_STORE_ID)
+}
 
 interface Launch {
   date: string
@@ -27,7 +36,7 @@ function pathFor(year: number) {
 }
 
 export async function readYearStore(year: number): Promise<YearStore | null> {
-  if (!process.env.BLOB_READ_WRITE_TOKEN) return null
+  if (!hasBlobCredentials()) return null
   try {
     const { blobs } = await list({ prefix: pathFor(year) })
     const blob = blobs.find(b => b.pathname === pathFor(year))
@@ -42,7 +51,7 @@ export async function readYearStore(year: number): Promise<YearStore | null> {
 }
 
 export async function writeYearStore(store: YearStore): Promise<void> {
-  if (!process.env.BLOB_READ_WRITE_TOKEN) return
+  if (!hasBlobCredentials()) return
   try {
     await put(pathFor(store.year), JSON.stringify(store), {
       access: 'public',
