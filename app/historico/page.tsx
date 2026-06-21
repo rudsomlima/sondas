@@ -152,12 +152,18 @@ export default function HistoricoPage() {
     setError(null)
     setFailedMonths(new Set())
 
-    // Pinta imediatamente o que já existe em cache local, antes de consultar a origem
-    const cachedMonths = readCache().filter(c => c.year === y)
+    const maxMonth = y === currentYear ? new Date().getMonth() + 1 : (y > currentYear ? 0 : 12)
+
+    // Pinta imediatamente o que já existe em cache local, antes de consultar a origem.
+    // Descarta meses futuros (ex.: cache antigo de testes anteriores) — eles ainda não existem.
+    const cachedMonthsAll = readCache().filter(c => c.year === y)
+    const cachedMonths = cachedMonthsAll.filter(c => c.month <= maxMonth)
+    for (const stale of cachedMonthsAll) {
+      if (stale.month > maxMonth) clearMonth(y, stale.month)
+    }
     const launchesFromCache = cachedMonths.flatMap(c => c.launches)
     setData({ year: y, station: '82599', count: launchesFromCache.length, launches: launchesFromCache, errors: [] })
 
-    const maxMonth = y === currentYear ? new Date().getMonth() + 1 : 12
     const cachedSet = new Set(cachedMonths.map(c => c.month))
     let pending: number[] = []
     for (let m = 1; m <= maxMonth; m++) {

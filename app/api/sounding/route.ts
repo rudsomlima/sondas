@@ -9,8 +9,12 @@ const TIMEOUT = 15000 // 15 segundos por requisição
 // Cache em memória (persiste durante a sessão do servidor)
 const memoryCache = new Map<string, { data: any; timestamp: number }>()
 
+// Date.now() já é um instante absoluto (UTC); somar getTimezoneOffset() aqui
+// fazia o resultado depender do fuso horário configurado na máquina/servidor
+// (ex: certo na Vercel, que roda em UTC, mas errado num dev local em GMT-3,
+// ou vice-versa). Sem esse termo, o cálculo é determinístico em qualquer ambiente.
 function nowGMT3() {
-  return new Date(Date.now() + GMT3 + new Date().getTimezoneOffset() * 60000)
+  return new Date(Date.now() + GMT3)
 }
 
 const MONTH_MAP: Record<string, number> = {
@@ -61,17 +65,25 @@ async function fetchSounding(year: number, month: number, fromDay = 0): Promise<
   const lastDay = new Date(year, month, 0).getDate()
   const toStr = `${String(lastDay).padStart(2, '0')}23`
   const url = `https://weather.uwyo.edu/cgi-bin/sounding?region=${REGION}&TYPE=TEXT%3ALIST&YEAR=${year}&MONTH=${String(month).padStart(2, '0')}&FROM=${fromStr}&TO=${toStr}&STNM=${STATION_ID}`
-  
-  try {
-    const html = await fetchWithTimeout(url, TIMEOUT)
-    memoryCache.set(cacheKey, { data: html, timestamp: Date.now() })
-    return html
-  } catch (e: any) {
-    if (e.name === 'AbortError') {
-      throw new Error(`Timeout ao conectar com Wyoming (>${TIMEOUT}ms)`)
+
+  // A Wyoming falha de forma intermitente (400/403/500 aleatórios, sem relação
+  // com o mês pedido) — tenta de novo algumas vezes antes de desistir.
+  const RETRIES = 3
+  let lastErr: any
+  for (let attempt = 0; attempt < RETRIES; attempt++) {
+    try {
+      const html = await fetchWithTimeout(url, TIMEOUT)
+      memoryCache.set(cacheKey, { data: html, timestamp: Date.now() })
+      return html
+    } catch (e: any) {
+      lastErr = e
+      if (attempt < RETRIES - 1) await new Promise(r => setTimeout(r, 1000 * (attempt + 1)))
     }
-    throw e
   }
+  if (lastErr.name === 'AbortError') {
+    throw new Error(`Timeout ao conectar com Wyoming (>${TIMEOUT}ms)`)
+  }
+  throw lastErr
 }
 
 interface Launch {
@@ -155,6 +167,20 @@ function parseLaunches(html: string, year: number, month: number): Launch[] {
 }
 
 /**
+ * Remove do YearStore qualquer mês posterior ao mês corrente (defesa contra
+ * dados de meses futuros que possam ter sido gravados por engano, ex.: por
+ * um cálculo de "hoje" incorreto em algum deploy anterior).
+ */
+function sanitizeFutureMonths(store: YearStore, currentYear: number, currentMonth: number): boolean {
+  if (store.year < currentYear) return false
+  const maxMonth = store.year === currentYear ? currentMonth : 0
+  const before = store.launches.length
+  store.launches = store.launches.filter(l => l.month <= maxMonth)
+  store.monthsComplete = store.monthsComplete.filter(m => m <= maxMonth)
+  return store.launches.length !== before
+}
+
+/**
  * Sincroniza um único mês dentro do YearStore: reaproveita o que já está
  * salvo, busca na origem só os dias novos (a partir do último dia salvo) e
  * mescla sem duplicar. Mês corrente nunca é marcado como "completo", pois
@@ -228,9 +254,10 @@ export async function GET(request: NextRequest) {
 
       const isCurrentMonth = year === currentYear && month === currentMonth
       const store = (await readYearStore(year)) ?? { year, launches: [] as Launch[], monthsComplete: [] as number[], updatedAt: 0 }
+      const sanitized = sanitizeFutureMonths(store, currentYear, currentMonth)
       const { launches, updated } = await syncMonth(store, year, month, isCurrentMonth)
 
-      if (updated) {
+      if (updated || sanitized) {
         store.updatedAt = Date.now()
         await writeYearStore(store)
       }
@@ -256,7 +283,7 @@ export async function GET(request: NextRequest) {
 
       const maxMonth = year === currentYear ? currentMonth : 12
       const store = (await readYearStore(year)) ?? { year, launches: [] as Launch[], monthsComplete: [] as number[], updatedAt: 0 }
-      let changed = false
+      let changed = sanitizeFutureMonths(store, currentYear, currentMonth)
 
       for (let m = 1; m <= maxMonth; m++) {
         const isCurrentMonth = year === currentYear && m === currentMonth
