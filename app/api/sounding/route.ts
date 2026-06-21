@@ -43,8 +43,8 @@ async function fetchWithTimeout(url: string, timeout: number): Promise<string> {
 
 async function fetchSounding(year: number, month: number, fromDay = 0): Promise<string> {
   const cacheKey = `sounding_${year}_${String(month).padStart(2, '0')}_${fromDay}`
-  const now = new Date()
-  const isCurrentMonth = year === now.getFullYear() && month === now.getMonth() + 1
+  const now = nowGMT3()
+  const isCurrentMonth = year === now.getUTCFullYear() && month === now.getUTCMonth() + 1
 
   // Verifica cache em memória
   const cached = memoryCache.get(cacheKey)
@@ -62,7 +62,7 @@ async function fetchSounding(year: number, month: number, fromDay = 0): Promise<
   // Permite buscar só a partir de um dia específico, para atualizações incrementais.
   // TO precisa ser um dia válido do mês (a Wyoming responde 400 para TO=31 em meses com menos dias).
   const fromStr = fromDay > 0 ? `${String(fromDay).padStart(2, '0')}00` : '0100'
-  const lastDay = new Date(year, month, 0).getDate()
+  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate()
   const toStr = `${String(lastDay).padStart(2, '0')}23`
   const url = `https://weather.uwyo.edu/cgi-bin/sounding?region=${REGION}&TYPE=TEXT%3ALIST&YEAR=${year}&MONTH=${String(month).padStart(2, '0')}&FROM=${fromStr}&TO=${toStr}&STNM=${STATION_ID}`
 
@@ -214,12 +214,12 @@ export async function GET(request: NextRequest) {
 
   const local = nowGMT3()
   const pad2 = (n: number) => n.toString().padStart(2, '0')
-  const todayStr = `${local.getFullYear()}-${pad2(local.getMonth() + 1)}-${pad2(local.getDate())}`
+  const todayStr = `${local.getUTCFullYear()}-${pad2(local.getUTCMonth() + 1)}-${pad2(local.getUTCDate())}`
 
   try {
     if (action === 'today') {
-      const year = local.getFullYear()
-      const month = local.getMonth() + 1
+      const year = local.getUTCFullYear()
+      const month = local.getUTCMonth() + 1
       const html = await fetchSounding(year, month)
       const launches = parseLaunches(html, year, month)
       const todayLaunches = launches.filter(l => l.date === todayStr)
@@ -236,15 +236,15 @@ export async function GET(request: NextRequest) {
     }
 
     if (action === 'month') {
-      const year = parseInt(searchParams.get('year') ?? String(local.getFullYear()))
-      const month = parseInt(searchParams.get('month') ?? String(local.getMonth() + 1))
+      const year = parseInt(searchParams.get('year') ?? String(local.getUTCFullYear()))
+      const month = parseInt(searchParams.get('month') ?? String(local.getUTCMonth() + 1))
 
       if (month < 1 || month > 12) {
         return NextResponse.json({ error: 'Mês inválido (1-12)' }, { status: 400 })
       }
 
-      const currentYear = local.getFullYear()
-      const currentMonth = local.getMonth() + 1
+      const currentYear = local.getUTCFullYear()
+      const currentMonth = local.getUTCMonth() + 1
 
       // Mês futuro: sem dados ainda, não consulta a origem
       const isFuture = year > currentYear || (year === currentYear && month > currentMonth)
@@ -271,9 +271,9 @@ export async function GET(request: NextRequest) {
     }
 
     if (action === 'year') {
-      const year = parseInt(searchParams.get('year') ?? String(local.getFullYear()))
-      const currentYear = local.getFullYear()
-      const currentMonth = local.getMonth() + 1
+      const year = parseInt(searchParams.get('year') ?? String(local.getUTCFullYear()))
+      const currentYear = local.getUTCFullYear()
+      const currentMonth = local.getUTCMonth() + 1
       const errors: { month: number; error: string }[] = []
 
       // Ano futuro: sem dados, não consulta a origem
