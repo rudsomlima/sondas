@@ -3,13 +3,15 @@
 import { useEffect, useState, useCallback } from 'react'
 import {
   History, RefreshCw, ChevronDown, TrendingUp, Calendar,
-  AlertCircle, Wind, BarChart3, Trash2, Download, HardDrive, AlertTriangle
+  AlertCircle, Wind, BarChart3, Trash2, Download, HardDrive, AlertTriangle,
+  CheckCircle2, XCircle, Clock, Sun, Moon, Loader2
 } from 'lucide-react'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts'
 import {
   readCache, writeCache, clearMonth, clearYear, clearAllCache,
   getCacheStats, exportCache, CacheEntry
 } from '@/app/lib/cache'
+import LaunchMap from './LaunchMap'
 
 interface Launch {
   date: string
@@ -28,85 +30,167 @@ interface YearData {
   errors: { month: number; error: string }[]
 }
 
+interface TodayData {
+  today: string
+  station: string
+  launched_today: boolean
+  count: number
+  launches: Launch[]
+}
+
 const MONTHS = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
 const MONTHS_FULL = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro']
+
+// Lançamentos de 12Z (~09h local) caem de dia; os de 00Z (~21h local) caem de noite
+function isDaytime(timeLocal: string): boolean {
+  const hour = parseInt(timeLocal.split(':')[0], 10)
+  return hour >= 6 && hour < 18
+}
+
+// Mesmo lançamento clicado de novo: fecha o mapa em vez de reabrir
+function sameLaunch(a: Launch | null, b: Launch): boolean {
+  return !!a && a.date === b.date && a.time_utc === b.time_utc
+}
 
 export default function HistoricoPage() {
   const currentYear = new Date().getFullYear()
   const [year, setYear] = useState(currentYear)
   const [data, setData] = useState<YearData | null>(null)
-  const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [expandedMonth, setExpandedMonth] = useState<number | null>(null)
   const [cacheStats, setCacheStats] = useState<any>(null)
   const [showCachePanel, setShowCachePanel] = useState(false)
   const [deleteConfirm, setDeleteConfirm] = useState<{ type: 'month' | 'year' | 'all'; month?: number; year?: number } | null>(null)
+  const [todayData, setTodayData] = useState<TodayData | null>(null)
+  const [todayLoading, setTodayLoading] = useState(true)
+  const [statusMsg, setStatusMsg] = useState<string | null>(null)
+  const [syncing, setSyncing] = useState(false)
+  const [failedMonths, setFailedMonths] = useState<Set<number>>(new Set())
+  const [selectedLaunch, setSelectedLaunch] = useState<Launch | null>(null)
 
   const years = Array.from({ length: 5 }, (_, i) => currentYear - i)
+
+  const fetchToday = useCallback(async () => {
+    setTodayLoading(true)
+    try {
+      const res = await fetch('/api/sounding?action=today')
+      const json = await res.json()
+      if (json.error) throw new Error(json.error)
+      setTodayData(json)
+    } catch {
+      // Falha ao consultar a origem (instabilidade, 403/500 temporário etc.):
+      // trata como "sem lançamento hoje" em vez de mostrar um erro alarmante.
+      const d = new Date()
+      const pad = (n: number) => String(n).padStart(2, '0')
+      setTodayData({
+        today: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`,
+        station: '82599',
+        launched_today: false,
+        count: 0,
+        launches: [],
+      })
+    } finally {
+      setTodayLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    fetchToday()
+    const interval = setInterval(fetchToday, 5 * 60 * 1000)
+    return () => clearInterval(interval)
+  }, [fetchToday])
 
   const updateCacheStats = useCallback(() => {
     setCacheStats(getCacheStats())
   }, [])
 
-  const fetchData = useCallback(async (y: number) => {
-    setLoading(true)
-    setError(null)
-    setData(null)
+  // Busca um mês na API e mescla o resultado nos dados já exibidos,
+  // mostrando o que está fazendo enquanto consulta a origem.
+  // Retorna os meses que falharam, para quem chamou decidir se tenta de novo.
+  const syncMonths = useCallback(async (y: number, months: number[]): Promise<number[]> => {
+    if (months.length === 0) return []
+    setSyncing(true)
+    const failed: number[] = []
+    for (const m of months) {
+      setStatusMsg(`Buscando ${MONTHS_FULL[m - 1]}/${y}…`)
+      try {
+        const res = await fetch(`/api/sounding?action=month&year=${y}&month=${m}`)
+        if (!res.ok) throw new Error(`Erro ${res.status}`)
+        const json = await res.json()
+        if (json.error) throw new Error(json.error)
 
-    try {
-      // Tenta ler do cache primeiro
-      const cachedMonths = readCache().filter(c => c.year === y)
-      const launchesFromCache = cachedMonths.flatMap(c => c.launches)
+        writeCache({ year: y, month: m, launches: json.launches, timestamp: Date.now(), version: 1 })
 
-      // Se tem cache completo, usa
-      const maxMonth = y === currentYear ? new Date().getMonth() + 1 : 12
-      if (cachedMonths.length >= maxMonth) {
-        setData({
-          year: y,
-          station: '82599',
-          count: launchesFromCache.length,
-          launches: launchesFromCache,
-          errors: [],
+        setData(prev => {
+          if (!prev || prev.year !== y) return prev
+          const merged = prev.launches.filter(l => l.month !== m).concat(json.launches)
+          return { ...prev, launches: merged, count: merged.length }
         })
-        return
-      }
-
-      // Caso contrário, faz fetch
-      const res = await fetch(`/api/sounding?action=year&year=${y}`)
-      if (!res.ok) throw new Error(`Erro ${res.status}`)
-      const json = await res.json()
-      if (json.error) throw new Error(json.error)
-
-      setData(json)
-
-      // Salva no cache por mês
-      const byMonth: Record<number, Launch[]> = {}
-      for (const l of json.launches) {
-        if (!byMonth[l.month]) byMonth[l.month] = []
-        byMonth[l.month].push(l)
-      }
-      for (const [m, launches] of Object.entries(byMonth)) {
-        writeCache({
-          year: y,
-          month: parseInt(m),
-          launches,
-          timestamp: Date.now(),
-          version: 1,
+        setFailedMonths(prev => {
+          if (!prev.has(m)) return prev
+          const next = new Set(prev)
+          next.delete(m)
+          return next
         })
+      } catch (e: any) {
+        // O mês corrente é refeito automaticamente em segundo plano (ver useEffect
+        // de retry); falhas nele tendem a ser bloqueios temporários da origem, então
+        // não exibe o banner de erro alarmante — só meses passados acusam erro visível.
+        const isCurrentMonth = y === currentYear && m === new Date().getMonth() + 1
+        if (!isCurrentMonth) setError(e.message || 'Erro ao carregar dados')
+        setFailedMonths(prev => new Set(prev).add(m))
+        failed.push(m)
       }
-
-      updateCacheStats()
-    } catch (e: any) {
-      setError(e.message || 'Erro ao carregar dados')
-    } finally {
-      setLoading(false)
     }
-  }, [currentYear, updateCacheStats])
+    setStatusMsg(null)
+    setSyncing(false)
+    updateCacheStats()
+    return failed
+  }, [updateCacheStats, currentYear])
+
+  const fetchData = useCallback(async (y: number) => {
+    setError(null)
+    setFailedMonths(new Set())
+
+    // Pinta imediatamente o que já existe em cache local, antes de consultar a origem
+    const cachedMonths = readCache().filter(c => c.year === y)
+    const launchesFromCache = cachedMonths.flatMap(c => c.launches)
+    setData({ year: y, station: '82599', count: launchesFromCache.length, launches: launchesFromCache, errors: [] })
+
+    const maxMonth = y === currentYear ? new Date().getMonth() + 1 : 12
+    const cachedSet = new Set(cachedMonths.map(c => c.month))
+    let pending: number[] = []
+    for (let m = 1; m <= maxMonth; m++) {
+      const isCurrentMonth = y === currentYear && m === maxMonth
+      // Mês já em cache e não é o mês corrente: não precisa rebuscar
+      if (cachedSet.has(m) && !isCurrentMonth) continue
+      pending.push(m)
+    }
+
+    // Falhas costumam ser bloqueios temporários da origem; tenta de novo
+    // rapidamente (8s, 16s) antes de cair no laço periódico de 5 minutos.
+    for (let attempt = 0; pending.length > 0 && attempt < 3; attempt++) {
+      if (attempt > 0) await new Promise(r => setTimeout(r, attempt * 8000))
+      pending = await syncMonths(y, pending)
+    }
+  }, [currentYear, syncMonths])
 
   useEffect(() => {
     updateCacheStats()
     fetchData(year)
   }, [year, fetchData, updateCacheStats])
+
+  // Repete periodicamente a consulta do mês corrente (que pode ganhar
+  // lançamentos novos) e de qualquer mês que tenha falhado por instabilidade
+  // da origem, até conseguir buscar com sucesso — sempre mostrando o status.
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const months = new Set(failedMonths)
+      if (year === currentYear) months.add(new Date().getMonth() + 1)
+      if (months.size > 0) syncMonths(year, [...months])
+    }, 5 * 60 * 1000)
+    return () => clearInterval(interval)
+  }, [year, currentYear, failedMonths, syncMonths])
 
   // Gerenciar exclusão
   const handleDelete = useCallback(() => {
@@ -186,7 +270,7 @@ export default function HistoricoPage() {
               <History size={22} className="text-blue-400" />
               Histórico Anual
             </h1>
-            <p className="text-gray-500 text-sm mt-1">Radiossondagens da estação Natal (82599) com cache persistente</p>
+            <p className="text-gray-500 text-sm mt-1">Radiossondagens da estação Natal</p>
           </div>
           <div className="flex items-center gap-2">
             <select
@@ -200,10 +284,10 @@ export default function HistoricoPage() {
             </select>
             <button
               onClick={() => fetchData(year)}
-              disabled={loading}
+              disabled={syncing}
               className="flex items-center gap-2 px-3 py-2 bg-[#1a1a1a] border border-[#2a2a2a] rounded-md text-sm text-gray-400 hover:text-white hover:border-[#3a3a3a] transition-all"
             >
-              <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
+              <RefreshCw size={14} className={syncing ? 'animate-spin' : ''} />
             </button>
             <button
               onClick={() => setShowCachePanel(!showCachePanel)}
@@ -308,15 +392,60 @@ export default function HistoricoPage() {
         </div>
       )}
 
-      {loading && !data ? (
-        <div className="card p-10 flex flex-col items-center justify-center gap-3">
-          <RefreshCw size={28} className="text-gray-600 animate-spin" />
-          <p className="text-gray-500 text-sm">Carregando {year}… isso pode levar alguns segundos</p>
+      {/* Status da extração em andamento */}
+      {statusMsg && (
+        <div className="card p-3 mb-6 border-blue-500/20 bg-blue-500/5 flex items-center gap-2.5">
+          <Loader2 size={14} className="text-blue-400 animate-spin flex-shrink-0" />
+          <p className="text-xs text-blue-300">{statusMsg}</p>
         </div>
-      ) : data ? (
+      )}
+
+      {data ? (
         <>
           {/* Summary cards */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 mb-6">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
+            <div className={`relative card p-5 border-2 ring-2 ring-blue-500/30 shadow-lg shadow-blue-500/10 bg-blue-500/[0.04] ${
+              todayLoading ? 'border-[#2a2a2a]' : todayData?.launched_today ? 'border-green-500/40' : 'border-red-500/25'
+            }`}>
+              <span className="absolute -top-2 left-3 px-1.5 py-0.5 rounded-full bg-blue-600 text-[9px] font-semibold text-white tracking-wide uppercase">
+                Ao vivo
+              </span>
+              <div className="text-xs text-gray-500 mb-1 flex items-center gap-1.5">
+                {todayLoading ? <Clock size={12} /> : todayData?.launched_today
+                  ? <CheckCircle2 size={12} className="text-green-400" />
+                  : <XCircle size={12} className="text-red-400" />}
+                Hoje
+              </div>
+              {todayLoading ? (
+                <div className="text-3xl font-bold text-gray-600 mono">—</div>
+              ) : (
+                <>
+                  <div className="text-3xl font-bold text-white mono">{todayData?.count ?? 0}</div>
+                  {todayData?.launched_today ? (
+                    <div className="flex flex-wrap gap-x-2 gap-y-1 mt-1">
+                      {todayData.launches.map((l, i) => (
+                        <button
+                          key={i}
+                          onClick={() => {
+                            setExpandedMonth(l.month)
+                            setSelectedLaunch(prev => (sameLaunch(prev, l) ? null : l))
+                          }}
+                          title="Ver no mapa a posição mais próxima após o lançamento"
+                          className={`text-xs mono font-medium hover:underline flex items-center gap-1 ${
+                            isDaytime(l.time_local) ? 'text-amber-400' : 'text-indigo-400'
+                          }`}
+                        >
+                          {isDaytime(l.time_local) ? <Sun size={10} /> : <Moon size={10} />}
+                          {l.time_local}
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-xs text-gray-600 mt-1">Nenhum lançamento</div>
+                  )}
+                </>
+              )}
+            </div>
             <div className="card p-5">
               <div className="text-xs text-gray-500 mb-1 flex items-center gap-1.5"><BarChart3 size={12} /> Total de sondagens</div>
               <div className="text-3xl font-bold text-white mono">{data.count}</div>
@@ -327,7 +456,7 @@ export default function HistoricoPage() {
                 {new Set(data.launches.map(l => l.date)).size}
               </div>
             </div>
-            <div className="card p-5 col-span-2 sm:col-span-1">
+            <div className="card p-5">
               <div className="text-xs text-gray-500 mb-1 flex items-center gap-1.5"><TrendingUp size={12} /> Média por mês</div>
               <div className="text-3xl font-bold text-white mono">
                 {data.count > 0 ? (data.count / Object.keys(byMonth).length).toFixed(1) : '0'}
@@ -418,16 +547,43 @@ export default function HistoricoPage() {
 
                     {isOpen && launches.length > 0 && (
                       <div className="px-5 pb-4 bg-[#111111]">
-                        <div className="grid grid-cols-3 gap-3 mt-3">
-                          {launches.map((l, i) => (
-                            <div key={i} className="p-3 bg-[#1a1a1a] border border-[#2a2a2a] rounded text-xs">
-                              <div className="text-gray-500 text-[11px] mb-1">
-                                {new Date(l.date + 'T12:00:00').toLocaleDateString('pt-BR', { month: 'short', day: 'numeric' })}
+                        <div className="grid grid-cols-5 gap-3 mt-3">
+                          {Object.entries(
+                            launches.reduce((acc: Record<string, Launch[]>, l) => {
+                              (acc[l.date] ??= []).push(l)
+                              return acc
+                            }, {})
+                          )
+                            .sort(([a], [b]) => a.localeCompare(b))
+                            .map(([date, dayLaunches]) => (
+                              <div key={date} className="p-3 bg-[#1a1a1a] border border-[#2a2a2a] rounded text-xs">
+                                <div className="text-gray-500 text-[11px] mb-1.5">
+                                  {new Date(date + 'T12:00:00').toLocaleDateString('pt-BR', { month: 'short', day: 'numeric' })}
+                                </div>
+                                <div className="flex flex-wrap gap-x-2 gap-y-1">
+                                  {[...dayLaunches]
+                                    .sort((a, b) => a.time_local.localeCompare(b.time_local))
+                                    .map((l, i) => (
+                                      <button
+                                        key={i}
+                                        onClick={() => setSelectedLaunch(prev => (sameLaunch(prev, l) ? null : l))}
+                                        title="Ver no mapa a posição mais próxima após o lançamento"
+                                        className={`mono font-semibold flex items-center gap-1 hover:underline ${
+                                          isDaytime(l.time_local) ? 'text-amber-400' : 'text-indigo-400'
+                                        }`}
+                                      >
+                                        {isDaytime(l.time_local) ? <Sun size={10} /> : <Moon size={10} />}
+                                        {l.time_local}
+                                      </button>
+                                    ))}
+                                </div>
                               </div>
-                              <div className="mono text-white font-semibold">{l.time_local}</div>
-                            </div>
-                          ))}
+                            ))}
                         </div>
+
+                        {selectedLaunch && selectedLaunch.month === m && (
+                          <LaunchMap launch={selectedLaunch} onClose={() => setSelectedLaunch(null)} />
+                        )}
                       </div>
                     )}
                     {isOpen && launches.length === 0 && (

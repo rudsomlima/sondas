@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { readYearStore, writeYearStore, YearStore } from '@/app/lib/blobStore'
 
 const GMT3 = -3 * 60 * 60 * 1000
 const STATION_ID = '82599'
@@ -36,11 +37,11 @@ async function fetchWithTimeout(url: string, timeout: number): Promise<string> {
   }
 }
 
-async function fetchSounding(year: number, month: number): Promise<string> {
-  const cacheKey = `sounding_${year}_${String(month).padStart(2, '0')}`
+async function fetchSounding(year: number, month: number, fromDay = 0): Promise<string> {
+  const cacheKey = `sounding_${year}_${String(month).padStart(2, '0')}_${fromDay}`
   const now = new Date()
   const isCurrentMonth = year === now.getFullYear() && month === now.getMonth() + 1
-  
+
   // Verifica cache em memória
   const cached = memoryCache.get(cacheKey)
   if (cached) {
@@ -54,7 +55,12 @@ async function fetchSounding(year: number, month: number): Promise<string> {
     }
   }
 
-  const url = `https://weather.uwyo.edu/cgi-bin/sounding?region=${REGION}&TYPE=TEXT%3ALIST&YEAR=${year}&MONTH=${String(month).padStart(2, '0')}&FROM=0100&TO=3123&STNM=${STATION_ID}`
+  // Permite buscar só a partir de um dia específico, para atualizações incrementais.
+  // TO precisa ser um dia válido do mês (a Wyoming responde 400 para TO=31 em meses com menos dias).
+  const fromStr = fromDay > 0 ? `${String(fromDay).padStart(2, '0')}00` : '0100'
+  const lastDay = new Date(year, month, 0).getDate()
+  const toStr = `${String(lastDay).padStart(2, '0')}23`
+  const url = `https://weather.uwyo.edu/cgi-bin/sounding?region=${REGION}&TYPE=TEXT%3ALIST&YEAR=${year}&MONTH=${String(month).padStart(2, '0')}&FROM=${fromStr}&TO=${toStr}&STNM=${STATION_ID}`
   
   try {
     const html = await fetchWithTimeout(url, TIMEOUT)
@@ -107,7 +113,15 @@ function parseLaunches(html: string, year: number, month: number): Launch[] {
 
       const utcMs = Date.UTC(yr, monNum - 1, day, hourUtc, 0, 0)
       const localMs = utcMs + GMT3
-      const localDate = new Date(localMs)
+      let localDate = new Date(localMs)
+
+      // O ajuste de -3h pode empurrar o lançamento de 00Z do dia 1 para o
+      // último dia do mês anterior (ex: 1/Jan 00Z -> 31/Dez 21h). Isso fazia
+      // o lançamento ser contado no mês errado. Quando isso cruzar a
+      // fronteira do mês, mantemos a data/mês original em UTC.
+      if (localDate.getUTCFullYear() !== yr || localDate.getUTCMonth() + 1 !== monNum) {
+        localDate = new Date(utcMs)
+      }
 
       const pad = (n: number) => n.toString().padStart(2, '0')
       const dateStr = `${localDate.getUTCFullYear()}-${pad(localDate.getUTCMonth() + 1)}-${pad(localDate.getUTCDate())}`
@@ -140,6 +154,34 @@ function parseLaunches(html: string, year: number, month: number): Launch[] {
   })
 }
 
+/**
+ * Sincroniza um único mês dentro do YearStore: reaproveita o que já está
+ * salvo, busca na origem só os dias novos (a partir do último dia salvo) e
+ * mescla sem duplicar. Mês corrente nunca é marcado como "completo", pois
+ * ainda pode ganhar lançamentos novos.
+ */
+async function syncMonth(
+  store: YearStore, year: number, month: number, isCurrentMonth: boolean
+): Promise<{ launches: Launch[]; updated: boolean }> {
+  if (store.monthsComplete.includes(month)) {
+    return { launches: store.launches.filter(l => l.month === month), updated: false }
+  }
+
+  const existingForMonth = store.launches.filter(l => l.month === month)
+  const lastDay = existingForMonth.reduce((max, l) => Math.max(max, l.day), 0)
+
+  const html = await fetchSounding(year, month, lastDay)
+  const fresh = parseLaunches(html, year, month)
+
+  const seen = new Set(existingForMonth.map(l => `${l.date}_${l.time_utc}`))
+  const merged = existingForMonth.concat(fresh.filter(l => !seen.has(`${l.date}_${l.time_utc}`)))
+
+  store.launches = store.launches.filter(l => l.month !== month).concat(merged)
+  if (!isCurrentMonth) store.monthsComplete.push(month)
+
+  return { launches: merged, updated: true }
+}
+
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url)
   const action = searchParams.get('action') ?? 'today'
@@ -170,42 +212,71 @@ export async function GET(request: NextRequest) {
     if (action === 'month') {
       const year = parseInt(searchParams.get('year') ?? String(local.getFullYear()))
       const month = parseInt(searchParams.get('month') ?? String(local.getMonth() + 1))
-      
+
       if (month < 1 || month > 12) {
         return NextResponse.json({ error: 'Mês inválido (1-12)' }, { status: 400 })
       }
 
-      const html = await fetchSounding(year, month)
-      const launches = parseLaunches(html, year, month)
+      const currentYear = local.getFullYear()
+      const currentMonth = local.getMonth() + 1
 
-      return NextResponse.json({ 
-        year, month, station: STATION_ID, 
-        count: launches.length, 
+      // Mês futuro: sem dados ainda, não consulta a origem
+      const isFuture = year > currentYear || (year === currentYear && month > currentMonth)
+      if (isFuture) {
+        return NextResponse.json({ year, month, station: STATION_ID, count: 0, launches: [], cached: false })
+      }
+
+      const isCurrentMonth = year === currentYear && month === currentMonth
+      const store = (await readYearStore(year)) ?? { year, launches: [] as Launch[], monthsComplete: [] as number[], updatedAt: 0 }
+      const { launches, updated } = await syncMonth(store, year, month, isCurrentMonth)
+
+      if (updated) {
+        store.updatedAt = Date.now()
+        await writeYearStore(store)
+      }
+
+      return NextResponse.json({
+        year, month, station: STATION_ID,
+        count: launches.length,
         launches,
-        cached: false,
+        cached: !updated,
       })
     }
 
     if (action === 'year') {
       const year = parseInt(searchParams.get('year') ?? String(local.getFullYear()))
-      const allLaunches: Launch[] = []
+      const currentYear = local.getFullYear()
+      const currentMonth = local.getMonth() + 1
       const errors: { month: number; error: string }[] = []
-      const maxMonth = year === local.getFullYear() ? local.getMonth() + 1 : 12
+
+      // Ano futuro: sem dados, não consulta a origem
+      if (year > currentYear) {
+        return NextResponse.json({ year, station: STATION_ID, count: 0, launches: [], errors, cached: false })
+      }
+
+      const maxMonth = year === currentYear ? currentMonth : 12
+      const store = (await readYearStore(year)) ?? { year, launches: [] as Launch[], monthsComplete: [] as number[], updatedAt: 0 }
+      let changed = false
 
       for (let m = 1; m <= maxMonth; m++) {
+        const isCurrentMonth = year === currentYear && m === currentMonth
         try {
-          const html = await fetchSounding(year, m)
-          const launches = parseLaunches(html, year, m)
-          allLaunches.push(...launches)
+          const { updated } = await syncMonth(store, year, m, isCurrentMonth)
+          if (updated) changed = true
         } catch (e: any) {
           errors.push({ month: m, error: e.message })
         }
       }
 
+      if (changed) {
+        store.updatedAt = Date.now()
+        await writeYearStore(store)
+      }
+
       return NextResponse.json({
         year, station: STATION_ID,
-        count: allLaunches.length,
-        launches: allLaunches,
+        count: store.launches.length,
+        launches: store.launches,
         errors,
         cached: false,
       })

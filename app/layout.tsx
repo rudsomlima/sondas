@@ -5,7 +5,7 @@ import { useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import {
-  Radio, History, Settings, Menu, X,
+  History, Settings, Menu, X,
   Wind, ChevronRight, Satellite
 } from 'lucide-react'
 
@@ -14,7 +14,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   const pathname = usePathname()
 
   const navItems = [
-    { href: '/', icon: Radio, label: 'Hoje', desc: 'Status do lançamento atual' },
     { href: '/historico', icon: History, label: 'Histórico Anual', desc: 'Lançamentos por ano' },
     { href: '/configuracoes', icon: Settings, label: 'Configurações', desc: 'Período e estação' },
   ]
@@ -25,7 +24,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <title>Sondas Natal · INMET 82599</title>
         <meta name="description" content="Monitoramento de radiossondagens da estação de Natal (82599)" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <link rel="icon" href="/favicon.ico" />
       </head>
       <body className="min-h-screen flex bg-[#111111]">
 
