@@ -76,4 +76,3 @@ https://weather.uwyo.edu/cgi-bin/sounding?region=naconf&TYPE=TEXT:LIST&YEAR={ANO
 ## Licença
 
 MIT
-<!-- integration test 20260622T000056Z -->
