@@ -16,6 +16,146 @@ export interface RadiosondyFeature {
 
 const STARTPLACE = 'Barreira do Inferno Launch Center (BR)'
 
+// Bounding box aproximada do Rio Grande do Norte, para cobrir sondas lançadas
+// em outra estação mas que estejam sobrevoando o estado no momento.
+const RN_BOUNDS = { minLat: -7, maxLat: -4, minLon: -38, maxLon: -34 }
+
+export interface LiveSondePosition {
+  sondeNumber: string
+  startplace: string
+  type: string
+  frequency: string
+  lat: number
+  lon: number
+  altitude: number
+  climbing: number
+  speed: string
+  course: string
+  lastReportUtc: string
+  popupContent: string
+}
+
+// Feed ao vivo (global) usado pela própria home do radiosondy.info na seção
+// "Now Flying!": cada sonda em voo aparece como um par de features (LineString
+// com o rastro + Point com a posição atual). Quando a sonda pousa, ela some
+// deste feed — por isso presença aqui já significa "em voo agora".
+export async function fetchLiveFlights(): Promise<LiveSondePosition[]> {
+  const url = 'https://radiosondy.info/export/export_map.php?live_map=1'
+  const res = await fetch(url, { cache: 'no-store' })
+  if (!res.ok) throw new Error(`Erro ${res.status} ao consultar radiosondy.info`)
+  const geojson = await res.json()
+
+  const out: LiveSondePosition[] = []
+  for (const f of geojson?.features ?? []) {
+    if (f?.geometry?.type !== 'Point') continue
+    const p = f.properties ?? {}
+    if (typeof p.latitude !== 'number' || typeof p.longitude !== 'number') continue
+    out.push({
+      sondeNumber: p.id ?? '?',
+      startplace: p.startplace ?? '',
+      type: p.type ?? '',
+      frequency: p.frequency ?? '',
+      lat: p.latitude,
+      lon: p.longitude,
+      altitude: parseFloat(p.altitude) || 0,
+      climbing: parseFloat(p.climbing) || 0,
+      speed: p.speed ?? '',
+      course: p.course ?? '',
+      lastReportUtc: p.report ?? '',
+      popupContent: p.popupContent ?? '',
+    })
+  }
+  return out
+}
+
+export function isInRioGrandeDoNorte(pos: LiveSondePosition): boolean {
+  if (pos.startplace === STARTPLACE) return true
+  return (
+    pos.lat >= RN_BOUNDS.minLat && pos.lat <= RN_BOUNDS.maxLat &&
+    pos.lon >= RN_BOUNDS.minLon && pos.lon <= RN_BOUNDS.maxLon
+  )
+}
+
+// Link para o mapa de rastreamento externo do SondeHub. Centro fixo sobre a
+// área de Barreira do Inferno/Natal (RN), independente da posição atual da
+// sonde, só troca o ID da sonde rastreada (param "f").
+const SONDEHUB_CENTER = '-5.86194,-35.39246'
+
+export function sondeHubUrl(sondeNumber: string): string {
+  return `https://sondehub.org/?sondehub=1#!mt=Mapnik&mz=10&qm=12h&mc=${SONDEHUB_CENTER}&f=${sondeNumber}`
+}
+
+const GMT3 = -3 * 60 * 60 * 1000
+
+function gmt3DateStr(date: Date): string {
+  const local = new Date(date.getTime() + GMT3)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${local.getUTCFullYear()}-${pad(local.getUTCMonth() + 1)}-${pad(local.getUTCDate())}`
+}
+
+export interface TodayFlight {
+  sondeNumber: string
+  altitude: number
+  climbing: number
+  lastReportUtc: string // "YYYY-MM-DD HH:mm:ssz", igual ao formato do feed ao vivo
+  isLive: boolean // true = ainda em voo agora; false = já pousou
+}
+
+function toReportStr(date: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())} ` +
+    `${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}:${pad(date.getUTCSeconds())}z`
+}
+
+// Extrai do popupContent textual (HTML) de uma feature do export_search.php
+// os mesmos campos de telemetria que o feed ao vivo expõe em "properties".
+function parsePopupTelemetry(html: string): { altitude: number; climbing: number } {
+  const altMatch = html.match(/Altitude:\s*(-?[\d.]+)\s*m/)
+  const climbMatch = html.match(/Climbing:\s*(-?[\d.]+)\s*m\/s/)
+  return {
+    altitude: altMatch ? parseFloat(altMatch[1]) : 0,
+    climbing: climbMatch ? parseFloat(climbMatch[1]) : 0,
+  }
+}
+
+// Junta o que o radiosondy.info sabe sobre a(s) sonda(s) da nossa estação
+// hoje: em voo agora (fetchLiveFlights) e/ou já pousadas (export_search.php
+// do mês atual, filtrando pela data de recuperação). Serve de alternativa ao
+// contador/status da Wyoming, que atrasa para publicar o lançamento do dia.
+export async function fetchTodayFlights(todayStr: string): Promise<TodayFlight[]> {
+  const now = new Date()
+  const bySondeNumber = new Map<string, TodayFlight>()
+
+  const live = await fetchLiveFlights()
+  for (const f of live) {
+    if (f.startplace !== STARTPLACE) continue
+    if (gmt3DateStr(new Date(f.lastReportUtc.replace(' ', 'T').replace(/z$/i, '') + 'Z')) !== todayStr) continue
+    bySondeNumber.set(f.sondeNumber, {
+      sondeNumber: f.sondeNumber,
+      altitude: f.altitude,
+      climbing: f.climbing,
+      lastReportUtc: f.lastReportUtc,
+      isLive: true,
+    })
+  }
+
+  const recovered = await fetchRadiosondyFeatures(now.getUTCFullYear(), now.getUTCMonth() + 1)
+  for (const f of recovered) {
+    if (gmt3DateStr(f.date) !== todayStr) continue
+    if (bySondeNumber.has(f.sondeNumber)) continue // já temos o dado ao vivo, mais completo
+    const { altitude, climbing } = parsePopupTelemetry(f.popupContent)
+    bySondeNumber.set(f.sondeNumber, {
+      sondeNumber: f.sondeNumber,
+      altitude,
+      climbing,
+      lastReportUtc: toReportStr(f.date),
+      isLive: false,
+    })
+  }
+
+  return [...bySondeNumber.values()]
+}
+
 export function lastDayOfMonth(year: number, month: number): number {
   return new Date(year, month, 0).getDate()
 }

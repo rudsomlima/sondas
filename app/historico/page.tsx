@@ -11,6 +11,9 @@ import {
   readCache, writeCache, clearMonth, clearYear, clearAllCache,
   getCacheStats, exportCache, CacheEntry
 } from '@/app/lib/cache'
+import {
+  fetchTodayFlights, sondeHubUrl, TodayFlight
+} from '@/app/lib/radiosondy'
 import LaunchMap from './LaunchMap'
 
 interface Launch {
@@ -52,6 +55,18 @@ function sameLaunch(a: Launch | null, b: Launch): boolean {
   return !!a && a.date === b.date && a.time_utc === b.time_utc
 }
 
+// Formata um timestamp "YYYY-MM-DD HH:mm:ssz" (UTC) do radiosondy.info como
+// dd-mm-yyyy hh:mm:ss em GMT-3, 24h.
+function formatGmt3(utcStr: string): string {
+  const iso = utcStr.replace(' ', 'T').replace(/z$/i, '') + 'Z'
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return utcStr
+  const local = new Date(d.getTime() - 3 * 60 * 60 * 1000)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${pad(local.getUTCDate())}-${pad(local.getUTCMonth() + 1)}-${local.getUTCFullYear()} ` +
+    `${pad(local.getUTCHours())}:${pad(local.getUTCMinutes())}:${pad(local.getUTCSeconds())}`
+}
+
 export default function HistoricoPage() {
   const currentYear = new Date().getFullYear()
   const [year, setYear] = useState(currentYear)
@@ -63,6 +78,8 @@ export default function HistoricoPage() {
   const [deleteConfirm, setDeleteConfirm] = useState<{ type: 'month' | 'year' | 'all'; month?: number; year?: number } | null>(null)
   const [todayData, setTodayData] = useState<TodayData | null>(null)
   const [todayLoading, setTodayLoading] = useState(true)
+  const [todayFlights, setTodayFlights] = useState<TodayFlight[]>([])
+  const [liveFlightChecked, setLiveFlightChecked] = useState(false)
   const [statusMsg, setStatusMsg] = useState<string | null>(null)
   const [syncing, setSyncing] = useState(false)
   const [failedMonths, setFailedMonths] = useState<Set<number>>(new Set())
@@ -99,6 +116,30 @@ export default function HistoricoPage() {
     const interval = setInterval(fetchToday, 5 * 60 * 1000)
     return () => clearInterval(interval)
   }, [fetchToday])
+
+  // Voo dura só ~2h, então o polling do feed ao vivo precisa ser bem mais
+  // frequente que o de "houve lançamento hoje" (que muda só 1x/dia). Cobre
+  // tanto a sonda ainda em voo quanto a(s) já pousada(s) hoje — a Wyoming
+  // atrasa para publicar o lançamento do dia, então não dá pra confiar só em
+  // todayData.count/launched_today.
+  const fetchLiveFlight = useCallback(async () => {
+    try {
+      const d = new Date()
+      const pad = (n: number) => String(n).padStart(2, '0')
+      const todayStr = todayData?.today ?? `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+      setTodayFlights(await fetchTodayFlights(todayStr))
+    } catch {
+      // Falha pontual de rede: mantém os últimos dados já exibidos.
+    } finally {
+      setLiveFlightChecked(true)
+    }
+  }, [todayData?.today])
+
+  useEffect(() => {
+    fetchLiveFlight()
+    const interval = setInterval(fetchLiveFlight, 20 * 1000)
+    return () => clearInterval(interval)
+  }, [fetchLiveFlight])
 
   const updateCacheStats = useCallback(() => {
     setCacheStats(getCacheStats())
@@ -306,6 +347,99 @@ export default function HistoricoPage() {
         </div>
       </div>
 
+      {/* Ao vivo: primeira coisa visível, independente do histórico do ano já ter carregado.
+          Combina a Wyoming (horário oficial do lançamento) com o radiosondy.info (detecta o
+          voo quase em tempo real, antes da Wyoming publicar, e mantém dado mesmo após pousar). */}
+      {(() => {
+        const hadFlightToday = todayData?.launched_today || todayFlights.length > 0
+        const count = Math.max(todayData?.count ?? 0, todayFlights.length)
+        return (
+          <div className={`relative card p-5 mb-6 border-2 ring-2 ring-blue-500/30 shadow-lg shadow-blue-500/10 bg-blue-500/[0.04] ${
+            todayLoading ? 'border-[#2a2a2a]' : hadFlightToday ? 'border-green-500/40' : 'border-red-500/25'
+          }`}>
+            <span className="absolute -top-2 left-3 px-1.5 py-0.5 rounded-full bg-blue-600 text-[9px] font-semibold text-white tracking-wide uppercase">
+              Ao vivo
+            </span>
+            <div className="text-xs text-gray-500 mb-1 flex items-center gap-1.5">
+              {todayLoading ? <Clock size={12} /> : hadFlightToday
+                ? <CheckCircle2 size={12} className="text-green-400" />
+                : <XCircle size={12} className="text-red-400" />}
+              Hoje
+            </div>
+            {todayLoading ? (
+              <div className="text-3xl font-bold text-gray-600 mono">—</div>
+            ) : (
+              <>
+                <div className="text-3xl font-bold text-white mono">{count}</div>
+                {todayData?.launched_today ? (
+                  <div className="flex flex-wrap gap-x-2 gap-y-1 mt-1">
+                    {todayData.launches.map((l, i) => (
+                      <button
+                        key={i}
+                        onClick={() => {
+                          setExpandedMonth(l.month)
+                          setSelectedLaunch(prev => (sameLaunch(prev, l) ? null : l))
+                        }}
+                        title="Ver no mapa a posição mais próxima após o lançamento"
+                        className={`text-xs mono font-medium hover:underline flex items-center gap-1 ${
+                          isDaytime(l.time_local) ? 'text-amber-400' : 'text-indigo-400'
+                        }`}
+                      >
+                        {isDaytime(l.time_local) ? <Sun size={10} /> : <Moon size={10} />}
+                        {l.time_local}
+                      </button>
+                    ))}
+                  </div>
+                ) : !hadFlightToday ? (
+                  <div className="text-xs text-gray-600 mt-1">Nenhum lançamento</div>
+                ) : null}
+                {(hadFlightToday || !liveFlightChecked) && (
+                  <div className="mt-2 pt-2 border-t border-[#2a2a2a] flex flex-col gap-1.5">
+                    {!liveFlightChecked ? (
+                      <span className="text-xs text-gray-600 flex items-center gap-1">
+                        <Loader2 size={10} className="animate-spin" /> Verificando voo…
+                      </span>
+                    ) : todayFlights.length > 0 ? (
+                      todayFlights.map(f => (
+                        <div key={f.sondeNumber} className="flex flex-col">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className={`text-xs font-semibold flex items-center gap-1 ${
+                              f.isLive ? 'text-red-400' : 'text-green-400'
+                            }`}>
+                              <Wind size={11} />
+                              {f.isLive
+                                ? (f.climbing >= 0 ? 'Em voo (subindo)' : 'Em voo (descendo)')
+                                : 'Pousada'}
+                            </span>
+                            <span className="text-xs text-emerald-400 mono font-medium">
+                              {Math.round(f.altitude).toLocaleString('pt-BR')} m
+                            </span>
+                            <span className="text-xs text-amber-400 mono font-medium">{f.sondeNumber}</span>
+                            <a
+                              href={sondeHubUrl(f.sondeNumber)}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-xs text-indigo-400 hover:underline"
+                            >
+                              Ver no SondeHub
+                            </a>
+                          </div>
+                          <span className="text-[11px] text-violet-400/80 mono" title="Último report (GMT-3)">
+                            {formatGmt3(f.lastReportUtc)}
+                          </span>
+                        </div>
+                      ))
+                    ) : (
+                      <span className="text-xs text-gray-500">Sem dados de voo do radiosondy.info ainda</span>
+                    )}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )
+      })()}
+
       {error && (
         <div className="card p-4 mb-6 border-red-500/20 bg-red-500/5 flex items-start gap-3">
           <AlertCircle size={18} className="text-red-400 flex-shrink-0 mt-0.5" />
@@ -409,49 +543,7 @@ export default function HistoricoPage() {
       {data ? (
         <>
           {/* Summary cards */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
-            <div className={`relative card p-5 border-2 ring-2 ring-blue-500/30 shadow-lg shadow-blue-500/10 bg-blue-500/[0.04] ${
-              todayLoading ? 'border-[#2a2a2a]' : todayData?.launched_today ? 'border-green-500/40' : 'border-red-500/25'
-            }`}>
-              <span className="absolute -top-2 left-3 px-1.5 py-0.5 rounded-full bg-blue-600 text-[9px] font-semibold text-white tracking-wide uppercase">
-                Ao vivo
-              </span>
-              <div className="text-xs text-gray-500 mb-1 flex items-center gap-1.5">
-                {todayLoading ? <Clock size={12} /> : todayData?.launched_today
-                  ? <CheckCircle2 size={12} className="text-green-400" />
-                  : <XCircle size={12} className="text-red-400" />}
-                Hoje
-              </div>
-              {todayLoading ? (
-                <div className="text-3xl font-bold text-gray-600 mono">—</div>
-              ) : (
-                <>
-                  <div className="text-3xl font-bold text-white mono">{todayData?.count ?? 0}</div>
-                  {todayData?.launched_today ? (
-                    <div className="flex flex-wrap gap-x-2 gap-y-1 mt-1">
-                      {todayData.launches.map((l, i) => (
-                        <button
-                          key={i}
-                          onClick={() => {
-                            setExpandedMonth(l.month)
-                            setSelectedLaunch(prev => (sameLaunch(prev, l) ? null : l))
-                          }}
-                          title="Ver no mapa a posição mais próxima após o lançamento"
-                          className={`text-xs mono font-medium hover:underline flex items-center gap-1 ${
-                            isDaytime(l.time_local) ? 'text-amber-400' : 'text-indigo-400'
-                          }`}
-                        >
-                          {isDaytime(l.time_local) ? <Sun size={10} /> : <Moon size={10} />}
-                          {l.time_local}
-                        </button>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="text-xs text-gray-600 mt-1">Nenhum lançamento</div>
-                  )}
-                </>
-              )}
-            </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
             <div className="card p-5">
               <div className="text-xs text-gray-500 mb-1 flex items-center gap-1.5"><BarChart3 size={12} /> Total de sondagens</div>
               <div className="text-3xl font-bold text-white mono">{data.count}</div>
@@ -562,7 +654,12 @@ export default function HistoricoPage() {
                           )
                             .sort(([a], [b]) => a.localeCompare(b))
                             .map(([date, dayLaunches]) => (
-                              <div key={date} className="p-3 bg-[#1a1a1a] border border-[#2a2a2a] rounded text-xs">
+                              <div
+                                key={date}
+                                className={`p-3 bg-[#1a1a1a] border rounded text-xs ${
+                                  selectedLaunch?.date === date ? 'border-red-500' : 'border-[#2a2a2a]'
+                                }`}
+                              >
                                 <div className="text-gray-500 text-[11px] mb-1.5">
                                   {new Date(date + 'T12:00:00').toLocaleDateString('pt-BR', { month: 'short', day: 'numeric' })}
                                 </div>
