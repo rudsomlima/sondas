@@ -49,11 +49,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             </div>
             <div>
               <div className="text-sm font-semibold text-white leading-tight">Sondas Natal</div>
-              <div className="text-xs text-gray-500 mono">INMET · 82599</div>
+              <div className="text-xs text-gray-400 mono">INMET · 82599</div>
             </div>
             <button
               onClick={() => setSidebarOpen(false)}
-              className="ml-auto lg:hidden text-gray-500 hover:text-white"
+              className="ml-auto lg:hidden text-gray-400 hover:text-white"
             >
               <X size={18} />
             </button>
@@ -61,7 +61,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
           {/* Nav */}
           <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
-            <p className="text-xs text-gray-600 uppercase tracking-wider px-3 mb-3 font-medium">
+            <p className="text-xs text-gray-400 uppercase tracking-wider px-3 mb-3 font-medium">
               Monitoramento
             </p>
             {navItems.map(({ href, icon: Icon, label, desc }) => {
@@ -76,7 +76,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                   <Icon size={16} />
                   <div className="flex-1 min-w-0">
                     <div className="font-medium">{label}</div>
-                    <div className="text-xs text-gray-600 truncate">{desc}</div>
+                    <div className="text-xs text-gray-400 truncate">{desc}</div>
                   </div>
                   {active && <ChevronRight size={14} className="text-blue-400" />}
                 </Link>
@@ -86,11 +86,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
           {/* Footer */}
           <div className="px-4 py-4 border-t border-[#2a2a2a]">
-            <div className="flex items-center gap-2 text-xs text-gray-600">
+            <div className="flex items-center gap-2 text-xs text-gray-400">
               <Wind size={12} />
               <span>Dados: University of Wyoming</span>
             </div>
-            <div className="text-xs text-gray-700 mt-1 mono">GMT-3 · Natal/RN</div>
+            <div className="text-xs text-gray-400 mt-1 mono">GMT-3 · Natal/RN</div>
           </div>
         </aside>
 

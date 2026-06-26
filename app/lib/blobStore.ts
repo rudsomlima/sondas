@@ -22,6 +22,8 @@ interface Launch {
   day: number
   month: number
   year: number
+  // Preenchido pelo sync em segundo plano (app/api/radiosondy-sync/route.ts).
+  radiosondyMatch?: 'yes' | 'no'
 }
 
 export interface YearStore {
@@ -31,15 +33,23 @@ export interface YearStore {
   updatedAt: number
 }
 
-function pathFor(year: number) {
-  return `sondas/history-${year}.json`
+const DEFAULT_STATION_ID = '82599'
+
+// Mantém o caminho antigo (sem estação) para a estação padrão, preservando o
+// histórico já persistido antes de existir seleção de estação; demais
+// estações ganham seu próprio arquivo.
+function pathFor(station: string, year: number) {
+  return station === DEFAULT_STATION_ID
+    ? `sondas/history-${year}.json`
+    : `sondas/history-${station}-${year}.json`
 }
 
-export async function readYearStore(year: number): Promise<YearStore | null> {
+export async function readYearStore(station: string, year: number): Promise<YearStore | null> {
   if (!hasBlobCredentials()) return null
   try {
-    const { blobs } = await list({ prefix: pathFor(year) })
-    const blob = blobs.find(b => b.pathname === pathFor(year))
+    const path = pathFor(station, year)
+    const { blobs } = await list({ prefix: path })
+    const blob = blobs.find(b => b.pathname === path)
     if (!blob) return null
     const res = await fetch(blob.url, { cache: 'no-store' })
     if (!res.ok) return null
@@ -50,10 +60,10 @@ export async function readYearStore(year: number): Promise<YearStore | null> {
   }
 }
 
-export async function writeYearStore(store: YearStore): Promise<void> {
+export async function writeYearStore(station: string, store: YearStore): Promise<void> {
   if (!hasBlobCredentials()) return
   try {
-    await put(pathFor(store.year), JSON.stringify(store), {
+    await put(pathFor(station, store.year), JSON.stringify(store), {
       access: 'public',
       addRandomSuffix: false,
       allowOverwrite: true,

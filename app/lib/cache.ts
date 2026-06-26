@@ -9,10 +9,16 @@ export interface CacheEntry {
   launches: any[]
   timestamp: number
   version: number // para detectar alterações de formato
+  station?: string // ausente = estação padrão (82599), para compatibilidade com cache antigo
 }
 
 const CACHE_KEY = 'sondas_cache_v1'
 const CACHE_VERSION = 1
+const DEFAULT_STATION = '82599'
+
+function stationOf(e: { station?: string }): string {
+  return e.station ?? DEFAULT_STATION
+}
 
 /**
  * Lê todas as entradas de cache
@@ -37,10 +43,11 @@ export function writeCache(entry: CacheEntry): void {
   if (typeof window === 'undefined') return
   try {
     const entries = readCache()
+    const station = stationOf(entry)
     // Remove entrada antiga se existir
-    const filtered = entries.filter(e => !(e.year === entry.year && e.month === entry.month))
+    const filtered = entries.filter(e => !(e.year === entry.year && e.month === entry.month && stationOf(e) === station))
     // Adiciona nova
-    filtered.push({ ...entry, timestamp: Date.now(), version: CACHE_VERSION })
+    filtered.push({ ...entry, station, timestamp: Date.now(), version: CACHE_VERSION })
     localStorage.setItem(CACHE_KEY, JSON.stringify(filtered))
   } catch (e) {
     console.warn('Erro ao salvar cache:', e)
@@ -50,26 +57,26 @@ export function writeCache(entry: CacheEntry): void {
 /**
  * Lê cache para mês específico
  */
-export function getCacheEntry(year: number, month: number): CacheEntry | null {
+export function getCacheEntry(year: number, month: number, station: string = DEFAULT_STATION): CacheEntry | null {
   const entries = readCache()
-  return entries.find(e => e.year === year && e.month === month) ?? null
+  return entries.find(e => e.year === year && e.month === month && stationOf(e) === station) ?? null
 }
 
 /**
  * Lê todos os meses de um ano
  */
-export function getCacheByYear(year: number): CacheEntry[] {
-  return readCache().filter(e => e.year === year)
+export function getCacheByYear(year: number, station: string = DEFAULT_STATION): CacheEntry[] {
+  return readCache().filter(e => e.year === year && stationOf(e) === station)
 }
 
 /**
  * Remove cache de um mês específico
  */
-export function clearMonth(year: number, month: number): void {
+export function clearMonth(year: number, month: number, station: string = DEFAULT_STATION): void {
   if (typeof window === 'undefined') return
   try {
     const entries = readCache()
-    const filtered = entries.filter(e => !(e.year === year && e.month === month))
+    const filtered = entries.filter(e => !(e.year === year && e.month === month && stationOf(e) === station))
     localStorage.setItem(CACHE_KEY, JSON.stringify(filtered))
   } catch (e) {
     console.warn('Erro ao limpar cache do mês:', e)
@@ -79,11 +86,11 @@ export function clearMonth(year: number, month: number): void {
 /**
  * Remove cache de um ano inteiro
  */
-export function clearYear(year: number): void {
+export function clearYear(year: number, station: string = DEFAULT_STATION): void {
   if (typeof window === 'undefined') return
   try {
     const entries = readCache()
-    const filtered = entries.filter(e => e.year !== year)
+    const filtered = entries.filter(e => !(e.year === year && stationOf(e) === station))
     localStorage.setItem(CACHE_KEY, JSON.stringify(filtered))
   } catch (e) {
     console.warn('Erro ao limpar cache do ano:', e)

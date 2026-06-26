@@ -1,31 +1,25 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import {
-  Settings, Save, RotateCcw, Info, Clock,
-  CheckCircle2, Radio
+  Settings, Save, RotateCcw, Info, CheckCircle2, Radio, Search, Check
 } from 'lucide-react'
+import {
+  Station, DEFAULT_STATION, searchStations, getSelectedStation, setSelectedStation,
+} from '@/app/lib/stations'
 
 interface Config {
-  stationId: string
-  region: string
-  fromHour: string
-  toHour: string
-  timezone: string
   autoRefreshMinutes: number
 }
 
 const DEFAULT_CONFIG: Config = {
-  stationId: '82599',
-  region: 'naconf',
-  fromHour: '01',
-  toHour: '23',
-  timezone: 'GMT-3',
   autoRefreshMinutes: 10,
 }
 
 export default function ConfiguracoesPage() {
   const [config, setConfig] = useState<Config>(DEFAULT_CONFIG)
+  const [station, setStation] = useState<Station>(DEFAULT_STATION)
+  const [query, setQuery] = useState('')
   const [saved, setSaved] = useState(false)
 
   useEffect(() => {
@@ -33,11 +27,15 @@ export default function ConfiguracoesPage() {
       const stored = localStorage.getItem('sondas_settings')
       if (stored) setConfig({ ...DEFAULT_CONFIG, ...JSON.parse(stored) })
     } catch {}
+    setStation(getSelectedStation())
   }, [])
+
+  const results = useMemo(() => searchStations(query), [query])
 
   const handleSave = () => {
     try {
       localStorage.setItem('sondas_settings', JSON.stringify(config))
+      setSelectedStation(station)
       setSaved(true)
       setTimeout(() => setSaved(false), 2500)
     } catch {}
@@ -45,11 +43,13 @@ export default function ConfiguracoesPage() {
 
   const handleReset = () => {
     setConfig(DEFAULT_CONFIG)
+    setStation(DEFAULT_STATION)
     localStorage.removeItem('sondas_settings')
+    setSelectedStation(DEFAULT_STATION)
     setSaved(false)
   }
 
-  const update = (key: keyof Config, value: string | number) =>
+  const update = (key: keyof Config, value: number) =>
     setConfig(prev => ({ ...prev, [key]: value }))
 
   return (
@@ -59,82 +59,59 @@ export default function ConfiguracoesPage() {
           <Settings size={22} className="text-blue-400" />
           Configurações
         </h1>
-        <p className="text-gray-500 text-sm mt-1">Parâmetros de extração e exibição de dados</p>
+        <p className="text-gray-400 text-sm mt-1">Parâmetros de extração e exibição de dados</p>
       </div>
 
       {/* Station */}
       <div className="card p-5 mb-4">
-        <h2 className="text-sm font-semibold text-white mb-4 flex items-center gap-2">
+        <h2 className="text-sm font-semibold text-white mb-1 flex items-center gap-2">
           <Radio size={14} className="text-blue-400" />
           Estação
         </h2>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <div>
-            <label className="block text-xs text-gray-500 mb-1.5">ID da Estação (STNM)</label>
-            <input
-              type="text"
-              value={config.stationId}
-              onChange={e => update('stationId', e.target.value)}
-              className="w-full bg-[#111111] border border-[#2a2a2a] rounded-md px-3 py-2 text-sm text-white outline-none focus:border-blue-500 mono"
-              placeholder="82599"
-            />
-            <p className="text-xs text-gray-700 mt-1">Natal = 82599</p>
-          </div>
-          <div>
-            <label className="block text-xs text-gray-500 mb-1.5">Região (region)</label>
-            <select
-              value={config.region}
-              onChange={e => update('region', e.target.value)}
-              className="w-full bg-[#111111] border border-[#2a2a2a] rounded-md px-3 py-2 text-sm text-white outline-none focus:border-blue-500 cursor-pointer"
-            >
-              <option value="naconf">naconf — América do Sul/Central</option>
-              <option value="samer">samer — América do Sul</option>
-              <option value="carib">carib — Caribe</option>
-              <option value="pac">pac — Pacífico</option>
-              <option value="ant">ant — Antártica</option>
-            </select>
-          </div>
+        <p className="text-xs text-gray-400 mb-3">
+          Selecionada: <span className="text-blue-300 mono font-medium">{station.id}</span> — <span className="text-gray-200">{station.name}</span>
+        </p>
+        <div className="relative mb-2">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+          <input
+            type="text"
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            placeholder="Buscar por nome ou STNM (ex.: Natal, 82599, Buenos Aires)…"
+            className="w-full bg-[#111111] border border-[#2a2a2a] rounded-md pl-9 pr-3 py-2 text-sm text-white outline-none focus:border-blue-500"
+          />
         </div>
-      </div>
-
-      {/* Time period */}
-      <div className="card p-5 mb-4">
-        <h2 className="text-sm font-semibold text-white mb-4 flex items-center gap-2">
-          <Clock size={14} className="text-blue-400" />
-          Período de Extração
-        </h2>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <div>
-            <label className="block text-xs text-gray-500 mb-1.5">Hora inicial (FROM)</label>
-            <input
-              type="text"
-              value={config.fromHour}
-              onChange={e => update('fromHour', e.target.value)}
-              className="w-full bg-[#111111] border border-[#2a2a2a] rounded-md px-3 py-2 text-sm text-white outline-none focus:border-blue-500 mono"
-              placeholder="01"
-              maxLength={2}
-            />
-            <p className="text-xs text-gray-700 mt-1">Hora UTC mínima (01 a 23)</p>
-          </div>
-          <div>
-            <label className="block text-xs text-gray-500 mb-1.5">Hora final (TO)</label>
-            <input
-              type="text"
-              value={config.toHour}
-              onChange={e => update('toHour', e.target.value)}
-              className="w-full bg-[#111111] border border-[#2a2a2a] rounded-md px-3 py-2 text-sm text-white outline-none focus:border-blue-500 mono"
-              placeholder="23"
-              maxLength={2}
-            />
-            <p className="text-xs text-gray-700 mt-1">Hora UTC máxima (01 a 23)</p>
-          </div>
+        <div className="max-h-56 overflow-y-auto border border-[#2a2a2a] rounded-md divide-y divide-[#2a2a2a]">
+          {results.length === 0 ? (
+            <p className="text-xs text-gray-400 p-3">Nenhuma estação encontrada.</p>
+          ) : (
+            results.map(s => {
+              const isSelected = s.id === station.id
+              return (
+                <button
+                  key={s.id}
+                  type="button"
+                  onClick={() => {
+                    setStation(s)
+                    setQuery(s.name)
+                  }}
+                  className={`w-full text-left px-3 py-2 text-xs flex items-center justify-between gap-2 hover:bg-white/10 transition-colors cursor-pointer ${
+                    isSelected ? 'bg-blue-500/15 text-blue-300' : 'text-gray-200'
+                  }`}
+                >
+                  <span className="flex items-center gap-1.5">
+                    {isSelected && <Check size={12} className="text-blue-400 flex-shrink-0" />}
+                    {s.name}
+                  </span>
+                  <span className="mono text-gray-400 flex-shrink-0">{s.id}</span>
+                </button>
+              )
+            })
+          )}
         </div>
-        <div className="mt-4 p-3 bg-blue-500/5 border border-blue-500/15 rounded-md flex gap-2.5">
-          <Info size={14} className="text-blue-400 flex-shrink-0 mt-0.5" />
-          <p className="text-xs text-gray-400">
-            O servidor Wyoming usa horário UTC. Lançamentos padrão do INMET: 00Z e 12Z (equivalente a 21h e 09h em GMT-3).
-          </p>
-        </div>
+        <p className="text-xs text-gray-400 mt-2">
+          Lista de estações de radiossondagem ativas na América do Sul (fonte: University of Wyoming).
+        </p>
       </div>
 
       {/* Display */}
@@ -144,7 +121,7 @@ export default function ConfiguracoesPage() {
           Exibição
         </h2>
         <div>
-          <label className="block text-xs text-gray-500 mb-1.5">Atualização automática</label>
+          <label className="block text-xs text-gray-400 mb-1.5">Atualização automática</label>
           <select
             value={config.autoRefreshMinutes}
             onChange={e => update('autoRefreshMinutes', Number(e.target.value))}
@@ -156,7 +133,13 @@ export default function ConfiguracoesPage() {
             <option value={60}>A cada 1 hora</option>
             <option value={0}>Desativada</option>
           </select>
-          <p className="text-xs text-gray-700 mt-1">Intervalo de reconsulta automática na página principal.</p>
+          <p className="text-xs text-gray-400 mt-1">Intervalo de reconsulta automática na página principal.</p>
+        </div>
+        <div className="mt-4 p-3 bg-blue-500/5 border border-blue-500/15 rounded-md flex gap-2.5">
+          <Info size={14} className="text-blue-400 flex-shrink-0 mt-0.5" />
+          <p className="text-xs text-gray-400">
+            A extração sempre cobre o dia inteiro (00Z a 23Z, GMT-3) — não há período parcial configurável.
+          </p>
         </div>
       </div>
 
@@ -185,14 +168,14 @@ export default function ConfiguracoesPage() {
       </div>
 
       <div className="mt-8 p-4 card">
-        <p className="text-xs text-gray-600 font-medium mb-2">Sobre os dados</p>
-        <p className="text-xs text-gray-700 leading-relaxed">
+        <p className="text-xs text-gray-300 font-medium mb-2">Sobre os dados</p>
+        <p className="text-xs text-gray-400 leading-relaxed">
           Os dados são extraídos em tempo real do servidor da{' '}
-          <a href="https://weather.uwyo.edu" target="_blank" rel="noopener" className="text-blue-500 hover:underline">
+          <a href="https://weather.uwyo.edu" target="_blank" rel="noopener" className="text-blue-400 hover:underline">
             University of Wyoming
           </a>
           . Todos os horários são convertidos de UTC para GMT-3 (horário de Brasília/Natal).
-          A estação padrão é a <strong className="text-gray-500">82599 — Natal Aeroporto</strong>.
+          A estação padrão é a <strong className="text-gray-200">82599 — Natal Aeroporto</strong>.
         </p>
       </div>
     </div>
