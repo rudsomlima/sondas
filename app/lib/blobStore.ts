@@ -24,6 +24,10 @@ interface Launch {
   year: number
   // Preenchido pelo sync em segundo plano (app/api/radiosondy-sync/route.ts).
   radiosondyMatch?: 'yes' | 'no'
+  // Estações sem cobertura na Wyoming (Station.wyomingSupported === false):
+  // 'radiosondy'/'sondehub' = horário aproximado. Ausente = Wyoming (padrão).
+  source?: 'wyoming' | 'radiosondy' | 'sondehub'
+  approx?: boolean
 }
 
 export interface YearStore {

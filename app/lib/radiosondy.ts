@@ -82,8 +82,8 @@ export function matchesStartplace(pos: LiveSondePosition, startplace: string): b
 // Link para o mapa de rastreamento externo do SondeHub, centrado na última
 // posição conhecida da própria sonde (em voo ou já pousada) — antes este
 // centro era fixo em Natal/RN, errado para qualquer outra estação/sonde.
-export function sondeHubUrl(sondeNumber: string, lat: number, lon: number): string {
-  return `https://sondehub.org/?sondehub=1#!mt=Mapnik&mz=10&qm=12h&mc=${lat},${lon}&f=${sondeNumber}`
+export function sondeHubUrl(sondeNumber: string, lat: number, lon: number, mz = 10): string {
+  return `https://sondehub.org/?sondehub=1#!mt=Mapnik&mz=${mz}&qm=12h&mc=${lat},${lon}&f=${sondeNumber}&q=${sondeNumber}`
 }
 
 const GMT3 = -3 * 60 * 60 * 1000
@@ -104,7 +104,7 @@ export interface TodayFlight {
   isLive: boolean // true = ainda em voo agora; false = já pousou
 }
 
-function toReportStr(date: Date): string {
+export function toReportStr(date: Date): string {
   const pad = (n: number) => String(n).padStart(2, '0')
   return `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())} ` +
     `${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}:${pad(date.getUTCSeconds())}z`
@@ -190,13 +190,82 @@ export function launchUtcInstant(year: number, month: number, day: number, timeU
   return new Date(Date.UTC(year, month - 1, day, hourUtc, 0, 0))
 }
 
+// Estações sem cobertura na Wyoming (Station.wyomingSupported === false) não
+// têm horário de lançamento publicado em lugar nenhum — só o timestamp do
+// ponto de posição/recuperação que o radiosondy.info registrou. Lançamentos
+// de radiossonda seguem o ciclo sinótico padrão (00/06/12/18Z), então
+// arredondar para baixo nessas horas aproxima razoavelmente o horário real.
+export function roundToSynopticHour(date: Date): Date {
+  const hour = Math.floor(date.getUTCHours() / 6) * 6
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), hour, 0, 0))
+}
+
+export interface ApproxLaunch {
+  date: string
+  time_local: string
+  time_utc: string
+  day: number
+  month: number
+  year: number
+  source: 'radiosondy'
+  approx: true
+  // Posição já conhecida (a mesma feature usada para aproximar o horário),
+  // embutida pra LaunchMap não precisar refazer o fetch+match por horário
+  // exato (que não faz sentido aqui, já que o horário em si é aproximado).
+  feature: RadiosondyFeature
+}
+
+// Histórico aproximado a partir do radiosondy.info, usado só para estações
+// sem cobertura na Wyoming (ver Station.wyomingSupported em app/lib/stations.ts).
+export async function fetchRadiosondyLaunches(year: number, month: number, startplace: string): Promise<ApproxLaunch[]> {
+  const features = await fetchRadiosondyFeatures(year, month, startplace)
+  const GMT3_MS = -3 * 60 * 60 * 1000
+  const pad = (n: number) => String(n).padStart(2, '0')
+
+  const byRoundedUtc = new Map<number, RadiosondyFeature>()
+  for (const f of features) {
+    const rounded = roundToSynopticHour(f.date).getTime()
+    if (!byRoundedUtc.has(rounded)) byRoundedUtc.set(rounded, f)
+  }
+
+  const out: ApproxLaunch[] = []
+  for (const [utcMs, feature] of byRoundedUtc) {
+    const utcDate = new Date(utcMs)
+    if (utcDate.getUTCFullYear() !== year || utcDate.getUTCMonth() + 1 !== month) continue
+
+    // Mesmo cuidado de fronteira de mês usado em app/api/sounding/route.ts
+    // (parseLaunches): o ajuste de -3h pode empurrar a data pro mês anterior.
+    // Quando isso acontece, mantém a data original em UTC em vez da local.
+    let localDate = new Date(utcMs + GMT3_MS)
+    if (localDate.getUTCFullYear() !== year || localDate.getUTCMonth() + 1 !== month) {
+      localDate = utcDate
+    }
+    out.push({
+      date: `${localDate.getUTCFullYear()}-${pad(localDate.getUTCMonth() + 1)}-${pad(localDate.getUTCDate())}`,
+      time_local: `${pad(localDate.getUTCHours())}:${pad(localDate.getUTCMinutes())}`,
+      time_utc: `${pad(utcDate.getUTCHours())}:00Z`,
+      day: localDate.getUTCDate(),
+      month: localDate.getUTCMonth() + 1,
+      year: localDate.getUTCFullYear(),
+      source: 'radiosondy',
+      approx: true,
+      feature,
+    })
+  }
+  return out
+}
+
 export async function fetchRadiosondyFeatures(year: number, month: number, startplace: string): Promise<RadiosondyFeature[]> {
   const pad = (n: number) => String(n).padStart(2, '0')
   const url = `https://radiosondy.info/export/export_search.php?kml=1&search_limit=1000&startplace=${encodeURIComponent(startplace)}&date_from=${year}-${pad(month)}-01&date_to=${year}-${pad(month)}-${pad(lastDayOfMonth(year, month))}`
 
   const res = await fetch(url)
   if (!res.ok) throw new Error(`Erro ${res.status} ao consultar radiosondy.info`)
-  const geojson = await res.json()
+  // O radiosondy.info devolve corpo vazio (200 OK, 0 bytes) em vez de um
+  // GeoJSON com features=[] quando não há nenhum resultado pro filtro —
+  // res.json() direto quebra ("Unexpected end of JSON input") nesse caso.
+  const text = await res.text()
+  const geojson = text.trim() ? JSON.parse(text) : { features: [] }
 
   const out: RadiosondyFeature[] = []
   for (const f of geojson?.features ?? []) {
@@ -315,13 +384,13 @@ export const LEGEND_ITEMS: { label: string; color: string }[] = [
   { label: 'Encontrada', color: statusColor('FOUND') },
   { label: 'Perdida', color: statusColor('LOST') },
   { label: 'Desconhecida', color: statusColor('UNKNOWN') },
-  { label: 'Em voo', color: LIVE_COLOR },
 ]
 
 let balloonIconCounter = 0
 
 export interface IconLabel {
   day: number // dia do mês (GMT-3)
+  month?: number // mês (GMT-3), só preenchido quando o rótulo precisa diferenciar meses (mapa do ano)
   daytime: boolean // true = lançamento diurno (sol), false = noturno (lua)
 }
 
@@ -330,6 +399,18 @@ export interface IconLabel {
 export function gmt3IconLabel(date: Date): IconLabel {
   const local = new Date(date.getTime() + GMT3)
   return { day: local.getUTCDate(), daytime: local.getUTCHours() >= 6 && local.getUTCHours() < 18 }
+}
+
+// Mesma conversão de gmt3IconLabel, mas incluindo o mês — usado no mapa do
+// ano (app/historico/YearMap.tsx), onde ícones de meses diferentes aparecem
+// juntos e só o dia não basta para identificar o lançamento.
+export function gmt3IconLabelWithMonth(date: Date): IconLabel {
+  const local = new Date(date.getTime() + GMT3)
+  return {
+    day: local.getUTCDate(),
+    month: local.getUTCMonth() + 1,
+    daytime: local.getUTCHours() >= 6 && local.getUTCHours() < 18,
+  }
 }
 
 // Ícones minúsculos de sol/lua (mesmo estilo do lucide-react usado nos
@@ -347,7 +428,9 @@ function sunMoonSvgMarkup(daytime: boolean): string {
 // como preenchimento sólido em vez de texto, pra ficar legível em miniatura.
 function iconLabelMarkup(label: IconLabel): string {
   const bg = label.daytime ? '#d97706' : '#4f46e5' // amber-600 / indigo-600
-  return `<div style="display:flex;align-items:center;justify-content:center;gap:2px;margin-top:2px;background:${bg};border:1px solid rgba(255,255,255,0.5);border-radius:4px;padding:1px 4px;white-space:nowrap;">${sunMoonSvgMarkup(label.daytime)}<span style="color:#fff;font-size:10px;font-family:monospace;font-weight:700;line-height:1.3;">${label.day}</span></div>`
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const text = label.month ? `${pad(label.day)}/${pad(label.month)}` : String(label.day)
+  return `<div style="display:flex;align-items:center;justify-content:center;gap:2px;margin-top:2px;background:${bg};border:1px solid rgba(255,255,255,0.5);border-radius:4px;padding:1px 4px;white-space:nowrap;">${sunMoonSvgMarkup(label.daytime)}<span style="color:#fff;font-size:10px;font-family:monospace;font-weight:700;line-height:1.3;">${text}</span></div>`
 }
 
 const LABEL_HEIGHT_PX = 16

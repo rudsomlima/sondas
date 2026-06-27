@@ -36,7 +36,11 @@ export async function GET() {
   const currentYear = local.getUTCFullYear()
   const currentMonth = local.getUTCMonth() + 1
 
-  const stations = SOUTH_AMERICA_STATIONS.filter(s => s.radiosondyStartplace)
+  // Estações sem cobertura na Wyoming (wyomingSupported === false) já têm o
+  // histórico inteiro derivado do radiosondy.info (ver fetchRadiosondyLaunches
+  // em app/lib/radiosondy.ts) — não existe um lançamento "separado" da
+  // Wyoming pra cruzar aqui, então não faz sentido aplicar o match.
+  const stations = SOUTH_AMERICA_STATIONS.filter(s => s.radiosondyStartplace && s.wyomingSupported !== false)
 
   let liveFlightsCache: LiveSondePosition[] | null = null
   async function liveFlightsOnce(): Promise<LiveSondePosition[]> {

@@ -19,6 +19,13 @@ export interface Station {
   // 1:1 — relacionados por geografia, não por nome; ver app/lib/radiosondy.ts).
   // Ausente = sem cobertura conhecida de recuperação via radiosondy.info.
   radiosondyStartplace?: string
+  // false = estação sem radiossondagem ativa publicada na Wyoming (confirmado
+  // por teste real: STNM válido mas sem nenhuma linha "Observations at" no
+  // arquivo da Wyoming). Ausente/true = comportamento normal (Wyoming é a
+  // fonte do histórico). Quando false, app/api/sounding/route.ts usa o
+  // radiosondy.info como fonte aproximada do histórico (ver fetchRadiosondyLaunches
+  // em app/lib/radiosondy.ts) em vez de consultar a Wyoming.
+  wyomingSupported?: boolean
 }
 
 export const REGION = 'samer'
@@ -33,6 +40,10 @@ export const SOUTH_AMERICA_STATIONS: Station[] = [
   { id: '85442', name: 'Antofagasta, Chile', lat: -23.45308, lon: -70.44069 },
   { id: '84754', name: 'Arequipa, Peru', lat: -16.40422, lon: -71.55156 },
   { id: '82193', name: 'Belem (Aeroporto), Brazil', lat: -1.38, lon: -48.48 },
+  {
+    id: '82400', name: 'Fernando de Noronha (Aeroporto), Brazil', lat: -3.85, lon: -32.42,
+    radiosondyStartplace: 'Fernando De Noronha (BR)', wyomingSupported: false,
+  },
   { id: '83566', name: 'Belo Horizonte (Confins), Brazil', lat: -19.62, lon: -43.57, radiosondyStartplace: 'Confins (BR)' },
   { id: '82022', name: 'Boa Vista, Brazil', lat: 2.83, lon: -60.7 },
   { id: '80222', name: 'Bogota/Eldorado, Colombia', lat: 4.7, lon: -74.15, radiosondyStartplace: 'Bogota (CO)' },

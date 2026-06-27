@@ -4,12 +4,13 @@ import { useEffect, useRef, useState } from 'react'
 import 'leaflet/dist/leaflet.css'
 import { AlertCircle, Loader2, ExternalLink, AlertTriangle, X } from 'lucide-react'
 import {
-  externalRadiosondyUrl, launchUtcInstant, fetchRadiosondyFeatures, fetchLiveFlights,
-  findRecoveredMatch, findLiveMatch, isWithinMatchWindow, statusColor, buildBalloonIcon,
-  buildHighlightBalloonIcon, buildHighlightLiveBalloonIcon, gmt3IconLabel, LEGEND_ITEMS, LIVE_COLOR,
-  RadiosondyFeature, LiveSondePosition,
+  externalRadiosondyUrl, launchUtcInstant, fetchRadiosondyFeatures,
+  findRecoveredMatch, statusColor, buildBalloonIcon,
+  buildHighlightBalloonIcon, gmt3IconLabel, LEGEND_ITEMS,
+  RadiosondyFeature, roundToSynopticHour, sondeHubUrl,
 } from '@/app/lib/radiosondy'
-import { getRadiosondyStartplace, DEFAULT_STATION } from '@/app/lib/stations'
+import { fetchSondeHubArchiveSondeForDay } from '@/app/lib/sondehub'
+import { getRadiosondyStartplace, findStation, DEFAULT_STATION } from '@/app/lib/stations'
 
 interface Launch {
   date: string
@@ -21,6 +22,12 @@ interface Launch {
   // Preenchido pelo sync em segundo plano (app/api/radiosondy-sync) — quando
   // já se sabe que não há correspondência, evita o fetch no navegador.
   radiosondyMatch?: 'yes' | 'no'
+  // Estações sem cobertura na Wyoming (Station.wyomingSupported === false):
+  // 'radiosondy'/'sondehub' = horário aproximado, sem janela de match por
+  // horário exato (ver bloco approx no useEffect abaixo). Ausente = Wyoming
+  // (padrão).
+  source?: 'wyoming' | 'radiosondy' | 'sondehub'
+  approx?: boolean
 }
 
 const BALLOON_SIZE = 15
@@ -48,13 +55,20 @@ export default function LaunchMap({ launch, onClose, onResult, station = DEFAULT
   const [status, setStatus] = useState<string | null>('Consultando radiosondy.info…')
   const [error, setError] = useState<string | null>(null)
   const [approx, setApprox] = useState(false)
-  const [stillFlying, setStillFlying] = useState(false)
   // Link pra fonte (Wyoming) que confirma o lançamento, mostrado só quando o
   // radiosondy.info não tem nenhuma correspondência real pra esse horário.
   const [sourceUrl, setSourceUrl] = useState<string | null>(null)
+  // Sem nenhum voo no radiosondy.info pro mês inteiro (não só pro horário
+  // clicado): nesse caso não há nada nosso pra mostrar, então carrega o
+  // próprio mapa do sondehub.org no lugar, em vez de só um erro. Por padrão
+  // centralizado na estação; refinado pro serial exato do dia se achado no
+  // arquivo do sondehub.org (ver useEffect abaixo).
+  const [noRadiosondyMonth, setNoRadiosondyMonth] = useState(false)
+  const [sondeHubMapUrl, setSondeHubMapUrl] = useState<string | null>(null)
 
   const startplace = getRadiosondyStartplace(station)
   const externalUrl = startplace ? externalRadiosondyUrl(launch.year, launch.month, startplace) : null
+  const stationCoords = findStation(station)
 
   // Rola a tela para deixar o mapa centralizado ao abrir
   useEffect(() => {
@@ -95,6 +109,8 @@ export default function LaunchMap({ launch, onClose, onResult, station = DEFAULT
       if (isFirstLoad) setStatus('Consultando radiosondy.info…')
       setError(null)
       setSourceUrl(null)
+      setNoRadiosondyMonth(false)
+      setSondeHubMapUrl(stationCoords ? `https://sondehub.org/?sondehub=1#!mt=Mapnik&mz=8&qm=12h&mc=${stationCoords.lat},${stationCoords.lon}` : null)
       try {
         const cacheKey = `${startplace}-${launch.year}-${launch.month}`
         let features = featuresCacheRef.current.get(cacheKey)
@@ -103,24 +119,39 @@ export default function LaunchMap({ launch, onClose, onResult, station = DEFAULT
           if (cancelled) return
           featuresCacheRef.current.set(cacheKey, features)
         }
-        if (features.length === 0) throw new Error('Nenhum voo encontrado no radiosondy.info para este mês.')
+        if (features.length === 0) {
+          // Sem nada do radiosondy.info pro mês inteiro: não tem posição
+          // nossa pra mostrar de jeito nenhum — carrega o mapa do próprio
+          // sondehub.org no lugar, em vez de um erro vazio. Tenta achar o
+          // serial exato do dia no arquivo do sondehub.org pra focar nele
+          // (em vez de só centralizar na estação, sem saber qual sonda foi).
+          setStatus(null)
+          setNoRadiosondyMonth(true)
+          onResult?.(false)
+          try {
+            const sonde = await fetchSondeHubArchiveSondeForDay(station, launch.year, launch.month, launch.day)
+            if (!cancelled && sonde) {
+              setSondeHubMapUrl(sondeHubUrl(sonde.serial, sonde.lat, sonde.lon, 7))
+            }
+          } catch {
+            // Sem o serial exato: mantém o mapa centralizado na estação já definido acima.
+          }
+          return
+        }
 
         const launchInstant = launchUtcInstant(launch.year, launch.month, launch.day, launch.time_utc, launch.time_local)
-        // Primeiro tenta resolver só com o que já foi buscado (sem rede). O
-        // feed ao vivo (~1MB) só é buscado se isso falhar e o lançamento for
-        // recente o bastante pra ainda estar em voo — evita o fetch pesado
-        // em toda troca de horário (mesmo de lançamentos antigos já pousados).
-        const recovered = findRecoveredMatch(features, launchInstant)
-        let result: { kind: 'recovered'; feature: RadiosondyFeature; approx: boolean }
-          | { kind: 'live'; position: LiveSondePosition }
-          | null = recovered ? { kind: 'recovered', ...recovered } : null
 
-        if (!result && isWithinMatchWindow(launchInstant)) {
-          const liveFlights = await fetchLiveFlights().catch(() => [])
-          if (cancelled) return
-          const live = findLiveMatch(liveFlights, startplace)
-          if (live) result = { kind: 'live', position: live }
-        }
+        // Lançamento aproximado (estação sem cobertura na Wyoming, horário
+        // derivado do próprio radiosondy.info): não existe um horário exato
+        // de lançamento pra aplicar a janela de match de findRecoveredMatch —
+        // a posição certa é a feature cujo arredondamento sinótico gerou esse
+        // horário aproximado em primeiro lugar.
+        const result = launch.approx
+          ? (() => {
+              const feature = features.find(f => roundToSynopticHour(f.date).getTime() === launchInstant.getTime())
+              return feature ? { feature, approx: true } : null
+            })()
+          : findRecoveredMatch(features, launchInstant)
 
         if (!result) {
           // Mostra a fonte (Wyoming) que confirma que houve esse lançamento,
@@ -130,8 +161,7 @@ export default function LaunchMap({ launch, onClose, onResult, station = DEFAULT
         }
         if (cancelled) return
 
-        setApprox(result.kind === 'recovered' && result.approx)
-        setStillFlying(result.kind === 'live')
+        setApprox(result.approx)
         setStatus(null)
 
         const L = (await import('leaflet')).default
@@ -157,41 +187,22 @@ export default function LaunchMap({ launch, onClose, onResult, station = DEFAULT
         const map = mapRef.current
 
         markersLayerRef.current.clearLayers()
-        const matchedFeature = result.kind === 'recovered' ? result.feature : null
         for (const f of features) {
-          if (f === matchedFeature) continue
+          if (f === result.feature) continue
           L.marker([f.lat, f.lon], { icon: buildBalloonIcon(L, statusColor(f.status), BALLOON_SIZE, gmt3IconLabel(f.date)) })
             .addTo(markersLayerRef.current)
             .bindPopup(f.popupContent)
         }
 
-        let resultLat: number, resultLon: number, resultPopup: string
-        if (result.kind === 'recovered') {
-          resultLat = result.feature.lat
-          resultLon = result.feature.lon
-          resultPopup = result.feature.popupContent
-          L.marker([resultLat, resultLon], {
-            icon: buildHighlightBalloonIcon(L, statusColor(result.feature.status), BALLOON_SIZE, gmt3IconLabel(result.feature.date)),
-            zIndexOffset: 1000,
-          }).addTo(markersLayerRef.current).bindPopup(resultPopup)
-        } else {
-          // Ainda em voo: sem pouso registrado, usa a última posição conhecida
-          // do feed ao vivo, com o ícone de paraquedas pra deixar claro que
-          // não é uma posição de recuperação.
-          resultLat = result.position.lat
-          resultLon = result.position.lon
-          resultPopup = result.position.popupContent
-          const reportDate = new Date(result.position.lastReportUtc.replace(' ', 'T').replace(/z$/i, '') + 'Z')
-          L.marker([resultLat, resultLon], {
-            icon: buildHighlightLiveBalloonIcon(L, LIVE_COLOR, BALLOON_SIZE, gmt3IconLabel(reportDate)),
-            zIndexOffset: 1000,
-          }).addTo(markersLayerRef.current).bindPopup(resultPopup)
-        }
+        L.marker([result.feature.lat, result.feature.lon], {
+          icon: buildHighlightBalloonIcon(L, statusColor(result.feature.status), BALLOON_SIZE, gmt3IconLabel(result.feature.date)),
+          zIndexOffset: 1000,
+        }).addTo(markersLayerRef.current).bindPopup(result.feature.popupContent)
 
         if (isFirstLoad) {
-          map.setView([resultLat, resultLon], 11)
+          map.setView([result.feature.lat, result.feature.lon], 11)
         } else {
-          map.flyTo([resultLat, resultLon], 11, { duration: 0.8 })
+          map.flyTo([result.feature.lat, result.feature.lon], 11, { duration: 0.8 })
         }
         setTimeout(() => map.invalidateSize(), 50)
         onResult?.(true)
@@ -226,11 +237,6 @@ export default function LaunchMap({ launch, onClose, onResult, station = DEFAULT
             <AlertTriangle size={12} /> posição aproximada
           </span>
         )}
-        {stillFlying && (
-          <span className="text-xs text-sky-400 flex items-center gap-1">
-            <AlertTriangle size={12} /> ainda em voo, sem pouso registrado — última posição conhecida
-          </span>
-        )}
         {externalUrl && (
           <a
             href={externalUrl}
@@ -249,7 +255,23 @@ export default function LaunchMap({ launch, onClose, onResult, station = DEFAULT
       <div className="relative h-[420px] bg-[#111111]">
         <div ref={mapDivRef} className="absolute inset-0" />
 
-        {!status && !error && (
+        {noRadiosondyMonth && (
+          <div className="absolute inset-0 z-[1000] flex flex-col">
+            <div className="px-3 py-1.5 bg-amber-500/10 border-b border-amber-500/20 text-[11px] text-amber-300 flex items-center gap-1.5 flex-shrink-0">
+              <AlertTriangle size={11} />
+              Sem dados no radiosondy.info este mês — mostrando o mapa do sondehub.org
+            </div>
+            {sondeHubMapUrl && (
+              <iframe
+                src={sondeHubMapUrl}
+                title="Mapa do sondehub.org"
+                className="flex-1 w-full border-0"
+              />
+            )}
+          </div>
+        )}
+
+        {!status && !error && !noRadiosondyMonth && (
           <div className="absolute bottom-3 right-3 z-[900] bg-[#111111]/40 backdrop-blur-sm rounded-md p-2.5 text-xs text-gray-200 space-y-1.5">
             {LEGEND_ITEMS.map(item => (
               <div key={item.label} className="flex items-center gap-2">
@@ -260,7 +282,7 @@ export default function LaunchMap({ launch, onClose, onResult, station = DEFAULT
           </div>
         )}
 
-        {(status || error) && (
+        {(status || error) && !noRadiosondyMonth && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-[#111111]/95 z-[1000]">
             {error ? (
               <>

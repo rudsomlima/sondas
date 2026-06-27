@@ -1,10 +1,11 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useMemo } from 'react'
 import {
   History, RefreshCw, ChevronDown, TrendingUp, Calendar,
   AlertCircle, Wind, BarChart3, Trash2, Download, HardDrive, AlertTriangle,
-  CheckCircle2, XCircle, Clock, Sun, Moon, Loader2
+  CheckCircle2, XCircle, Clock, Sun, Moon, Loader2, Map as MapIcon,
+  Radio, Search, Check
 } from 'lucide-react'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts'
 import {
@@ -14,11 +15,13 @@ import {
 import {
   fetchTodayFlights, sondeHubUrl, TodayFlight
 } from '@/app/lib/radiosondy'
+import { fetchSondeHubFlights } from '@/app/lib/sondehub'
 import {
-  Station, DEFAULT_STATION, SOUTH_AMERICA_STATIONS, getSelectedStation, setSelectedStation,
-  getRadiosondyStartplace,
+  Station, DEFAULT_STATION, getSelectedStation, setSelectedStation,
+  getRadiosondyStartplace, searchStations,
 } from '@/app/lib/stations'
 import LaunchMap from './LaunchMap'
+import YearMap from './YearMap'
 
 interface Launch {
   date: string
@@ -31,6 +34,10 @@ interface Launch {
   // já se sabe que não há correspondência, o badge já aparece marcado sem
   // precisar que o usuário clique primeiro.
   radiosondyMatch?: 'yes' | 'no'
+  // Estações sem cobertura na Wyoming (Station.wyomingSupported === false):
+  // 'radiosondy'/'sondehub' = horário aproximado. Ausente = Wyoming (padrão).
+  source?: 'wyoming' | 'radiosondy' | 'sondehub'
+  approx?: boolean
 }
 
 interface YearData {
@@ -98,7 +105,10 @@ export default function HistoricoPage() {
   const [failedMonths, setFailedMonths] = useState<Set<number>>(new Set())
   const [selectedLaunch, setSelectedLaunch] = useState<Launch | null>(null)
   const [noMatchLaunches, setNoMatchLaunches] = useState<Set<string>>(new Set())
+  const [showYearMap, setShowYearMap] = useState(false)
   const [station, setStation] = useState<Station>(DEFAULT_STATION)
+  const [showStationPicker, setShowStationPicker] = useState(false)
+  const [stationQuery, setStationQuery] = useState('')
 
   useEffect(() => {
     setStation(getSelectedStation())
@@ -109,7 +119,11 @@ export default function HistoricoPage() {
     setSelectedStation(s)
     setSelectedLaunch(null)
     setNoMatchLaunches(new Set())
+    setShowStationPicker(false)
+    setStationQuery('')
   }, [])
+
+  const stationResults = useMemo(() => searchStations(stationQuery), [stationQuery])
 
   const years = Array.from({ length: 5 }, (_, i) => currentYear - i)
 
@@ -149,27 +163,39 @@ export default function HistoricoPage() {
   // tanto a sonda ainda em voo quanto a(s) já pousada(s) hoje — a Wyoming
   // atrasa para publicar o lançamento do dia, então não dá pra confiar só em
   // todayData.count/launched_today.
-  // O radiosondy.info só é consultado quando a estação tem um "startplace"
-  // conhecido (app/lib/stations.ts) — sem par conhecido, esse feed não tem
-  // correspondência possível para a estação selecionada.
+  // Usa as duas fontes que temos, em paralelo: radiosondy.info (só quando a
+  // estação tem um "startplace" conhecido) e sondehub.org (funciona por
+  // geografia, pra qualquer estação — costuma ter o lançamento de hoje minutos
+  // depois de decolar, antes do radiosondy.info ou da Wyoming publicarem).
   const fetchLiveFlight = useCallback(async () => {
     const startplace = getRadiosondyStartplace(station.id)
-    if (!startplace) {
-      setTodayFlights([])
-      setLiveFlightChecked(true)
-      return
+    const d = new Date()
+    const pad = (n: number) => String(n).padStart(2, '0')
+    const todayStr = todayData?.today ?? `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+
+    const [radiosondyResult, sondeHubResult] = await Promise.allSettled([
+      startplace ? fetchTodayFlights(todayStr, startplace) : Promise.resolve([]),
+      fetchSondeHubFlights(station.lat, station.lon, todayStr),
+    ])
+
+    const bySondeNumber = new Map<string, TodayFlight>()
+    for (const result of [radiosondyResult, sondeHubResult]) {
+      if (result.status !== 'fulfilled') continue
+      for (const f of result.value) {
+        const existing = bySondeNumber.get(f.sondeNumber)
+        if (!existing || f.lastReportUtc > existing.lastReportUtc) {
+          bySondeNumber.set(f.sondeNumber, f)
+        }
+      }
     }
-    try {
-      const d = new Date()
-      const pad = (n: number) => String(n).padStart(2, '0')
-      const todayStr = todayData?.today ?? `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
-      setTodayFlights(await fetchTodayFlights(todayStr, startplace))
-    } catch {
-      // Falha pontual de rede: mantém os últimos dados já exibidos.
-    } finally {
-      setLiveFlightChecked(true)
+
+    // Só substitui o que já está na tela se pelo menos uma fonte respondeu —
+    // falha pontual de rede nas duas não deve apagar os últimos dados exibidos.
+    if (radiosondyResult.status === 'fulfilled' || sondeHubResult.status === 'fulfilled') {
+      setTodayFlights([...bySondeNumber.values()])
     }
-  }, [todayData?.today, station.id])
+    setLiveFlightChecked(true)
+  }, [todayData?.today, station.id, station.lat, station.lon])
 
   useEffect(() => {
     fetchLiveFlight()
@@ -245,7 +271,7 @@ export default function HistoricoPage() {
     let pending: number[] = []
     for (let m = 1; m <= maxMonth; m++) {
       const isCurrentMonth = y === currentYear && m === maxMonth
-      // Mês já em cache e não é o mês corrente: não precisa rebuscar
+      // Mês já em cache (mesmo vazio) e não é o mês corrente: não precisa rebuscar
       if (cachedSet.has(m) && !isCurrentMonth) continue
       pending.push(m)
     }
@@ -356,19 +382,14 @@ export default function HistoricoPage() {
             <p className="text-gray-400 text-sm mt-1">Radiossondagens da estação {station.name}</p>
           </div>
           <div className="flex items-center gap-2">
-            <select
-              value={station.id}
-              onChange={e => {
-                const s = SOUTH_AMERICA_STATIONS.find(s => s.id === e.target.value)
-                if (s) changeStation(s)
-              }}
-              title="Estação (salva nas configurações)"
-              className="bg-[#1a1a1a] border border-[#2a2a2a] rounded-md text-sm text-white px-3 py-2 outline-none focus:border-blue-500 cursor-pointer max-w-[180px]"
+            <button
+              onClick={() => setShowStationPicker(!showStationPicker)}
+              title="Trocar estação"
+              className="flex items-center gap-2 px-3 py-2 bg-[#1a1a1a] border border-[#2a2a2a] rounded-md text-sm text-white hover:border-[#3a3a3a] transition-all max-w-[180px]"
             >
-              {SOUTH_AMERICA_STATIONS.map(s => (
-                <option key={s.id} value={s.id}>{s.name}</option>
-              ))}
-            </select>
+              <Radio size={14} className="text-blue-400 flex-shrink-0" />
+              <span className="truncate">{station.name}</span>
+            </button>
             <select
               value={year}
               onChange={e => setYear(Number(e.target.value))}
@@ -394,13 +415,53 @@ export default function HistoricoPage() {
             </button>
           </div>
         </div>
+
+        {showStationPicker && (
+          <div className="card p-4 mt-3">
+            <div className="relative mb-2">
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+              <input
+                type="text"
+                value={stationQuery}
+                onChange={e => setStationQuery(e.target.value)}
+                placeholder="Buscar por nome ou STNM (ex.: Natal, 82599, Buenos Aires)…"
+                autoFocus
+                className="w-full bg-[#111111] border border-[#2a2a2a] rounded-md pl-9 pr-3 py-2 text-sm text-white outline-none focus:border-blue-500"
+              />
+            </div>
+            <div className="max-h-56 overflow-y-auto border border-[#2a2a2a] rounded-md divide-y divide-[#2a2a2a]">
+              {stationResults.length === 0 ? (
+                <p className="text-xs text-gray-400 p-3">Nenhuma estação encontrada.</p>
+              ) : (
+                stationResults.map(s => {
+                  const isSelected = s.id === station.id
+                  return (
+                    <button
+                      key={s.id}
+                      type="button"
+                      onClick={() => changeStation(s)}
+                      className={`w-full text-left px-3 py-2 text-xs flex items-center justify-between gap-2 hover:bg-white/10 transition-colors cursor-pointer ${
+                        isSelected ? 'bg-blue-500/15 text-blue-300' : 'text-gray-200'
+                      }`}
+                    >
+                      <span className="flex items-center gap-1.5">
+                        {isSelected && <Check size={12} className="text-blue-400 flex-shrink-0" />}
+                        {s.name}
+                      </span>
+                      <span className="mono text-gray-400 flex-shrink-0">{s.id}</span>
+                    </button>
+                  )
+                })
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Ao vivo: primeira coisa visível, independente do histórico do ano já ter carregado.
           Combina a Wyoming (horário oficial do lançamento) com o radiosondy.info (detecta o
           voo quase em tempo real, antes da Wyoming publicar, e mantém dado mesmo após pousar). */}
       {(() => {
-        const hasRadiosondyCoverage = !!getRadiosondyStartplace(station.id)
         const hadFlightToday = todayData?.launched_today || todayFlights.length > 0
         const count = Math.max(todayData?.count ?? 0, todayFlights.length)
         const todayMonth = todayData?.today
@@ -436,6 +497,7 @@ export default function HistoricoPage() {
                         onClick={e => {
                           e.stopPropagation()
                           setExpandedMonth(l.month)
+                          setShowYearMap(false)
                           setSelectedLaunch(prev => (sameLaunch(prev, l) ? null : l))
                         }}
                         title="Ver no mapa a posição mais próxima após o lançamento"
@@ -451,7 +513,7 @@ export default function HistoricoPage() {
                 ) : !hadFlightToday ? (
                   <div className="text-xs text-gray-400 mt-1">Nenhum lançamento</div>
                 ) : null}
-                {hasRadiosondyCoverage && (hadFlightToday || !liveFlightChecked) && (
+                {(hadFlightToday || !liveFlightChecked) && (
                   <div className="mt-2 pt-2 border-t border-[#2a2a2a] flex flex-col gap-1.5">
                     {!liveFlightChecked ? (
                       <span className="text-xs text-gray-400 flex items-center gap-1">
@@ -661,12 +723,35 @@ export default function HistoricoPage() {
 
           {/* Month accordion with delete buttons */}
           <div className="card overflow-hidden mb-6">
-            <div className="px-5 py-4 border-b border-[#2a2a2a]">
+            <div className="px-5 py-4 border-b border-[#2a2a2a] flex items-center justify-between gap-3">
               <h2 className="text-sm font-semibold text-white flex items-center gap-2">
                 <Wind size={15} className="text-blue-400" />
                 Detalhe por mês
               </h2>
+              <button
+                onClick={() => {
+                  setShowYearMap(prev => !prev)
+                  setSelectedLaunch(null)
+                }}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 bg-[#1a1a1a] border border-[#2a2a2a] rounded-md text-xs text-green-400 hover:text-white hover:border-[#3a3a3a] transition-all"
+                title="Ver no mapa todas as sondas do ano"
+              >
+                <MapIcon size={13} />
+                {showYearMap ? 'Fechar mapa do ano' : 'Ver mapa do ano'}
+              </button>
             </div>
+
+            {showYearMap && (
+              <div className="px-5 pt-4 bg-[#111111]">
+                <YearMap
+                  year={year}
+                  station={station.id}
+                  monthsWithData={Object.keys(byMonth).map(Number)}
+                  onClose={() => setShowYearMap(false)}
+                />
+              </div>
+            )}
+
             <div className="divide-y divide-[#1f1f1f]">
               {MONTHS.map((mon, idx) => {
                 const m = idx + 1
@@ -732,19 +817,25 @@ export default function HistoricoPage() {
                                     .sort((a, b) => a.time_local.localeCompare(b.time_local))
                                     .map((l, i) => {
                                       const noMatch = l.radiosondyMatch === 'no' || noMatchLaunches.has(launchKey(l))
+                                      const title = l.approx
+                                        ? 'Horário aproximado, derivado do radiosondy.info — Wyoming não cobre esta estação'
+                                        : noMatch
+                                          ? 'Sem correspondência no radiosondy.info'
+                                          : 'Ver no mapa a posição mais próxima após o lançamento'
                                       return (
                                         <button
                                           key={i}
-                                          onClick={() => setSelectedLaunch(prev => (sameLaunch(prev, l) ? null : l))}
-                                          title={noMatch
-                                            ? 'Sem correspondência no radiosondy.info'
-                                            : 'Ver no mapa a posição mais próxima após o lançamento'}
+                                          onClick={() => {
+                                            setShowYearMap(false)
+                                            setSelectedLaunch(prev => (sameLaunch(prev, l) ? null : l))
+                                          }}
+                                          title={title}
                                           className={`mono font-semibold flex items-center gap-1 hover:underline ${
                                             noMatch ? 'text-gray-400' : isDaytime(l.time_local) ? 'text-amber-400' : 'text-indigo-400'
                                           }`}
                                         >
                                           {isDaytime(l.time_local) ? <Sun size={10} /> : <Moon size={10} />}
-                                          {l.time_local}
+                                          {l.approx && '~'}{l.time_local}
                                         </button>
                                       )
                                     })}

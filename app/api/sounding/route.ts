@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { readYearStore, writeYearStore, YearStore } from '@/app/lib/blobStore'
+import { findStation, Station } from '@/app/lib/stations'
+import { fetchRadiosondyLaunches } from '@/app/lib/radiosondy'
+import { fetchSondeHubApproxLaunches, fetchSondeHubArchiveLaunches } from '@/app/lib/sondehub'
 
 const GMT3 = -3 * 60 * 60 * 1000
 const DEFAULT_STATION_ID = '82599'
@@ -95,6 +98,14 @@ interface Launch {
   year: number
   // Preenchido pelo sync em segundo plano (app/api/radiosondy-sync/route.ts).
   radiosondyMatch?: 'yes' | 'no'
+  // Estações sem cobertura na Wyoming (Station.wyomingSupported === false):
+  // 'radiosondy' = horário aproximado, derivado de fetchRadiosondyLaunches
+  // (app/lib/radiosondy.ts); 'sondehub' = idem, via fetchSondeHubApproxLaunches
+  // (app/lib/sondehub.ts) — cobre voos sem recuperação física registrada no
+  // radiosondy.info, mas só alcança os últimos 3 dias (sem busca histórica).
+  // Ausente = Wyoming (comportamento padrão, todas as estações antigas).
+  source?: 'wyoming' | 'radiosondy' | 'sondehub'
+  approx?: boolean
 }
 
 function validateLaunch(launch: Launch): boolean {
@@ -194,11 +205,62 @@ function sanitizeStore(store: YearStore, currentYear: number, currentMonth: numb
  * mescla sem duplicar. Mês corrente nunca é marcado como "completo", pois
  * ainda pode ganhar lançamentos novos.
  */
+// Busca um mês de uma estação sem cobertura na Wyoming (ver
+// Station.wyomingSupported em app/lib/stations.ts), combinando 3 fontes
+// aproximadas em paralelo — nenhuma sozinha é completa:
+// 1. radiosondy.info (fetchRadiosondyLaunches) — só registra um voo se
+//    alguém cadastrar manualmente o achado físico do equipamento.
+// 2. Arquivo histórico do sondehub.org (fetchSondeHubArchiveLaunches) — um
+//    bucket S3 público por estação/ano/mês/dia, não depende de recuperação
+//    física, mas tem atraso de meses (confirmado: o registro mais recente de
+//    Natal/82599 lá era de 2026-03, já em junho/2026) — cobre meses passados
+//    que o radiosondy.info não tem (caso real: Fernando de Noronha,
+//    12/03/2026, serial V2931576, ausente do export_search.php).
+// 3. Feed ao vivo do sondehub.org (fetchSondeHubApproxLaunches) — só os
+//    últimos ~3 dias, mas sem o atraso do arquivo; só vale a pena no mês
+//    corrente.
+// Falha pontual numa fonte não bloqueia as outras (Promise.allSettled).
+async function fetchApproxLaunches(
+  stationInfo: Station | undefined, year: number, month: number, isCurrentMonth: boolean
+): Promise<Launch[]> {
+  if (!stationInfo) return []
+
+  const results = await Promise.allSettled([
+    stationInfo.radiosondyStartplace
+      ? fetchRadiosondyLaunches(year, month, stationInfo.radiosondyStartplace)
+          .then(approx => approx.map(({ feature, ...launch }) => launch))
+      : Promise.resolve([]),
+    fetchSondeHubArchiveLaunches(stationInfo.id, year, month),
+    isCurrentMonth
+      ? fetchSondeHubApproxLaunches(stationInfo.lat, stationInfo.lon, year, month)
+      : Promise.resolve([]),
+  ])
+
+  const byKey = new Map<string, Launch>()
+  for (const r of results) {
+    if (r.status !== 'fulfilled') continue
+    for (const l of r.value) {
+      const key = `${l.date}_${l.time_utc}`
+      if (!byKey.has(key)) byKey.set(key, l)
+    }
+  }
+  return [...byKey.values()]
+}
+
 async function syncMonth(
   store: YearStore, station: string, year: number, month: number, isCurrentMonth: boolean
 ): Promise<{ launches: Launch[]; updated: boolean }> {
   if (store.monthsComplete.includes(month)) {
     return { launches: store.launches.filter(l => l.month === month), updated: false }
+  }
+
+  const stationInfo = findStation(station)
+
+  if (stationInfo?.wyomingSupported === false) {
+    const merged = await fetchApproxLaunches(stationInfo, year, month, isCurrentMonth)
+    store.launches = store.launches.filter(l => l.month !== month).concat(merged)
+    if (!isCurrentMonth) store.monthsComplete.push(month)
+    return { launches: merged, updated: true }
   }
 
   const existingForMonth = store.launches.filter(l => l.month === month)
@@ -229,8 +291,10 @@ export async function GET(request: NextRequest) {
     if (action === 'today') {
       const year = local.getUTCFullYear()
       const month = local.getUTCMonth() + 1
-      const html = await fetchSounding(station, year, month)
-      const launches = parseLaunches(html, year, month)
+      const stationInfo = findStation(station)
+      const launches = stationInfo?.wyomingSupported === false
+        ? await fetchApproxLaunches(stationInfo, year, month, true)
+        : parseLaunches(await fetchSounding(station, year, month), year, month)
       const todayLaunches = launches.filter(l => l.date === todayStr)
 
       return NextResponse.json({
