@@ -84,6 +84,13 @@ export async function fetchSondeHubFlights(
   return out
 }
 
+export interface LaunchPosition {
+  lat: number
+  lon: number
+  sondeNumber: string
+  status: string
+}
+
 export interface SondeHubApproxLaunch {
   date: string
   time_local: string
@@ -93,13 +100,17 @@ export interface SondeHubApproxLaunch {
   year: number
   source: 'sondehub'
   approx: true
+  // Posição já em mãos (vem do mesmo frame de telemetria usado pra estimar o
+  // horário) — sem custo extra de rede, persistida no servidor pra
+  // LaunchMap.tsx não precisar refazer essa busca depois.
+  position?: LaunchPosition
 }
 
 // Converte um instante UTC (proxy do horário de lançamento) num
 // SondeHubApproxLaunch, com o mesmo cuidado de fronteira de mês usado em
 // fetchRadiosondyLaunches (app/lib/radiosondy.ts): o ajuste de -3h pode
 // empurrar a data pro mês anterior, e nesse caso mantemos a data em UTC.
-function toApproxLaunch(utcMs: number): SondeHubApproxLaunch {
+function toApproxLaunch(utcMs: number, position?: LaunchPosition): SondeHubApproxLaunch {
   const pad = (n: number) => String(n).padStart(2, '0')
   const utcDate = new Date(utcMs)
   let localDate = new Date(utcMs + GMT3)
@@ -115,6 +126,7 @@ function toApproxLaunch(utcMs: number): SondeHubApproxLaunch {
     year: localDate.getUTCFullYear(),
     source: 'sondehub',
     approx: true,
+    position,
   }
 }
 
@@ -143,9 +155,10 @@ export async function fetchSondeHubApproxLaunches(
   // Um lançamento por hora sinótica (00/06/12/18Z) — mesma suposição de
   // fetchRadiosondyLaunches. Usa o PRIMEIRO frame de cada sonda já dentro do
   // raio como proxy do horário de lançamento (mais próximo do solo/decolagem
-  // do que o último frame, usado em fetchSondeHubFlights).
-  const roundedUtcSet = new Set<number>()
-  for (const frames of Object.values(data)) {
+  // do que o último frame, usado em fetchSondeHubFlights) — e já guarda essa
+  // posição, sem custo extra de rede, pra persistir no servidor.
+  const byRoundedUtc = new Map<number, { serial: string; lat: number; lon: number }>()
+  for (const [serial, frames] of Object.entries(data)) {
     const timestamps = Object.keys(frames).sort()
     for (const ts of timestamps) {
       const f = frames[ts]
@@ -153,13 +166,14 @@ export async function fetchSondeHubApproxLaunches(
       if (haversineKm(stationLat, stationLon, f.lat, f.lon) > radiusKm) continue
       const launchDate = new Date(f.datetime)
       if (isNaN(launchDate.getTime())) break
-      roundedUtcSet.add(roundToSynopticHour(launchDate).getTime())
+      const rounded = roundToSynopticHour(launchDate).getTime()
+      if (!byRoundedUtc.has(rounded)) byRoundedUtc.set(rounded, { serial, lat: f.lat, lon: f.lon })
       break
     }
   }
 
-  return [...roundedUtcSet]
-    .map(toApproxLaunch)
+  return [...byRoundedUtc.entries()]
+    .map(([utcMs, pos]) => toApproxLaunch(utcMs, { lat: pos.lat, lon: pos.lon, sondeNumber: pos.serial, status: 'UNKNOWN' }))
     .filter(l => l.year === year && l.month === month)
 }
 
@@ -266,7 +280,12 @@ export async function fetchSondeHubArchiveLaunches(
       if (!frames.length) continue
       const launchDate = new Date(frames[0].datetime)
       if (isNaN(launchDate.getTime())) continue
-      out.push(toApproxLaunch(roundToSynopticHour(launchDate).getTime()))
+      const serialMatch = key.match(/\/([^/]+)\.json$/)
+      const first = frames[0]
+      const position = serialMatch && typeof first.lat === 'number' && typeof first.lon === 'number'
+        ? { lat: first.lat, lon: first.lon, sondeNumber: serialMatch[1], status: 'UNKNOWN' }
+        : undefined
+      out.push(toApproxLaunch(roundToSynopticHour(launchDate).getTime(), position))
     } catch {
       // Falha pontual num arquivo: não bloqueia os demais dias do mês.
       continue

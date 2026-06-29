@@ -4,6 +4,7 @@ import {
   fetchRadiosondyFeatures, fetchLiveFlights, findRecoveredMatch, findLiveMatch,
   isWithinMatchWindow, launchUtcInstant, LiveSondePosition,
 } from '@/app/lib/radiosondy'
+import { fetchSondeHubArchiveSondeForDay } from '@/app/lib/sondehub'
 import { SOUTH_AMERICA_STATIONS } from '@/app/lib/stations'
 
 export const maxDuration = 60
@@ -57,9 +58,12 @@ export async function GET() {
     const store = await readYearStore(station.id, currentYear)
     if (!store || store.launches.length === 0) continue
 
+    // Reprocessa por posição ausente, não só por radiosondyMatch ausente —
+    // assim, lançamentos já marcados 'no' antes da posição existir como campo
+    // também são revisitados (e podem ganhar posição via sondehub.org).
     const byMonth = new Map<number, typeof store.launches>()
     for (const l of store.launches) {
-      if (l.radiosondyMatch || l.month > currentMonth) continue
+      if (l.position || l.month > currentMonth) continue
       const list = byMonth.get(l.month) ?? []
       list.push(l)
       byMonth.set(l.month, list)
@@ -83,6 +87,10 @@ export async function GET() {
         const recovered = findRecoveredMatch(features, instant)
         if (recovered) {
           l.radiosondyMatch = 'yes'
+          l.position = {
+            lat: recovered.feature.lat, lon: recovered.feature.lon,
+            sondeNumber: recovered.feature.sondeNumber, status: recovered.feature.status,
+          }
           changed = true
           checked++
           yes++
@@ -93,6 +101,7 @@ export async function GET() {
           const live = findLiveMatch(await liveFlightsOnce(), startplace)
           if (live) {
             l.radiosondyMatch = 'yes'
+            l.position = { lat: live.lat, lon: live.lon, sondeNumber: live.sondeNumber, status: 'UNKNOWN' }
             changed = true
             checked++
             yes++
@@ -106,12 +115,26 @@ export async function GET() {
           continue
         }
 
-        // Fora da janela e sem nenhuma correspondência: confirmadamente sem
-        // recuperação registrada pra esse lançamento.
-        l.radiosondyMatch = 'no'
+        // Fora da janela e sem nada no radiosondy.info: tenta o sondehub.org
+        // (arquivo S3) como segunda fonte antes de desistir — cobre voos só
+        // rastreados por RF, sem recuperação física registrada (caso real:
+        // Fernando de Noronha, 12/03/2026, V2931576).
+        let sonde = null
+        try {
+          sonde = await fetchSondeHubArchiveSondeForDay(station.id, l.year, l.month, l.day)
+        } catch {
+          // Falha pontual: trata como sem posição, tenta de novo no próximo run.
+        }
+        if (sonde) {
+          l.radiosondyMatch = 'yes'
+          l.position = { lat: sonde.lat, lon: sonde.lon, sondeNumber: sonde.serial, status: 'UNKNOWN' }
+        } else {
+          // Confirmadamente sem recuperação registrada em nenhuma das fontes.
+          l.radiosondyMatch = 'no'
+        }
         changed = true
         checked++
-        no++
+        sonde ? yes++ : no++
       }
     }
 

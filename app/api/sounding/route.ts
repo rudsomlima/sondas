@@ -89,6 +89,13 @@ async function fetchSounding(station: string, year: number, month: number, fromD
   throw lastErr
 }
 
+interface LaunchPosition {
+  lat: number
+  lon: number
+  sondeNumber: string
+  status: string
+}
+
 interface Launch {
   date: string
   time_local: string
@@ -98,6 +105,9 @@ interface Launch {
   year: number
   // Preenchido pelo sync em segundo plano (app/api/radiosondy-sync/route.ts).
   radiosondyMatch?: 'yes' | 'no'
+  // Posição final da sonda (radiosondy.info ou sondehub.org) — ver
+  // app/historico/LaunchMap.tsx, que usa isso pra não precisar de fetch ao vivo.
+  position?: LaunchPosition
   // Estações sem cobertura na Wyoming (Station.wyomingSupported === false):
   // 'radiosondy' = horário aproximado, derivado de fetchRadiosondyLaunches
   // (app/lib/radiosondy.ts); 'sondehub' = idem, via fetchSondeHubApproxLaunches
@@ -220,6 +230,13 @@ function sanitizeStore(store: YearStore, currentYear: number, currentMonth: numb
 //    últimos ~3 dias, mas sem o atraso do arquivo; só vale a pena no mês
 //    corrente.
 // Falha pontual numa fonte não bloqueia as outras (Promise.allSettled).
+// Extrai a posição (lat/lon/serial/status) da feature já buscada em vez de
+// descartá-la — persistida no servidor, LaunchMap.tsx não precisa refazer
+// essa busca depois.
+function radiosondyApproxToLaunch({ feature, ...launch }: Awaited<ReturnType<typeof fetchRadiosondyLaunches>>[number]): Launch {
+  return { ...launch, position: { lat: feature.lat, lon: feature.lon, sondeNumber: feature.sondeNumber, status: feature.status } }
+}
+
 async function fetchApproxLaunches(
   stationInfo: Station | undefined, year: number, month: number, isCurrentMonth: boolean
 ): Promise<Launch[]> {
@@ -227,13 +244,40 @@ async function fetchApproxLaunches(
 
   const results = await Promise.allSettled([
     stationInfo.radiosondyStartplace
-      ? fetchRadiosondyLaunches(year, month, stationInfo.radiosondyStartplace)
-          .then(approx => approx.map(({ feature, ...launch }) => launch))
+      ? fetchRadiosondyLaunches(year, month, stationInfo.radiosondyStartplace).then(approx => approx.map(radiosondyApproxToLaunch))
       : Promise.resolve([]),
     fetchSondeHubArchiveLaunches(stationInfo.id, year, month),
     isCurrentMonth
       ? fetchSondeHubApproxLaunches(stationInfo.lat, stationInfo.lon, year, month)
       : Promise.resolve([]),
+  ])
+
+  const byKey = new Map<string, Launch>()
+  for (const r of results) {
+    if (r.status !== 'fulfilled') continue
+    for (const l of r.value) {
+      const key = `${l.date}_${l.time_utc}`
+      if (!byKey.has(key)) byKey.set(key, l)
+    }
+  }
+  return [...byKey.values()]
+}
+
+// Complementa a Wyoming no mês corrente com fontes "ao vivo" (radiosondy.info
+// + feed ao vivo do sondehub.org) — não o arquivo S3 do sondehub.org, que tem
+// meses de atraso e só vale a pena pra preencher estações sem Wyoming de uma
+// vez (ver fetchApproxLaunches). A Wyoming é lenta pra publicar (confirmado:
+// em 2026-06-29 ela só tinha Natal/82599 até 26/06) — sem isso, qualquer
+// lançamento mais recente que a última publicação da Wyoming simplesmente
+// não aparece no histórico/"Ao vivo", mesmo já sabido por outra fonte.
+async function fetchComplementaryLaunches(
+  stationInfo: Station, year: number, month: number
+): Promise<Launch[]> {
+  const results = await Promise.allSettled([
+    stationInfo.radiosondyStartplace
+      ? fetchRadiosondyLaunches(year, month, stationInfo.radiosondyStartplace).then(approx => approx.map(radiosondyApproxToLaunch))
+      : Promise.resolve([]),
+    fetchSondeHubApproxLaunches(stationInfo.lat, stationInfo.lon, year, month),
   ])
 
   const byKey = new Map<string, Launch>()
@@ -264,13 +308,33 @@ async function syncMonth(
   }
 
   const existingForMonth = store.launches.filter(l => l.month === month)
-  const lastDay = existingForMonth.reduce((max, l) => Math.max(max, l.day), 0)
+  const existingWyoming = existingForMonth.filter(l => !l.source)
+  const existingApprox = existingForMonth.filter(l => l.source)
+  // O cursor incremental só avança com base no que a própria Wyoming já
+  // confirmou — um lançamento aproximado (source definido) pode ter um "day"
+  // mais recente que a Wyoming ainda não publicou; usá-lo aqui faria a
+  // Wyoming pular dias que ainda vai publicar fora de ordem.
+  const lastDay = existingWyoming.reduce((max, l) => Math.max(max, l.day), 0)
 
   const html = await fetchSounding(station, year, month, lastDay)
   const fresh = parseLaunches(html, year, month)
 
-  const seen = new Set(existingForMonth.map(l => `${l.date}_${l.time_utc}`))
-  const merged = existingForMonth.concat(fresh.filter(l => !seen.has(`${l.date}_${l.time_utc}`)))
+  const seenWyoming = new Set(existingWyoming.map(l => `${l.date}_${l.time_utc}`))
+  const mergedWyoming = existingWyoming.concat(fresh.filter(l => !seenWyoming.has(`${l.date}_${l.time_utc}`)))
+
+  // Descarta entradas aproximadas que a Wyoming já confirmou no horário exato.
+  const wyomingKeys = new Set(mergedWyoming.map(l => `${l.date}_${l.time_utc}`))
+  let merged: Launch[] = mergedWyoming.concat(existingApprox.filter(l => !wyomingKeys.has(`${l.date}_${l.time_utc}`)))
+
+  if (isCurrentMonth && stationInfo) {
+    try {
+      const complementary = await fetchComplementaryLaunches(stationInfo, year, month)
+      const knownKeys = new Set(merged.map(l => `${l.date}_${l.time_utc}`))
+      merged = merged.concat(complementary.filter(l => !knownKeys.has(`${l.date}_${l.time_utc}`)))
+    } catch {
+      // Falha pontual nas fontes complementares: mantém só o que a Wyoming já tem.
+    }
+  }
 
   store.launches = store.launches.filter(l => l.month !== month).concat(merged)
   if (!isCurrentMonth) store.monthsComplete.push(month)
@@ -292,9 +356,21 @@ export async function GET(request: NextRequest) {
       const year = local.getUTCFullYear()
       const month = local.getUTCMonth() + 1
       const stationInfo = findStation(station)
-      const launches = stationInfo?.wyomingSupported === false
-        ? await fetchApproxLaunches(stationInfo, year, month, true)
-        : parseLaunches(await fetchSounding(station, year, month), year, month)
+      let launches: Launch[]
+      if (stationInfo?.wyomingSupported === false) {
+        launches = await fetchApproxLaunches(stationInfo, year, month, true)
+      } else {
+        launches = parseLaunches(await fetchSounding(station, year, month), year, month)
+        if (stationInfo) {
+          try {
+            const complementary = await fetchComplementaryLaunches(stationInfo, year, month)
+            const knownKeys = new Set(launches.map(l => `${l.date}_${l.time_utc}`))
+            launches = launches.concat(complementary.filter(l => !knownKeys.has(`${l.date}_${l.time_utc}`)))
+          } catch {
+            // Falha pontual nas fontes complementares: mantém só o que a Wyoming já tem.
+          }
+        }
+      }
       const todayLaunches = launches.filter(l => l.date === todayStr)
 
       return NextResponse.json({

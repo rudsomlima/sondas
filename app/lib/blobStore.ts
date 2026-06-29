@@ -15,6 +15,13 @@ function hasBlobCredentials(): boolean {
   return !!(process.env.BLOB_READ_WRITE_TOKEN || process.env.BLOB_STORE_ID)
 }
 
+interface LaunchPosition {
+  lat: number
+  lon: number
+  sondeNumber: string
+  status: string
+}
+
 interface Launch {
   date: string
   time_local: string
@@ -24,6 +31,11 @@ interface Launch {
   year: number
   // Preenchido pelo sync em segundo plano (app/api/radiosondy-sync/route.ts).
   radiosondyMatch?: 'yes' | 'no'
+  // Posição final da sonda (radiosondy.info ou sondehub.org), preenchida ao
+  // criar o lançamento (fontes aproximadas já trazem a posição em mãos) ou
+  // pelo sync em segundo plano — uma vez presente, LaunchMap.tsx mostra o
+  // mapa sem nenhum fetch ao vivo.
+  position?: LaunchPosition
   // Estações sem cobertura na Wyoming (Station.wyomingSupported === false):
   // 'radiosondy'/'sondehub' = horário aproximado. Ausente = Wyoming (padrão).
   source?: 'wyoming' | 'radiosondy' | 'sondehub'

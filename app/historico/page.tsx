@@ -34,6 +34,9 @@ interface Launch {
   // já se sabe que não há correspondência, o badge já aparece marcado sem
   // precisar que o usuário clique primeiro.
   radiosondyMatch?: 'yes' | 'no'
+  // Posição final da sonda (radiosondy.info ou sondehub.org), quando já
+  // resolvida — ver app/historico/LaunchMap.tsx.
+  position?: { lat: number; lon: number; sondeNumber: string; status: string }
   // Estações sem cobertura na Wyoming (Station.wyomingSupported === false):
   // 'radiosondy'/'sondehub' = horário aproximado. Ausente = Wyoming (padrão).
   source?: 'wyoming' | 'radiosondy' | 'sondehub'
@@ -630,14 +633,13 @@ export default function HistoricoPage() {
         </div>
       )}
 
-      {/* Delete confirmation */}
-      {deleteConfirm && (
+      {/* Delete confirmation — exclusão de mês é confirmada inline, na própria linha do mês */}
+      {deleteConfirm && deleteConfirm.type !== 'month' && (
         <div className="card p-4 mb-6 border-yellow-500/20 bg-yellow-500/5 flex items-start gap-3">
           <AlertTriangle size={18} className="text-yellow-400 flex-shrink-0 mt-0.5" />
           <div className="flex-1">
             <p className="text-sm text-yellow-400 font-medium">
-              {deleteConfirm.type === 'month' ? `Remover ${MONTHS_FULL[deleteConfirm.month! - 1]}/${deleteConfirm.year}?`
-                : deleteConfirm.type === 'year' ? `Remover ano ${deleteConfirm.year}?`
+              {deleteConfirm.type === 'year' ? `Remover ano ${deleteConfirm.year}?`
                 : 'Remover TODO o cache?'}
             </p>
             <div className="flex gap-2 mt-3">
@@ -782,19 +784,37 @@ export default function HistoricoPage() {
                         />
                       </button>
                       {launches.length > 0 && (
-                        <button
-                          onClick={() => setDeleteConfirm({ type: 'month', month: m, year })}
-                          className="p-1.5 text-gray-400 hover:text-red-400 hover:bg-red-500/10 rounded transition-all"
-                          title="Deletar mês"
-                        >
-                          <Trash2 size={14} />
-                        </button>
+                        deleteConfirm?.type === 'month' && deleteConfirm.month === m ? (
+                          <div className="flex items-center gap-1.5 flex-shrink-0">
+                            <span className="text-xs text-yellow-400">Remover mês?</span>
+                            <button
+                              onClick={handleDelete}
+                              className="px-2 py-1 bg-red-600 text-xs text-white rounded hover:bg-red-700 transition-all"
+                            >
+                              Confirmar
+                            </button>
+                            <button
+                              onClick={() => setDeleteConfirm(null)}
+                              className="px-2 py-1 bg-[#2a2a2a] text-xs text-gray-400 rounded hover:text-white transition-all"
+                            >
+                              Cancelar
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => setDeleteConfirm({ type: 'month', month: m, year })}
+                            className="p-1.5 text-gray-400 hover:text-red-400 hover:bg-red-500/10 rounded transition-all"
+                            title="Deletar mês"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        )
                       )}
                     </div>
 
                     {isOpen && launches.length > 0 && (
                       <div className="px-5 pb-4 bg-[#111111]">
-                        <div className="grid grid-cols-5 gap-3 mt-3">
+                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3 mt-3">
                           {Object.entries(
                             launches.reduce((acc: Record<string, Launch[]>, l) => {
                               (acc[l.date] ??= []).push(l)
@@ -817,8 +837,11 @@ export default function HistoricoPage() {
                                     .sort((a, b) => a.time_local.localeCompare(b.time_local))
                                     .map((l, i) => {
                                       const noMatch = l.radiosondyMatch === 'no' || noMatchLaunches.has(launchKey(l))
+                                      const sourceLabel = l.source === 'sondehub' ? 'sondehub.org' : 'radiosondy.info'
                                       const title = l.approx
-                                        ? 'Horário aproximado, derivado do radiosondy.info — Wyoming não cobre esta estação'
+                                        ? station.wyomingSupported === false
+                                          ? `Horário aproximado via ${sourceLabel} — Wyoming não cobre esta estação`
+                                          : `Horário aproximado via ${sourceLabel} — Wyoming ainda não publicou este lançamento`
                                         : noMatch
                                           ? 'Sem correspondência no radiosondy.info'
                                           : 'Ver no mapa a posição mais próxima após o lançamento'
