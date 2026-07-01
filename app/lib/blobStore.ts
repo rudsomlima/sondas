@@ -1,18 +1,32 @@
 /**
- * Persistência do histórico anual no Vercel Blob Storage.
+ * Persistência do histórico anual no Cloudflare R2 (API S3-compatível).
  * Um arquivo JSON por ano, atualizado incrementalmente.
  *
- * A Vercel autentica o SDK de duas formas: a antiga (BLOB_READ_WRITE_TOKEN)
- * ou a atual, via OIDC — quando o Blob Store é conectado ao projeto pelo
- * painel, ele expõe BLOB_STORE_ID e a plataforma injeta o token OIDC
- * automaticamente em runtime (sem precisar de uma env var extra). Por isso
- * checamos os dois; sem nenhum dos dois (ex.: rodando localmente sem
- * `vercel env pull`), as funções abaixo são no-op.
+ * Variáveis de ambiente necessárias (configurar no painel da Vercel e no
+ * arquivo .env.local para desenvolvimento local):
+ *   R2_ACCOUNT_ID        — ID da conta Cloudflare (ex.: "abc123")
+ *   R2_ACCESS_KEY_ID     — chave de acesso do token R2
+ *   R2_SECRET_ACCESS_KEY — chave secreta do token R2
+ *   R2_BUCKET_NAME       — nome do bucket (ex.: "sondas")
+ *
+ * Sem essas variáveis (ex.: dev local sem .env.local), as funções são no-op.
  */
-import { put, list } from '@vercel/blob'
+import { S3Client, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3'
 
-function hasBlobCredentials(): boolean {
-  return !!(process.env.BLOB_READ_WRITE_TOKEN || process.env.BLOB_STORE_ID)
+function getClient(): S3Client | null {
+  const accountId = process.env.R2_ACCOUNT_ID
+  const accessKeyId = process.env.R2_ACCESS_KEY_ID
+  const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY
+  if (!accountId || !accessKeyId || !secretAccessKey) return null
+  return new S3Client({
+    region: 'auto',
+    endpoint: `https://${accountId}.r2.cloudflarestorage.com`,
+    credentials: { accessKeyId, secretAccessKey },
+  })
+}
+
+function bucket(): string {
+  return process.env.R2_BUCKET_NAME || 'sondas'
 }
 
 interface LaunchPosition {
@@ -29,15 +43,8 @@ interface Launch {
   day: number
   month: number
   year: number
-  // Preenchido pelo sync em segundo plano (app/api/radiosondy-sync/route.ts).
   radiosondyMatch?: 'yes' | 'no'
-  // Posição final da sonda (radiosondy.info ou sondehub.org), preenchida ao
-  // criar o lançamento (fontes aproximadas já trazem a posição em mãos) ou
-  // pelo sync em segundo plano — uma vez presente, LaunchMap.tsx mostra o
-  // mapa sem nenhum fetch ao vivo.
   position?: LaunchPosition
-  // Estações sem cobertura na Wyoming (Station.wyomingSupported === false):
-  // 'radiosondy'/'sondehub' = horário aproximado. Ausente = Wyoming (padrão).
   source?: 'wyoming' | 'radiosondy' | 'sondehub'
   approx?: boolean
 }
@@ -51,9 +58,6 @@ export interface YearStore {
 
 const DEFAULT_STATION_ID = '82599'
 
-// Mantém o caminho antigo (sem estação) para a estação padrão, preservando o
-// histórico já persistido antes de existir seleção de estação; demais
-// estações ganham seu próprio arquivo.
 function pathFor(station: string, year: number) {
   return station === DEFAULT_STATION_ID
     ? `sondas/history-${year}.json`
@@ -61,31 +65,32 @@ function pathFor(station: string, year: number) {
 }
 
 export async function readYearStore(station: string, year: number): Promise<YearStore | null> {
-  if (!hasBlobCredentials()) return null
+  const client = getClient()
+  if (!client) return null
   try {
-    const path = pathFor(station, year)
-    const { blobs } = await list({ prefix: path })
-    const blob = blobs.find(b => b.pathname === path)
-    if (!blob) return null
-    const res = await fetch(blob.url, { cache: 'no-store' })
-    if (!res.ok) return null
-    return await res.json()
-  } catch (e) {
-    console.error('[Blob] readYearStore falhou:', e)
+    const res = await client.send(new GetObjectCommand({ Bucket: bucket(), Key: pathFor(station, year) }))
+    const body = await res.Body?.transformToString()
+    if (!body) return null
+    return JSON.parse(body)
+  } catch (e: any) {
+    // NoSuchKey = arquivo ainda não existe (estação/ano novo) — não é erro.
+    if (e?.name === 'NoSuchKey' || e?.$metadata?.httpStatusCode === 404) return null
+    console.error('[R2] readYearStore falhou:', e)
     return null
   }
 }
 
 export async function writeYearStore(station: string, store: YearStore): Promise<void> {
-  if (!hasBlobCredentials()) return
+  const client = getClient()
+  if (!client) return
   try {
-    await put(pathFor(station, store.year), JSON.stringify(store), {
-      access: 'public',
-      addRandomSuffix: false,
-      allowOverwrite: true,
-      contentType: 'application/json',
-    })
+    await client.send(new PutObjectCommand({
+      Bucket: bucket(),
+      Key: pathFor(station, store.year),
+      Body: JSON.stringify(store),
+      ContentType: 'application/json',
+    }))
   } catch (e) {
-    console.error('[Blob] writeYearStore falhou:', e)
+    console.error('[R2] writeYearStore falhou:', e)
   }
 }

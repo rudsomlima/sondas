@@ -104,6 +104,25 @@ export default function LaunchMap({ launch, onClose, onResult, station = DEFAULT
         setShowSondeHubFallback(false)
         setApprox(false)
 
+        // Tenta buscar as features do mês pra mostrar os outros lançamentos
+        // como contexto — mesmo padrão do caminho sem `position`, mas sem
+        // bloquear: se falhar, mostra só o marcador destacado (que já é suficiente).
+        let contextFeatures: RadiosondyFeature[] = []
+        if (startplace) {
+          try {
+            const cacheKey = `${startplace}-${launch.year}-${launch.month}`
+            let cached = featuresCacheRef.current.get(cacheKey)
+            if (!cached) {
+              cached = await fetchRadiosondyFeatures(launch.year, launch.month, startplace)
+              if (!cancelled) featuresCacheRef.current.set(cacheKey, cached)
+            }
+            if (!cancelled) contextFeatures = cached
+          } catch {
+            // Falha pontual: o marcador destacado já está disponível — continua sem contexto.
+          }
+        }
+        if (cancelled) return
+
         const L = (await import('leaflet')).default
         if (cancelled || !mapDivRef.current) return
 
@@ -125,6 +144,16 @@ export default function LaunchMap({ launch, onClose, onResult, station = DEFAULT
         const { lat, lon, sondeNumber, status } = launch.position
 
         markersLayerRef.current.clearLayers()
+
+        // Marcadores de contexto (outros lançamentos do mesmo mês), excluindo
+        // qualquer feature que coincida com a posição já resolvida (evita duplo marcador).
+        for (const f of contextFeatures) {
+          if (Math.abs(f.lat - lat) < 0.0001 && Math.abs(f.lon - lon) < 0.0001) continue
+          L.marker([f.lat, f.lon], { icon: buildBalloonIcon(L, statusColor(f.status), BALLOON_SIZE, gmt3IconLabel(f.date)) })
+            .addTo(markersLayerRef.current)
+            .bindPopup(f.popupContent)
+        }
+
         L.marker([lat, lon], {
           icon: buildHighlightBalloonIcon(L, statusColor(status), BALLOON_SIZE, gmt3IconLabel(launchUtcInstant(launch.year, launch.month, launch.day, launch.time_utc, launch.time_local))),
           zIndexOffset: 1000,
