@@ -112,12 +112,14 @@ export function toReportStr(date: Date): string {
 
 // Extrai do popupContent textual (HTML) de uma feature do export_search.php
 // os mesmos campos de telemetria que o feed ao vivo expõe em "properties".
-function parsePopupTelemetry(html: string): { altitude: number; climbing: number } {
+export function parsePopupTelemetry(html: string): { altitude: number; climbing: number; course: string } {
   const altMatch = html.match(/Altitude:\s*(-?[\d.]+)\s*m/)
   const climbMatch = html.match(/Climbing:\s*(-?[\d.]+)\s*m\/s/)
+  const courseMatch = html.match(/Course:\s*([\d.]+)/)
   return {
     altitude: altMatch ? parseFloat(altMatch[1]) : 0,
     climbing: climbMatch ? parseFloat(climbMatch[1]) : 0,
+    course: courseMatch ? courseMatch[1] : '',
   }
 }
 
@@ -287,15 +289,17 @@ export async function fetchRadiosondyFeatures(year: number, month: number, start
   return out
 }
 
-// Janela máxima de tolerância para associar uma posição a um lançamento
-// específico. Por dados reais observados (radiosondy.info, Natal, jun/2026),
-// o voo inteiro (ascensão + descida até o pouso) dura ~2h-2h30 — uma janela
-// de 18h era grande o bastante para "roubar" o pouso já correto de um
-// lançamento anterior quando o lançamento seguinte (12h depois, ciclo
-// 00Z/12Z) ainda não tinha pouso publicado (ex.: 24/06 21h e 25/06 09h em
-// Natal apontando pra mesma sonda). 3h cobre a duração real do voo com
-// margem de segurança, sem alcançar o lançamento vizinho.
-const MAX_MATCH_WINDOW_MS = 3 * 60 * 60 * 1000
+// Janela usada em findRecoveredMatch: 4h cobre voos mais longos sem risco de
+// "roubar" o pouso do lançamento seguinte (lançamentos 00Z/12Z têm 12h entre
+// si; o espaço entre o primeiro pouso ~2h30 e o segundo lançamento 12h depois
+// é ~9h30 — 4h fica bem dentro disso). Ampliado de 3h para 4h depois de
+// observar que alguns voos duram 3h10-3h30 e ficavam fora da janela anterior.
+const MAX_MATCH_WINDOW_MS = 4 * 60 * 60 * 1000
+
+// Janela separada para o "live check": tempo máximo desde o lançamento dentro
+// do qual a sonda pode ainda estar transmitindo (feed ao vivo). Mantida em 3h
+// porque após 3h o voo típico já terminou — o feed ao vivo não seria útil.
+const LIVE_FLIGHT_WINDOW_MS = 3 * 60 * 60 * 1000
 
 export type RecoveryMatch =
   | { kind: 'recovered'; feature: RadiosondyFeature; approx: boolean }
@@ -305,7 +309,7 @@ export type RecoveryMatch =
 // checar o feed ao vivo (sonda pode ainda estar em voo). Fora dessa janela,
 // não há razão pra gastar o fetch pesado do feed ao vivo (~1MB).
 export function isWithinMatchWindow(launch: Date): boolean {
-  return Math.abs(Date.now() - launch.getTime()) <= MAX_MATCH_WINDOW_MS
+  return Math.abs(Date.now() - launch.getTime()) <= LIVE_FLIGHT_WINDOW_MS
 }
 
 // Passos 1 e 2 do matching, só com as posições de recuperação já buscadas

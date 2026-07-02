@@ -5,12 +5,13 @@ import 'leaflet/dist/leaflet.css'
 import { AlertCircle, Loader2, ExternalLink, AlertTriangle, X } from 'lucide-react'
 import {
   externalRadiosondyUrl, launchUtcInstant, fetchRadiosondyFeatures,
-  findRecoveredMatch, statusColor, buildBalloonIcon,
+  findRecoveredMatch, fetchLiveFlights, findLiveMatch, isWithinMatchWindow,
+  statusColor, buildBalloonIcon,
   buildHighlightBalloonIcon, gmt3IconLabel, LEGEND_ITEMS,
   RadiosondyFeature, roundToSynopticHour, sondeHubUrl,
 } from '@/app/lib/radiosondy'
 import { fetchSondeHubArchiveSondeForDay } from '@/app/lib/sondehub'
-import { getRadiosondyStartplace, findStation, DEFAULT_STATION } from '@/app/lib/stations'
+import { getRadiosondyStartplace, DEFAULT_STATION } from '@/app/lib/stations'
 
 interface Launch {
   date: string
@@ -24,7 +25,7 @@ interface Launch {
   radiosondyMatch?: 'yes' | 'no'
   // Posição final da sonda (radiosondy.info ou sondehub.org), já resolvida —
   // quando presente, monta o marcador direto, sem nenhum fetch ao vivo.
-  position?: { lat: number; lon: number; sondeNumber: string; status: string }
+  position?: { lat: number; lon: number; sondeNumber: string; status: string; altitude?: number; course?: string }
   // Estações sem cobertura na Wyoming (Station.wyomingSupported === false):
   // 'radiosondy'/'sondehub' = horário aproximado, sem janela de match por
   // horário exato (ver bloco approx no useEffect abaixo). Ausente = Wyoming
@@ -69,13 +70,12 @@ export default function LaunchMap({ launch, onClose, onResult, station = DEFAULT
   // carrega o próprio mapa do sondehub.org no lugar, em vez de só um erro.
   // Por padrão centralizado na estação; refinado pro serial exato do dia se
   // achado no arquivo do sondehub.org (ver useEffect abaixo).
-  const [showSondeHubFallback, setShowSondeHubFallback] = useState(false)
-  const [sondeHubFallbackReason, setSondeHubFallbackReason] = useState('')
   const [sondeHubMapUrl, setSondeHubMapUrl] = useState<string | null>(null)
+  const [isSondeHubPos, setIsSondeHubPos] = useState(false)
 
   const startplace = getRadiosondyStartplace(station)
   const externalUrl = startplace ? externalRadiosondyUrl(launch.year, launch.month, startplace) : null
-  const stationCoords = findStation(station)
+
 
   // Rola a tela para deixar o mapa centralizado ao abrir
   useEffect(() => {
@@ -88,9 +88,9 @@ export default function LaunchMap({ launch, onClose, onResult, station = DEFAULT
 
     function buildSourceUrl(): string {
       const pad = (n: number) => String(n).padStart(2, '0')
-      const hourUtc = launch.time_utc.slice(0, 2)
-      return `https://weather.uwyo.edu/cgi-bin/sounding?region=samer&TYPE=TEXT%3ALIST&YEAR=${launch.year}` +
-        `&MONTH=${pad(launch.month)}&FROM=${pad(launch.day)}${hourUtc}&TO=${pad(launch.day)}${hourUtc}&STNM=${station}`
+      const hourUtc = launch.time_utc.slice(0, 2).padStart(2, '0')
+      const dt = `${launch.year}-${pad(launch.month)}-${pad(launch.day)} ${hourUtc}:00:00`
+      return `https://weather.uwyo.edu/wsgi/sounding?src=FM35&datetime=${dt.replace(' ', '%20')}&id=${station}&type=TEXT:LIST`
     }
 
     async function run() {
@@ -101,7 +101,7 @@ export default function LaunchMap({ launch, onClose, onResult, station = DEFAULT
         setStatus(null)
         setError(null)
         setSourceUrl(null)
-        setShowSondeHubFallback(false)
+        setIsSondeHubPos(false)
         setApprox(false)
 
         // Tenta buscar as features do mês pra mostrar os outros lançamentos
@@ -157,7 +157,11 @@ export default function LaunchMap({ launch, onClose, onResult, station = DEFAULT
         L.marker([lat, lon], {
           icon: buildHighlightBalloonIcon(L, statusColor(status), BALLOON_SIZE, gmt3IconLabel(launchUtcInstant(launch.year, launch.month, launch.day, launch.time_utc, launch.time_local))),
           zIndexOffset: 1000,
-        }).addTo(markersLayerRef.current).bindPopup(`<b>${sondeNumber}</b><br>Status: ${status}`)
+        }).addTo(markersLayerRef.current).bindPopup(
+          `<b>${sondeNumber}</b><br>Status: ${status}` +
+          (launch.position?.altitude ? `<br>Altitude: ${Math.round(launch.position.altitude).toLocaleString('pt-BR')} m` : '') +
+          (launch.position?.course ? `<br>Course: ${launch.position.course}°` : '')
+        )
 
         if (isFirstLoad) {
           map.setView([lat, lon], 11)
@@ -181,44 +185,99 @@ export default function LaunchMap({ launch, onClose, onResult, station = DEFAULT
       if (isFirstLoad) setStatus('Consultando radiosondy.info…')
       setError(null)
       setSourceUrl(null)
-      setShowSondeHubFallback(false)
-      setSondeHubMapUrl(stationCoords ? `https://sondehub.org/?sondehub=1#!mt=Mapnik&mz=8&qm=12h&mc=${stationCoords.lat},${stationCoords.lon}` : null)
+      setIsSondeHubPos(false)
+      setSondeHubMapUrl(null)
 
-      // Sem posição do radiosondy.info pra este lançamento (mês vazio, ou
-      // tem outras posições mas nenhuma bate com este horário): carrega o
-      // mapa do próprio sondehub.org no lugar de um erro vazio. Tenta achar
-      // o serial exato do dia no arquivo do sondehub.org pra focar nele (em
-      // vez de só centralizar na estação, sem saber qual sonda foi).
-      async function fallbackToSondeHub(reason: string) {
-        setStatus(null)
+      // Plota uma posição no Leaflet (reutilizado por radiosondy live e sondehub).
+      async function plotPosition(lat: number, lon: number, label: string, source: string) {
+        const L = (await import('leaflet')).default
+        if (cancelled || !mapDivRef.current) return
+        if (!mapRef.current) {
+          const map = L.map(mapDivRef.current)
+          const streets = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; OpenStreetMap contributors',
+          })
+          const satellite = L.tileLayer(
+            'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+            { attribution: 'Esri, Maxar, Earthstar Geographics' }
+          )
+          streets.addTo(map)
+          L.control.layers({ 'Mapa': streets, 'Satélite': satellite }).addTo(map)
+          markersLayerRef.current = L.layerGroup().addTo(map)
+          mapRef.current = map
+        }
+        const map = mapRef.current
+        markersLayerRef.current.clearLayers()
+        const utcInstant = launchUtcInstant(launch.year, launch.month, launch.day, launch.time_utc, launch.time_local)
+        L.marker([lat, lon], {
+          icon: buildHighlightBalloonIcon(L, statusColor('UNKNOWN'), BALLOON_SIZE, gmt3IconLabel(utcInstant)),
+          zIndexOffset: 1000,
+        }).addTo(markersLayerRef.current).bindPopup(`<b>${label}</b><br>Fonte: ${source}`)
+        if (isFirstLoad) { map.setView([lat, lon], 10) } else { map.flyTo([lat, lon], 10, { duration: 0.8 }) }
+        setTimeout(() => map.invalidateSize(), 50)
+      }
+
+      // Sem posição do radiosondy.info (mês vazio ou horário sem match):
+      // 1. se ainda dentro da janela de voo → tenta o feed ao vivo do radiosondy.info
+      // 2. se não → tenta o arquivo histórico do sondehub.org (lag de meses)
+      // 3. se nada → mostra mensagem + link Wyoming
+      async function fallbackToSondeHub(_reason: string) {
         setSourceUrl(buildSourceUrl())
-        setSondeHubFallbackReason(reason)
-        setShowSondeHubFallback(true)
         onResult?.(false)
+
+        const launchInstant = launchUtcInstant(launch.year, launch.month, launch.day, launch.time_utc, launch.time_local)
+
+        // Passo 1: feed ao vivo do radiosondy.info (sonda pode ainda estar em voo
+        // ou acabou de pousar e ainda não apareceu no export_search.php)
+        if (startplace && isWithinMatchWindow(launchInstant)) {
+          setStatus('Consultando feed ao vivo do radiosondy.info…')
+          try {
+            const live = await fetchLiveFlights()
+            if (cancelled) return
+            const match = findLiveMatch(live, startplace)
+            if (match) {
+              setStatus(null)
+              setIsSondeHubPos(true)
+              await plotPosition(match.lat, match.lon, match.sondeNumber, 'radiosondy.info (ao vivo)')
+              setSondeHubMapUrl(sondeHubUrl(match.sondeNumber, match.lat, match.lon, 7))
+              return
+            }
+          } catch {}
+          if (cancelled) return
+        }
+
+        // Passo 2: arquivo S3 histórico do sondehub.org
+        setStatus('Consultando sondehub.org…')
+        let sonde: Awaited<ReturnType<typeof fetchSondeHubArchiveSondeForDay>> = null
         try {
-          const sonde = await fetchSondeHubArchiveSondeForDay(station, launch.year, launch.month, launch.day)
-          if (!cancelled && sonde) {
-            setSondeHubMapUrl(sondeHubUrl(sonde.serial, sonde.lat, sonde.lon, 7))
-          }
-        } catch {
-          // Sem o serial exato: mantém o mapa centralizado na estação já definido acima.
+          sonde = await fetchSondeHubArchiveSondeForDay(station, launch.year, launch.month, launch.day)
+        } catch {}
+        if (cancelled) return
+
+        if (sonde) {
+          setStatus(null)
+          setIsSondeHubPos(true)
+          await plotPosition(sonde.lat, sonde.lon, sonde.serial, 'sondehub.org')
+          setSondeHubMapUrl(sondeHubUrl(sonde.serial, sonde.lat, sonde.lon, 7))
+        } else {
+          setStatus(null)
+          setError('Sem dados no radiosondy.info ou sondehub.org para este lançamento.')
         }
       }
 
-      // Já checado em segundo plano (app/api/radiosondy-sync) e sem
-      // correspondência — pula direto pro fallback, sem nenhum fetch no navegador.
-      if (launch.radiosondyMatch === 'no') {
-        await fallbackToSondeHub('Sem correspondência no radiosondy.info para este horário — mostrando o mapa do sondehub.org')
-        return
-      }
+      // Nota: não pulamos o fetch mesmo quando radiosondyMatch==='no', porque o
+      // cron pode ter marcado antes de o dado aparecer no radiosondy.info (lag de
+      // registro) — o browser re-checa sempre para garantir o resultado correto.
 
       try {
         const cacheKey = `${startplace}-${launch.year}-${launch.month}`
-        let features = featuresCacheRef.current.get(cacheKey)
+        const now = new Date()
+        const isCurrentMonth = launch.year === now.getUTCFullYear() && launch.month === now.getUTCMonth() + 1
+        let features = isCurrentMonth ? undefined : featuresCacheRef.current.get(cacheKey)
         if (!features) {
           features = await fetchRadiosondyFeatures(launch.year, launch.month, startplace)
           if (cancelled) return
-          featuresCacheRef.current.set(cacheKey, features)
+          if (!isCurrentMonth) featuresCacheRef.current.set(cacheKey, features)
         }
         if (features.length === 0) {
           await fallbackToSondeHub('Sem dados no radiosondy.info este mês — mostrando o mapa do sondehub.org')
@@ -319,12 +378,26 @@ export default function LaunchMap({ launch, onClose, onResult, station = DEFAULT
         <span className="text-xs text-gray-300">
           Lançamento {String(launch.day).padStart(2, '0')}/{String(launch.month).padStart(2, '0')}/{launch.year} às {launch.time_local} (GMT-3)
         </span>
-        {approx && (
+        {approx && !isSondeHubPos && (
           <span className="text-xs text-yellow-400 flex items-center gap-1">
             <AlertTriangle size={12} /> posição aproximada
           </span>
         )}
-        {externalUrl && (
+        {isSondeHubPos && (
+          <span className="text-xs text-violet-400 flex items-center gap-1">
+            <AlertTriangle size={12} /> via sondehub.org
+          </span>
+        )}
+        {isSondeHubPos && sondeHubMapUrl ? (
+          <a
+            href={sondeHubMapUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="ml-auto text-xs text-violet-400 hover:underline flex items-center gap-1 flex-shrink-0"
+          >
+            Ver no sondehub.org <ExternalLink size={11} />
+          </a>
+        ) : externalUrl ? (
           <a
             href={externalUrl}
             target="_blank"
@@ -333,7 +406,7 @@ export default function LaunchMap({ launch, onClose, onResult, station = DEFAULT
           >
             Ver no radiosondy.info <ExternalLink size={11} />
           </a>
-        )}
+        ) : null}
         <button onClick={onClose} className="text-gray-400 hover:text-white flex-shrink-0" title="Fechar mapa">
           <X size={15} />
         </button>
@@ -342,28 +415,8 @@ export default function LaunchMap({ launch, onClose, onResult, station = DEFAULT
       <div className="relative h-[420px] bg-[#111111]">
         <div ref={mapDivRef} className="absolute inset-0" />
 
-        {showSondeHubFallback && (
-          <div className="absolute inset-0 z-[1000] flex flex-col">
-            <div className="px-3 py-1.5 bg-amber-500/10 border-b border-amber-500/20 text-[11px] text-amber-300 flex items-center gap-1.5 flex-shrink-0 flex-wrap">
-              <AlertTriangle size={11} className="flex-shrink-0" />
-              {sondeHubFallbackReason}
-              {sourceUrl && (
-                <a href={sourceUrl} target="_blank" rel="noopener noreferrer" className="ml-auto text-blue-300 hover:underline flex-shrink-0">
-                  Ver sondagem na Wyoming
-                </a>
-              )}
-            </div>
-            {sondeHubMapUrl && (
-              <iframe
-                src={sondeHubMapUrl}
-                title="Mapa do sondehub.org"
-                className="flex-1 w-full border-0"
-              />
-            )}
-          </div>
-        )}
 
-        {!status && !error && !showSondeHubFallback && (
+        {!status && !error && (
           <div className="absolute bottom-3 right-3 z-[900] bg-[#111111]/40 backdrop-blur-sm rounded-md p-2.5 text-xs text-gray-200 space-y-1.5">
             {LEGEND_ITEMS.map(item => (
               <div key={item.label} className="flex items-center gap-2">
@@ -374,7 +427,7 @@ export default function LaunchMap({ launch, onClose, onResult, station = DEFAULT
           </div>
         )}
 
-        {(status || error) && !showSondeHubFallback && (
+        {(status || error) && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-[#111111]/95 z-[1000]">
             {error ? (
               <>

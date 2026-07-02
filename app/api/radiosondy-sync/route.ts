@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { readYearStore, writeYearStore } from '@/app/lib/blobStore'
 import {
   fetchRadiosondyFeatures, fetchLiveFlights, findRecoveredMatch, findLiveMatch,
-  isWithinMatchWindow, launchUtcInstant, LiveSondePosition,
+  isWithinMatchWindow, launchUtcInstant, LiveSondePosition, parsePopupTelemetry,
 } from '@/app/lib/radiosondy'
 import { fetchSondeHubArchiveSondeForDay } from '@/app/lib/sondehub'
 import { SOUTH_AMERICA_STATIONS } from '@/app/lib/stations'
@@ -87,9 +87,12 @@ export async function GET() {
         const recovered = findRecoveredMatch(features, instant)
         if (recovered) {
           l.radiosondyMatch = 'yes'
+          const { altitude, course } = parsePopupTelemetry(recovered.feature.popupContent)
           l.position = {
             lat: recovered.feature.lat, lon: recovered.feature.lon,
             sondeNumber: recovered.feature.sondeNumber, status: recovered.feature.status,
+            altitude: altitude || undefined,
+            course: course || undefined,
           }
           changed = true
           checked++
@@ -101,7 +104,8 @@ export async function GET() {
           const live = findLiveMatch(await liveFlightsOnce(), startplace)
           if (live) {
             l.radiosondyMatch = 'yes'
-            l.position = { lat: live.lat, lon: live.lon, sondeNumber: live.sondeNumber, status: 'UNKNOWN' }
+            l.position = { lat: live.lat, lon: live.lon, sondeNumber: live.sondeNumber, status: 'UNKNOWN',
+              altitude: live.altitude || undefined, course: live.course || undefined }
             changed = true
             checked++
             yes++
@@ -129,8 +133,14 @@ export async function GET() {
           l.radiosondyMatch = 'yes'
           l.position = { lat: sonde.lat, lon: sonde.lon, sondeNumber: sonde.serial, status: 'UNKNOWN' }
         } else {
-          // Confirmadamente sem recuperação registrada em nenhuma das fontes.
-          l.radiosondyMatch = 'no'
+          // Só marca 'no' definitivamente se o lançamento tem mais de 7 dias —
+          // recuperações tardias (usuário registra no radiosondy.info dias depois)
+          // ou dados atrasados do sondehub S3 ainda podem aparecer antes disso.
+          const ageMs = Date.now() - instant.getTime()
+          if (ageMs > 7 * 24 * 60 * 60 * 1000) {
+            l.radiosondyMatch = 'no'
+          }
+          // else: deixa undefined → cron re-checa no próximo run
         }
         changed = true
         checked++

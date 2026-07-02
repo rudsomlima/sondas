@@ -46,8 +46,11 @@ export function writeCache(entry: CacheEntry): void {
     const station = stationOf(entry)
     // Remove entrada antiga se existir
     const filtered = entries.filter(e => !(e.year === entry.year && e.month === entry.month && stationOf(e) === station))
-    // Adiciona nova
-    filtered.push({ ...entry, station, timestamp: Date.now(), version: CACHE_VERSION })
+    // Remove lançamentos com ano/mês errado antes de salvar (defesa contra dado corrompido da API)
+    const sanitizedLaunches = (entry.launches ?? []).filter(
+      (l: any) => l?.year === entry.year && l?.month === entry.month
+    )
+    filtered.push({ ...entry, launches: sanitizedLaunches, station, timestamp: Date.now(), version: CACHE_VERSION })
     localStorage.setItem(CACHE_KEY, JSON.stringify(filtered))
   } catch (e) {
     console.warn('Erro ao salvar cache:', e)
@@ -126,6 +129,76 @@ export function getCacheStats() {
     years: years.sort((a, b) => b - a),
     totalLaunches,
     oldestCache,
+  }
+}
+
+/**
+ * Retorna tamanho do cache em bytes (estimativa via JSON serializado)
+ */
+export function getCacheSizeBytes(): number {
+  if (typeof window === 'undefined') return 0
+  try {
+    const raw = localStorage.getItem(CACHE_KEY)
+    return raw ? new Blob([raw]).size : 0
+  } catch {
+    return 0
+  }
+}
+
+export interface StationCacheStats {
+  station: string
+  months: number
+  launches: number
+  years: { year: number; months: number[]; launches: number }[]
+}
+
+/**
+ * Retorna estatísticas agrupadas por estação
+ */
+export function getCacheStatsByStation(): StationCacheStats[] {
+  const entries = readCache()
+  const byStation = new Map<string, CacheEntry[]>()
+  for (const e of entries) {
+    const s = stationOf(e)
+    if (!byStation.has(s)) byStation.set(s, [])
+    byStation.get(s)!.push(e)
+  }
+
+  const result: StationCacheStats[] = []
+  for (const [station, stEntries] of byStation) {
+    const byYear = new Map<number, CacheEntry[]>()
+    for (const e of stEntries) {
+      if (!byYear.has(e.year)) byYear.set(e.year, [])
+      byYear.get(e.year)!.push(e)
+    }
+    const years = [...byYear.entries()]
+      .sort(([a], [b]) => b - a)
+      .map(([year, yEntries]) => ({
+        year,
+        months: yEntries.map(e => e.month).sort((a, b) => a - b),
+        launches: yEntries.reduce((s, e) => s + (e.launches?.length ?? 0), 0),
+      }))
+    result.push({
+      station,
+      months: stEntries.length,
+      launches: stEntries.reduce((s, e) => s + (e.launches?.length ?? 0), 0),
+      years,
+    })
+  }
+  return result.sort((a, b) => b.launches - a.launches)
+}
+
+/**
+ * Remove todo o cache de uma estação
+ */
+export function clearStation(station: string): void {
+  if (typeof window === 'undefined') return
+  try {
+    const entries = readCache()
+    const filtered = entries.filter(e => stationOf(e) !== station)
+    localStorage.setItem(CACHE_KEY, JSON.stringify(filtered))
+  } catch (e) {
+    console.warn('Erro ao limpar cache da estação:', e)
   }
 }
 

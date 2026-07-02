@@ -12,7 +12,7 @@ npm run start    # serve production build
 npm run lint     # next lint
 ```
 
-There is no test suite configured. No env vars are required for local dev (Blob persistence degrades to no-op without credentials — see below).
+There is no test suite configured. No env vars are required for local dev (R2 persistence degrades to no-op without credentials — see below).
 
 ## Architecture
 
@@ -21,7 +21,7 @@ Next.js 15 (App Router) + TypeScript app that monitors radiosonde (weather ballo
 ### Multi-station support
 
 - **`app/lib/stations.ts`** — static list of ~40 South American stations (`SOUTH_AMERICA_STATIONS`), each with `{ id (STNM), name, lat, lon, radiosondyStartplace? }`. `radiosondyStartplace` links a Wyoming station to its corresponding radiosondy.info launch-site name when known — the two systems use *different, unrelated names* for the same physical site (e.g. Wyoming's "Natal Aeroporto" ↔ radiosondy.info's "Barreira do Inferno Launch Center (BR)"). These pairs were derived by matching geographic proximity (lat/lon), not name similarity — about half the stations have no known radiosondy.info counterpart and are left unmapped (`getRadiosondyStartplace()` returns `null`).
-- All Wyoming requests use `region=samer` (confirmed working for every station regardless of source format — `FM35`/legacy TEMP vs `BUFR`).
+- **Wyoming API migrou em 2026** do endpoint legado `https://weather.uwyo.edu/cgi-bin/sounding` (404) para `https://weather.uwyo.edu/wsgi/sounding`. A nova API usa dois steps: (1) inventário anual `?datetime=YYYY-MM-DD 12:00:00&id=STNM&type=INVENTORY&src=FM35` → lista de datetimes disponíveis; (2) sondagem individual `?datetime=YYYY-MM-DD HH:MM:SS&id=STNM&src=FM35&type=TEXT:LIST`. Novo formato de header: `Observations for Station XXXXX at HH UTC DD Mon YYYY`. Parâmetro `src=FM35` (antigo `region=samer`).
 - The selected station is persisted to `localStorage` (`sondas_station`) via `getSelectedStation()`/`setSelectedStation()`, shared between `app/configuracoes` (search-and-select UI, only applied on "Salvar") and `app/historico` (plain `<select>`, applied immediately on change — also resets the open map/match state since changing station changes what's displayed live).
 - Every Wyoming-facing API call takes `station` as an explicit param/query string — there is no hardcoded default station at the API layer (the *UI* defaults to `DEFAULT_STATION` = 82599 if nothing is persisted yet).
 
@@ -34,7 +34,7 @@ Next.js 15 (App Router) + TypeScript app that monitors radiosonde (weather ballo
 
    Internally it scrapes `https://weather.uwyo.edu/cgi-bin/sounding?region=samer&TYPE=TEXT:LIST...&STNM={station}` HTML and regex-parses `Observations at HHZ DD Mon YYYY` lines into `Launch` records (date/time converted to GMT-3). Wyoming responses are flaky (intermittent 400/403/500 unrelated to the request), so fetches retry up to 3x with backoff and a 15s timeout.
 
-2. **`app/lib/blobStore.ts`** — persists one JSON file per station+year to Vercel Blob. The default station (82599) keeps the legacy path `sondas/history-{year}.json` (no station segment, preserving pre-multi-station data); every other station gets `sondas/history-{station}-{year}.json`. No-ops entirely if neither `BLOB_READ_WRITE_TOKEN` nor `BLOB_STORE_ID` is set (e.g. local dev without `vercel env pull`), so the API still works locally, just without cross-request persistence.
+2. **`app/lib/blobStore.ts`** — persists one JSON file per station+year to Cloudflare R2 (S3-compatible API via `@aws-sdk/client-s3`). The default station (82599) keeps the legacy path `sondas/history-{year}.json`; every other station gets `sondas/history-{station}-{year}.json`. No-ops entirely if `R2_ACCOUNT_ID`/`R2_ACCESS_KEY_ID`/`R2_SECRET_ACCESS_KEY` are not set (e.g. local dev without `.env.local`), so the API still works locally, just without cross-request persistence. Requires `R2_BUCKET_NAME` (defaults to `"sondas"`).
 
 3. **In-memory cache** inside `route.ts` (`memoryCache` Map, per server instance, keyed by station+year+month): current month cached 1 hour, past months cached permanently for the life of the instance. Sits in front of the Blob store and Wyoming fetch.
 

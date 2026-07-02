@@ -9,8 +9,9 @@ import {
 } from 'lucide-react'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts'
 import {
-  getCacheByYear, writeCache, clearMonth, clearYear, clearAllCache,
-  getCacheStats, exportCache, CacheEntry
+  getCacheByYear, writeCache, clearMonth, clearYear, clearAllCache, clearStation,
+  getCacheStats, getCacheSizeBytes, getCacheStatsByStation, exportCache, importCache,
+  StationCacheStats, CacheEntry
 } from '@/app/lib/cache'
 import {
   fetchTodayFlights, sondeHubUrl, TodayFlight
@@ -36,7 +37,7 @@ interface Launch {
   radiosondyMatch?: 'yes' | 'no'
   // Posição final da sonda (radiosondy.info ou sondehub.org), quando já
   // resolvida — ver app/historico/LaunchMap.tsx.
-  position?: { lat: number; lon: number; sondeNumber: string; status: string }
+  position?: { lat: number; lon: number; sondeNumber: string; status: string; altitude?: number; course?: string }
   // Estações sem cobertura na Wyoming (Station.wyomingSupported === false):
   // 'radiosondy'/'sondehub' = horário aproximado. Ausente = Wyoming (padrão).
   source?: 'wyoming' | 'radiosondy' | 'sondehub'
@@ -96,8 +97,13 @@ export default function HistoricoPage() {
   const [error, setError] = useState<string | null>(null)
   const [expandedMonth, setExpandedMonth] = useState<number | null>(null)
   const [cacheStats, setCacheStats] = useState<any>(null)
+  const [cacheStatsByStation, setCacheStatsByStation] = useState<StationCacheStats[]>([])
+  const [cacheSizeBytes, setCacheSizeBytes] = useState(0)
+  const [expandedCacheStations, setExpandedCacheStations] = useState<Set<string>>(new Set())
   const [showCachePanel, setShowCachePanel] = useState(false)
-  const [deleteConfirm, setDeleteConfirm] = useState<{ type: 'month' | 'year' | 'all'; month?: number; year?: number } | null>(null)
+  const [bulkSyncFrom, setBulkSyncFrom] = useState(currentYear - 4)
+  const [bulkSyncStatus, setBulkSyncStatus] = useState<string | null>(null)
+  const [deleteConfirm, setDeleteConfirm] = useState<{ type: 'month' | 'year' | 'all' | 'station'; month?: number; year?: number; station?: string } | null>(null)
   const [todayData, setTodayData] = useState<TodayData | null>(null)
   const [todayLoading, setTodayLoading] = useState(true)
   const [todayFlights, setTodayFlights] = useState<TodayFlight[]>([])
@@ -108,6 +114,7 @@ export default function HistoricoPage() {
   const [failedMonths, setFailedMonths] = useState<Set<number>>(new Set())
   const [selectedLaunch, setSelectedLaunch] = useState<Launch | null>(null)
   const [noMatchLaunches, setNoMatchLaunches] = useState<Set<string>>(new Set())
+  const [noMatchNotice, setNoMatchNotice] = useState<{ date: string; time_local: string; wyomingUrl: string } | null>(null)
   const [showYearMap, setShowYearMap] = useState(false)
   const [station, setStation] = useState<Station>(DEFAULT_STATION)
   const [showStationPicker, setShowStationPicker] = useState(false)
@@ -122,6 +129,7 @@ export default function HistoricoPage() {
     setSelectedStation(s)
     setSelectedLaunch(null)
     setNoMatchLaunches(new Set())
+    setNoMatchNotice(null)
     setShowStationPicker(false)
     setStationQuery('')
   }, [])
@@ -208,6 +216,8 @@ export default function HistoricoPage() {
 
   const updateCacheStats = useCallback(() => {
     setCacheStats(getCacheStats())
+    setCacheStatsByStation(getCacheStatsByStation())
+    setCacheSizeBytes(getCacheSizeBytes())
   }, [])
 
   // Busca um mês na API e mescla o resultado nos dados já exibidos,
@@ -309,23 +319,29 @@ export default function HistoricoPage() {
     if (!deleteConfirm) return
 
     if (deleteConfirm.type === 'month' && deleteConfirm.month !== undefined) {
-      clearMonth(deleteConfirm.year || year, deleteConfirm.month, station.id)
+      const targetMonth = deleteConfirm.month
+      clearMonth(deleteConfirm.year || year, targetMonth, station.id)
       setData(prev => prev ? {
         ...prev,
-        launches: prev.launches.filter(l => l.month !== deleteConfirm.month),
-        count: prev.count - prev.launches.filter(l => l.month === deleteConfirm.month).length,
+        launches: prev.launches.filter(l => l.month !== targetMonth),
+        count: prev.count - prev.launches.filter(l => l.month === targetMonth).length,
       } : null)
+      updateCacheStats()
+      setDeleteConfirm(null)
+      syncMonths(year, [targetMonth])
+      return
     } else if (deleteConfirm.type === 'year') {
-      clearYear(deleteConfirm.year || year, station.id)
-      setData(null)
+      clearYear(deleteConfirm.year || year, deleteConfirm.station || station.id)
+    } else if (deleteConfirm.type === 'station' && deleteConfirm.station) {
+      clearStation(deleteConfirm.station)
     } else if (deleteConfirm.type === 'all') {
       clearAllCache()
-      setData(null)
     }
 
     updateCacheStats()
     setDeleteConfirm(null)
-  }, [deleteConfirm, year, updateCacheStats, station.id])
+    fetchData(year)
+  }, [deleteConfirm, year, updateCacheStats, station.id, fetchData, syncMonths])
 
   // Exportar cache
   const handleExport = useCallback(() => {
@@ -338,6 +354,41 @@ export default function HistoricoPage() {
     a.click()
     URL.revokeObjectURL(url)
   }, [])
+
+  // Importar cache de arquivo JSON
+  const handleImport = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = ev => {
+      const text = ev.target?.result as string
+      const result = importCache(text)
+      if (result.success) {
+        updateCacheStats()
+        fetchData(year)
+      }
+      alert(result.message)
+    }
+    reader.readAsText(file)
+    e.target.value = ''
+  }, [updateCacheStats, fetchData, year])
+
+  // Sincroniza sequencialmente todos os anos do intervalo escolhido
+  const handleBulkSync = useCallback(async () => {
+    const yearsToSync: number[] = []
+    for (let y = bulkSyncFrom; y <= currentYear; y++) yearsToSync.push(y)
+    for (const y of yearsToSync) {
+      setBulkSyncStatus(`Sincronizando ${y}…`)
+      try {
+        await fetch(`/api/sounding?action=year&station=${station.id}&year=${y}`)
+      } catch {
+        // ignora falhas pontuais — próximo run retentará
+      }
+    }
+    setBulkSyncStatus(null)
+    updateCacheStats()
+    fetchData(year)
+  }, [bulkSyncFrom, currentYear, station.id, updateCacheStats, fetchData, year])
 
   // Group launches by month
   const byMonth: Record<number, Launch[]> = {}
@@ -587,33 +638,103 @@ export default function HistoricoPage() {
               <HardDrive size={14} className="text-blue-400" />
               Gerenciamento de Cache
             </h2>
-            <button
-              onClick={() => setShowCachePanel(false)}
-              className="text-gray-400 hover:text-white text-lg"
-            >
-              ×
-            </button>
+            <button onClick={() => setShowCachePanel(false)} className="text-gray-400 hover:text-white text-lg">×</button>
           </div>
 
+          {/* Resumo */}
           {cacheStats && (
-            <div className="grid gap-3 mb-4 sm:grid-cols-2">
-              <div className="text-xs">
-                <p className="text-gray-400">Meses em cache</p>
-                <p className="text-lg font-bold text-white">{cacheStats.totalMonths}</p>
+            <div className="flex flex-wrap gap-4 mb-4 text-xs">
+              <div>
+                <span className="text-gray-400">Uso: </span>
+                <span className="text-white font-bold mono">
+                  {cacheSizeBytes < 1024 * 1024
+                    ? `${(cacheSizeBytes / 1024).toFixed(1)} KB`
+                    : `${(cacheSizeBytes / 1024 / 1024).toFixed(2)} MB`}
+                </span>
+                <span className="text-gray-500"> / ~5 MB</span>
               </div>
-              <div className="text-xs">
-                <p className="text-gray-400">Lançamentos totais</p>
-                <p className="text-lg font-bold text-white">{cacheStats.totalLaunches}</p>
-              </div>
-              {cacheStats.years.length > 0 && (
-                <div className="text-xs col-span-2">
-                  <p className="text-gray-400">Anos em cache</p>
-                  <p className="text-sm text-white mono">{cacheStats.years.join(', ')}</p>
-                </div>
-              )}
+              <div><span className="text-gray-400">Meses: </span><span className="text-white font-bold mono">{cacheStats.totalMonths}</span></div>
+              <div><span className="text-gray-400">Lançamentos: </span><span className="text-white font-bold mono">{cacheStats.totalLaunches}</span></div>
             </div>
           )}
 
+          {/* Tabela por estação */}
+          {cacheStatsByStation.length > 0 && (
+            <div className="mb-4 space-y-2">
+              {cacheStatsByStation.map(st => (
+                <div key={st.station} className="border border-[#2a2a2a] rounded bg-[#111]">
+                  <div className="flex items-center justify-between px-3 py-2">
+                    <button
+                      className="flex items-center gap-2 text-xs text-gray-300 hover:text-white flex-1 text-left"
+                      onClick={() => setExpandedCacheStations(prev => {
+                        const next = new Set(prev)
+                        next.has(st.station) ? next.delete(st.station) : next.add(st.station)
+                        return next
+                      })}
+                    >
+                      <ChevronDown size={12} className={`transition-transform ${expandedCacheStations.has(st.station) ? 'rotate-180' : ''}`} />
+                      <span className="mono font-medium">{st.station}</span>
+                      <span className="text-gray-500">— {st.months} meses, {st.launches} lançamentos</span>
+                    </button>
+                    <button
+                      onClick={() => setDeleteConfirm({ type: 'station', station: st.station })}
+                      className="text-red-400 hover:text-red-300 ml-2"
+                      title="Apagar estação"
+                    >
+                      <Trash2 size={12} />
+                    </button>
+                  </div>
+                  {expandedCacheStations.has(st.station) && (
+                    <div className="border-t border-[#2a2a2a] px-3 py-2 space-y-1">
+                      {st.years.map(yr => (
+                        <div key={yr.year} className="flex items-center justify-between text-xs">
+                          <span className="mono text-gray-400 w-12">{yr.year}</span>
+                          <span className="text-gray-500 flex-1">{MONTHS.filter((_, i) => yr.months.includes(i + 1)).join(', ')}</span>
+                          <span className="text-gray-500 mr-3">{yr.launches} lançamentos</span>
+                          <button
+                            onClick={() => setDeleteConfirm({ type: 'year', year: yr.year, station: st.station })}
+                            className="text-red-400 hover:text-red-300"
+                            title={`Apagar ${yr.year}`}
+                          >
+                            <Trash2 size={11} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Sincronizar intervalo de anos */}
+          <div className="mb-4 p-3 bg-[#111] border border-[#2a2a2a] rounded">
+            <p className="text-xs text-gray-400 mb-2">Sincronizar histórico com a Wyoming (1 mês por request)</p>
+            <div className="flex items-center gap-2 flex-wrap">
+              <label className="text-xs text-gray-400">De</label>
+              <select
+                value={bulkSyncFrom}
+                onChange={e => setBulkSyncFrom(Number(e.target.value))}
+                className="bg-[#1a1a1a] border border-[#2a2a2a] rounded text-xs text-white px-2 py-1 outline-none focus:border-blue-500"
+              >
+                {Array.from({ length: 10 }, (_, i) => currentYear - 9 + i).map(y => (
+                  <option key={y} value={y}>{y}</option>
+                ))}
+              </select>
+              <label className="text-xs text-gray-400">até {currentYear}</label>
+              <button
+                onClick={handleBulkSync}
+                disabled={!!bulkSyncStatus}
+                className="flex items-center gap-1.5 px-3 py-1 bg-blue-600/20 border border-blue-500/30 rounded text-xs text-blue-400 hover:bg-blue-600/30 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {bulkSyncStatus
+                  ? <><Loader2 size={11} className="animate-spin" />{bulkSyncStatus}</>
+                  : <><RefreshCw size={11} />Sincronizar</>}
+              </button>
+            </div>
+          </div>
+
+          {/* Ações */}
           <div className="flex flex-wrap gap-2">
             <button
               onClick={handleExport}
@@ -622,6 +743,11 @@ export default function HistoricoPage() {
               <Download size={12} />
               Exportar JSON
             </button>
+            <label className="flex items-center gap-2 px-3 py-1.5 bg-blue-600/20 border border-blue-500/30 rounded text-xs text-blue-400 hover:bg-blue-600/30 transition-all cursor-pointer">
+              <Download size={12} className="rotate-180" />
+              Importar JSON
+              <input type="file" accept=".json" className="hidden" onChange={handleImport} />
+            </label>
             <button
               onClick={() => setDeleteConfirm({ type: 'all' })}
               className="flex items-center gap-2 px-3 py-1.5 bg-red-600/20 border border-red-500/30 rounded text-xs text-red-400 hover:bg-red-600/30 transition-all"
@@ -639,8 +765,11 @@ export default function HistoricoPage() {
           <AlertTriangle size={18} className="text-yellow-400 flex-shrink-0 mt-0.5" />
           <div className="flex-1">
             <p className="text-sm text-yellow-400 font-medium">
-              {deleteConfirm.type === 'year' ? `Remover ano ${deleteConfirm.year}?`
-                : 'Remover TODO o cache?'}
+              {deleteConfirm.type === 'year'
+                ? `Remover ${deleteConfirm.year}${deleteConfirm.station ? ` (${deleteConfirm.station})` : ''}?`
+                : deleteConfirm.type === 'station'
+                  ? `Remover todos os dados de ${deleteConfirm.station}?`
+                  : 'Remover TODO o cache?'}
             </p>
             <div className="flex gap-2 mt-3">
               <button
@@ -849,6 +978,18 @@ export default function HistoricoPage() {
                                         <button
                                           key={i}
                                           onClick={() => {
+                                            if (noMatch && !l.position) {
+                                              const pad = (n: number) => String(n).padStart(2, '0')
+                                              const hourUtc = l.time_utc.slice(0, 2).padStart(2, '0')
+                                              const dt = `${l.year}-${pad(l.month)}-${pad(l.day)} ${hourUtc}:00:00`
+                                              setNoMatchNotice({
+                                                date: l.date,
+                                                time_local: l.time_local,
+                                                wyomingUrl: `https://weather.uwyo.edu/wsgi/sounding?src=FM35&datetime=${dt.replace(' ', '%20')}&id=${station.id}&type=TEXT:LIST`,
+                                              })
+                                              return
+                                            }
+                                            setNoMatchNotice(null)
                                             setShowYearMap(false)
                                             setSelectedLaunch(prev => (sameLaunch(prev, l) ? null : l))
                                           }}
@@ -859,6 +1000,17 @@ export default function HistoricoPage() {
                                         >
                                           {isDaytime(l.time_local) ? <Sun size={10} /> : <Moon size={10} />}
                                           {l.approx && '~'}{l.time_local}
+                                          <span className={`text-[9px] font-bold leading-none px-0.5 rounded ${
+                                            l.source === 'sondehub' ? 'text-violet-400'
+                                            : l.source === 'radiosondy' ? 'text-emerald-400'
+                                            : 'text-sky-400'
+                                          }`} title={
+                                            l.source === 'sondehub' ? 'sondehub.org'
+                                            : l.source === 'radiosondy' ? 'radiosondy.info'
+                                            : 'University of Wyoming'
+                                          }>
+                                            {l.source === 'sondehub' ? 'S' : l.source === 'radiosondy' ? 'R' : 'W'}
+                                          </span>
                                         </button>
                                       )
                                     })}
@@ -866,6 +1018,28 @@ export default function HistoricoPage() {
                               </div>
                             ))}
                         </div>
+
+                        {noMatchNotice && !selectedLaunch && (
+                          <div className="mt-3 border border-[#2a2a2a] rounded px-4 py-3 flex items-center gap-3 flex-wrap bg-[#1a1a1a] text-sm text-gray-400">
+                            <span>
+                              Lançamento {noMatchNotice.date.split('-').reverse().join('/')} às {noMatchNotice.time_local} — sem correspondência no radiosondy.info.
+                            </span>
+                            <a
+                              href={noMatchNotice.wyomingUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-sky-400 hover:underline text-xs flex-shrink-0"
+                            >
+                              Ver sondagem na Wyoming ↗
+                            </a>
+                            <button
+                              onClick={() => setNoMatchNotice(null)}
+                              className="ml-auto text-gray-600 hover:text-gray-300 text-xs"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        )}
 
                         {selectedLaunch && selectedLaunch.month === m && (
                           <LaunchMap

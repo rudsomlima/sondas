@@ -34,6 +34,8 @@ interface LaunchPosition {
   lon: number
   sondeNumber: string
   status: string
+  altitude?: number
+  course?: string
 }
 
 interface Launch {

@@ -6,11 +6,14 @@ import { fetchSondeHubApproxLaunches, fetchSondeHubArchiveLaunches } from '@/app
 
 const GMT3 = -3 * 60 * 60 * 1000
 const DEFAULT_STATION_ID = '82599'
-const REGION = 'samer' // funciona para qualquer estação da América do Sul (FM35 ou BUFR), confirmado por teste real
+const WYOMING_BASE = 'https://weather.uwyo.edu/wsgi/sounding'
+const WYOMING_SRC = 'FM35'
 const TIMEOUT = 15000 // 15 segundos por requisição
 
 // Cache em memória (persiste durante a sessão do servidor)
 const memoryCache = new Map<string, { data: any; timestamp: number }>()
+// Cache de inventário anual separado (mais estável que sondagens individuais)
+const inventoryCache = new Map<string, { datetimes: string[]; timestamp: number }>()
 
 // Date.now() já é um instante absoluto (UTC); somar getTimezoneOffset() aqui
 // fazia o resultado depender do fuso horário configurado na máquina/servidor
@@ -44,49 +47,158 @@ async function fetchWithTimeout(url: string, timeout: number): Promise<string> {
   }
 }
 
-async function fetchSounding(station: string, year: number, month: number, fromDay = 0): Promise<string> {
-  const cacheKey = `sounding_${station}_${year}_${String(month).padStart(2, '0')}_${fromDay}`
-  const now = nowGMT3()
-  const isCurrentMonth = year === now.getUTCFullYear() && month === now.getUTCMonth() + 1
-
-  // Verifica cache em memória
-  const cached = memoryCache.get(cacheKey)
-  if (cached) {
-    // Mês atual: válido por 1 hora
-    if (isCurrentMonth && Date.now() - cached.timestamp < 3600000) {
-      return cached.data
-    }
-    // Meses passados: permanente
-    if (!isCurrentMonth) {
-      return cached.data
+// Extrai datetimes do HTML de inventário anual da Wyoming.
+// Links têm formato: datetime=2026-06-01 12:00:00 (espaço literal no HTML).
+function parseInventory(html: string, year: number): string[] {
+  const pattern = /datetime=(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2})/g
+  const seen = new Set<string>()
+  const result: string[] = []
+  let m: RegExpExecArray | null
+  while ((m = pattern.exec(html)) !== null) {
+    const dt = m[1].replace('T', ' ')
+    if (dt.startsWith(String(year)) && !seen.has(dt)) {
+      seen.add(dt)
+      result.push(dt)
     }
   }
+  return result.sort()
+}
 
-  // Permite buscar só a partir de um dia específico, para atualizações incrementais.
-  // TO precisa ser um dia válido do mês (a Wyoming responde 400 para TO=31 em meses com menos dias).
-  const fromStr = fromDay > 0 ? `${String(fromDay).padStart(2, '0')}00` : '0100'
-  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate()
-  const toStr = `${String(lastDay).padStart(2, '0')}23`
-  const url = `https://weather.uwyo.edu/cgi-bin/sounding?region=${REGION}&TYPE=TEXT%3ALIST&YEAR=${year}&MONTH=${String(month).padStart(2, '0')}&FROM=${fromStr}&TO=${toStr}&STNM=${station}`
+// Converte datetime do inventário ("YYYY-MM-DD HH:MM:SS") para a chave usada
+// nos launches armazenados ("YYYY-MM-DD_HH:00Z"), que usa data local + hora UTC.
+// Na prática os dois coincidem porque o boundary guard mantém a data UTC quando
+// o ajuste de -3h cruza fronteira de mês/ano.
+function inventoryDtToKey(dt: string): string {
+  const [date, time] = dt.split(' ')
+  return `${date}_${time.slice(0, 2)}:00Z`
+}
 
-  // A Wyoming falha de forma intermitente (400/403/500 aleatórios, sem relação
-  // com o mês pedido) — tenta de novo algumas vezes antes de desistir.
+async function fetchInventory(station: string, year: number): Promise<string[]> {
+  const cacheKey = `inventory_${station}_${year}`
+  const now = nowGMT3()
+  const isCurrentYear = year === now.getUTCFullYear()
+
+  const cached = inventoryCache.get(cacheKey)
+  if (cached) {
+    if (isCurrentYear && Date.now() - cached.timestamp < 3600000) return cached.datetimes
+    if (!isCurrentYear) return cached.datetimes
+  }
+
+  // O datetime exato não importa para o inventário — a Wyoming retorna o ano todo.
+  // Usa data de referência no meio do ano para evitar edge-cases de virada de ano.
+  const refDate = isCurrentYear
+    ? (() => {
+        const pad = (n: number) => String(n).padStart(2, '0')
+        return `${now.getUTCFullYear()}-${pad(now.getUTCMonth() + 1)}-${pad(now.getUTCDate())}`
+      })()
+    : `${year}-07-01`
+  const url = `${WYOMING_BASE}?datetime=${(refDate + ' 12:00:00').replace(' ', '%20')}&id=${station}&type=INVENTORY&src=${WYOMING_SRC}`
+
   const RETRIES = 3
   let lastErr: any
   for (let attempt = 0; attempt < RETRIES; attempt++) {
     try {
       const html = await fetchWithTimeout(url, TIMEOUT)
-      memoryCache.set(cacheKey, { data: html, timestamp: Date.now() })
-      return html
+      const datetimes = parseInventory(html, year)
+      inventoryCache.set(cacheKey, { datetimes, timestamp: Date.now() })
+      return datetimes
     } catch (e: any) {
       lastErr = e
       if (attempt < RETRIES - 1) await new Promise(r => setTimeout(r, 1000 * (attempt + 1)))
     }
   }
-  if (lastErr.name === 'AbortError') {
-    throw new Error(`Timeout ao conectar com Wyoming (>${TIMEOUT}ms)`)
-  }
   throw lastErr
+}
+
+// Parseia o HTML de uma única sondagem e retorna um Launch.
+// Novo formato: "Observations for Station 82599 at 12 UTC 01 Jul 2026"
+// Compatível com formato antigo: "Observations at 12Z 01 Jul 2026"
+function parseSingleSounding(html: string): Launch | null {
+  const m = html.match(/Observations(?:\s+for\s+Station\s+\d+)?\s+at\s+(\d{1,2})\s*(?:Z|UTC)\s+(\d{1,2})\s+(\w{3})\s+(\d{4})/i)
+  if (!m) return null
+
+  const hourUtc = parseInt(m[1])
+  const day = parseInt(m[2])
+  const monStr = m[3].slice(0, 3)
+  const yr = parseInt(m[4])
+  const monNum = MONTH_MAP[monStr]
+  if (!monNum || hourUtc < 0 || hourUtc > 23 || day < 1 || day > 31) return null
+
+  const utcMs = Date.UTC(yr, monNum - 1, day, hourUtc, 0, 0)
+  let localDate = new Date(utcMs + GMT3)
+  // Mesmo boundary guard do parseLaunches original: mantém data UTC quando
+  // o ajuste de -3h cruzaria fronteira de mês/ano.
+  if (localDate.getUTCFullYear() !== yr || localDate.getUTCMonth() + 1 !== monNum) {
+    localDate = new Date(utcMs)
+  }
+
+  const pad = (n: number) => n.toString().padStart(2, '0')
+  const launch: Launch = {
+    date: `${localDate.getUTCFullYear()}-${pad(localDate.getUTCMonth() + 1)}-${pad(localDate.getUTCDate())}`,
+    time_local: `${pad(localDate.getUTCHours())}:${pad(localDate.getUTCMinutes())}`,
+    time_utc: `${pad(hourUtc)}:00Z`,
+    day: localDate.getUTCDate(),
+    month: localDate.getUTCMonth() + 1,
+    year: localDate.getUTCFullYear(),
+  }
+  return validateLaunch(launch) ? launch : null
+}
+
+async function fetchSingleSounding(station: string, datetime: string): Promise<Launch | null> {
+  const cacheKey = `sounding_${station}_${datetime}`
+  const cached = memoryCache.get(cacheKey)
+  if (cached) return cached.data
+
+  const url = `${WYOMING_BASE}?datetime=${datetime.replace(' ', '%20')}&id=${station}&src=${WYOMING_SRC}&type=TEXT:LIST`
+
+  const RETRIES = 3
+  for (let attempt = 0; attempt < RETRIES; attempt++) {
+    try {
+      const res = await fetch(url, {
+        signal: AbortSignal.timeout(TIMEOUT),
+        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; SondasNatal/1.0)', 'Accept': 'text/html,application/xhtml+xml' },
+      })
+      // 400 = slot sem dados (determinístico) — não faz retry, cacheia null
+      if (res.status === 400) {
+        memoryCache.set(cacheKey, { data: null, timestamp: Date.now() })
+        return null
+      }
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const html = await res.text()
+      const launch = parseSingleSounding(html)
+      memoryCache.set(cacheKey, { data: launch, timestamp: Date.now() })
+      return launch
+    } catch (e: any) {
+      if (attempt < RETRIES - 1) await new Promise(r => setTimeout(r, 1000 * (attempt + 1)))
+    }
+  }
+  return null
+}
+
+// Busca todas as sondagens Wyoming de um mês que ainda não estão em cache.
+// Retorna apenas as novas (a mesclagem com existentes fica em syncMonth).
+async function fetchWyomingMonth(
+  station: string, year: number, month: number, existingKeys: Set<string>
+): Promise<Launch[]> {
+  const allDatetimes = await fetchInventory(station, year)
+  const monthStr = String(month).padStart(2, '0')
+  const missing = allDatetimes
+    .filter(dt => dt.startsWith(`${year}-${monthStr}`))
+    .filter(dt => !existingKeys.has(inventoryDtToKey(dt)))
+
+  if (missing.length === 0) return []
+
+  // Busca em lotes paralelos para não sobrecarregar o servidor da Wyoming.
+  const BATCH = 5
+  const result: Launch[] = []
+  for (let i = 0; i < missing.length; i += BATCH) {
+    const batch = missing.slice(i, i + BATCH)
+    const settled = await Promise.allSettled(batch.map(dt => fetchSingleSounding(station, dt)))
+    for (const r of settled) {
+      if (r.status === 'fulfilled' && r.value) result.push(r.value)
+    }
+  }
+  return result
 }
 
 interface LaunchPosition {
@@ -94,6 +206,8 @@ interface LaunchPosition {
   lon: number
   sondeNumber: string
   status: string
+  altitude?: number
+  course?: string
 }
 
 interface Launch {
@@ -130,64 +244,6 @@ function validateLaunch(launch: Launch): boolean {
   )
 }
 
-function parseLaunches(html: string, year: number, month: number): Launch[] {
-  const pattern = /Observations at\s+(\d{2})Z\s+(\d{2})\s+(\w{3})\s+(\d{4})/gi
-  const launches: Launch[] = []
-  let m: RegExpExecArray | null
-
-  while ((m = pattern.exec(html)) !== null) {
-    try {
-      const hourUtc = parseInt(m[1])
-      const day = parseInt(m[2])
-      const monStr = m[3].slice(0, 3)
-      const yr = parseInt(m[4])
-      const monNum = MONTH_MAP[monStr] ?? month
-
-      // Validação rápida antes de criar data
-      if (hourUtc < 0 || hourUtc > 23 || day < 1 || day > 31) continue
-
-      const utcMs = Date.UTC(yr, monNum - 1, day, hourUtc, 0, 0)
-      const localMs = utcMs + GMT3
-      let localDate = new Date(localMs)
-
-      // O ajuste de -3h pode empurrar o lançamento de 00Z do dia 1 para o
-      // último dia do mês anterior (ex: 1/Jan 00Z -> 31/Dez 21h). Isso fazia
-      // o lançamento ser contado no mês errado. Quando isso cruzar a
-      // fronteira do mês, mantemos a data/mês original em UTC.
-      if (localDate.getUTCFullYear() !== yr || localDate.getUTCMonth() + 1 !== monNum) {
-        localDate = new Date(utcMs)
-      }
-
-      const pad = (n: number) => n.toString().padStart(2, '0')
-      const dateStr = `${localDate.getUTCFullYear()}-${pad(localDate.getUTCMonth() + 1)}-${pad(localDate.getUTCDate())}`
-
-      const launch: Launch = {
-        date: dateStr,
-        time_local: `${pad(localDate.getUTCHours())}:${pad(localDate.getUTCMinutes())}`,
-        time_utc: `${pad(hourUtc)}:00Z`,
-        day: localDate.getUTCDate(),
-        month: localDate.getUTCMonth() + 1,
-        year: localDate.getUTCFullYear(),
-      }
-
-      if (validateLaunch(launch)) {
-        launches.push(launch)
-      }
-    } catch (e) {
-      // Skip invalid entries
-      continue
-    }
-  }
-
-  // Remove duplicatas
-  const seen = new Set<string>()
-  return launches.filter(l => {
-    const key = `${l.date}_${l.time_utc}`
-    if (seen.has(key)) return false
-    seen.add(key)
-    return true
-  })
-}
 
 /**
  * Limpa o YearStore de entradas inválidas que podem ter sido gravadas por
@@ -310,34 +366,44 @@ async function syncMonth(
   const existingForMonth = store.launches.filter(l => l.month === month)
   const existingWyoming = existingForMonth.filter(l => !l.source)
   const existingApprox = existingForMonth.filter(l => l.source)
-  // O cursor incremental só avança com base no que a própria Wyoming já
-  // confirmou — um lançamento aproximado (source definido) pode ter um "day"
-  // mais recente que a Wyoming ainda não publicou; usá-lo aqui faria a
-  // Wyoming pular dias que ainda vai publicar fora de ordem.
-  const lastDay = existingWyoming.reduce((max, l) => Math.max(max, l.day), 0)
 
-  const html = await fetchSounding(station, year, month, lastDay)
-  const fresh = parseLaunches(html, year, month)
+  let wyomingOk = false
+  let merged: Launch[] = existingForMonth
 
-  const seenWyoming = new Set(existingWyoming.map(l => `${l.date}_${l.time_utc}`))
-  const mergedWyoming = existingWyoming.concat(fresh.filter(l => !seenWyoming.has(`${l.date}_${l.time_utc}`)))
+  try {
+    const existingKeys = new Set(existingWyoming.map(l => `${l.date}_${l.time_utc}`))
+    const fresh = await fetchWyomingMonth(station, year, month, existingKeys)
+    wyomingOk = true
 
-  // Descarta entradas aproximadas que a Wyoming já confirmou no horário exato.
-  const wyomingKeys = new Set(mergedWyoming.map(l => `${l.date}_${l.time_utc}`))
-  let merged: Launch[] = mergedWyoming.concat(existingApprox.filter(l => !wyomingKeys.has(`${l.date}_${l.time_utc}`)))
+    const seenWyoming = new Set(existingWyoming.map(l => `${l.date}_${l.time_utc}`))
+    const mergedWyoming = existingWyoming.concat(fresh.filter(l => !seenWyoming.has(`${l.date}_${l.time_utc}`)))
 
-  if (isCurrentMonth && stationInfo) {
+    // Descarta entradas aproximadas que a Wyoming já confirmou no horário exato.
+    const wyomingKeys = new Set(mergedWyoming.map(l => `${l.date}_${l.time_utc}`))
+    merged = mergedWyoming.concat(existingApprox.filter(l => !wyomingKeys.has(`${l.date}_${l.time_utc}`)))
+  } catch {
+    // Wyoming indisponível — usa fontes alternativas (radiosondy.info + sondehub)
+    // para não deixar o mês vazio enquanto a Wyoming estiver fora.
+  }
+
+  // Fontes complementares: sempre no mês corrente; também em meses passados
+  // quando a Wyoming falhou (para não retornar vazio).
+  if (stationInfo && (isCurrentMonth || !wyomingOk)) {
     try {
-      const complementary = await fetchComplementaryLaunches(stationInfo, year, month)
+      const complementary = isCurrentMonth
+        ? await fetchComplementaryLaunches(stationInfo, year, month)
+        : await fetchApproxLaunches(stationInfo, year, month, false)
       const knownKeys = new Set(merged.map(l => `${l.date}_${l.time_utc}`))
       merged = merged.concat(complementary.filter(l => !knownKeys.has(`${l.date}_${l.time_utc}`)))
     } catch {
-      // Falha pontual nas fontes complementares: mantém só o que a Wyoming já tem.
+      // Falha pontual nas fontes complementares.
     }
   }
 
   store.launches = store.launches.filter(l => l.month !== month).concat(merged)
-  if (!isCurrentMonth) store.monthsComplete.push(month)
+  // Só marca completo se a Wyoming respondeu (dados definitivos); se só temos
+  // fontes aproximadas, não marca — próxima sync tenta Wyoming de novo.
+  if (!isCurrentMonth && wyomingOk) store.monthsComplete.push(month)
 
   return { launches: merged, updated: true }
 }
@@ -360,14 +426,23 @@ export async function GET(request: NextRequest) {
       if (stationInfo?.wyomingSupported === false) {
         launches = await fetchApproxLaunches(stationInfo, year, month, true)
       } else {
-        launches = parseLaunches(await fetchSounding(station, year, month), year, month)
+        let wyomingOk = false
+        try {
+          // Para "today", busca o mês inteiro via inventário (cache torna isso barato em chamadas repetidas).
+          launches = await fetchWyomingMonth(station, year, month, new Set())
+          wyomingOk = true
+        } catch {
+          launches = []
+        }
         if (stationInfo) {
           try {
-            const complementary = await fetchComplementaryLaunches(stationInfo, year, month)
+            const complementary = wyomingOk
+              ? await fetchComplementaryLaunches(stationInfo, year, month)
+              : await fetchApproxLaunches(stationInfo, year, month, true)
             const knownKeys = new Set(launches.map(l => `${l.date}_${l.time_utc}`))
             launches = launches.concat(complementary.filter(l => !knownKeys.has(`${l.date}_${l.time_utc}`)))
           } catch {
-            // Falha pontual nas fontes complementares: mantém só o que a Wyoming já tem.
+            // Falha pontual nas fontes complementares.
           }
         }
       }
