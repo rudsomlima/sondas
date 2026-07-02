@@ -11,7 +11,7 @@
  *
  * Sem essas variáveis (ex.: dev local sem .env.local), as funções são no-op.
  */
-import { S3Client, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3'
+import { S3Client, GetObjectCommand, PutObjectCommand, ListObjectsV2Command, DeleteObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3'
 
 function getClient(): S3Client | null {
   const accountId = process.env.R2_ACCOUNT_ID
@@ -94,5 +94,70 @@ export async function writeYearStore(station: string, store: YearStore): Promise
     }))
   } catch (e) {
     console.error('[R2] writeYearStore falhou:', e)
+  }
+}
+
+export interface R2FileInfo {
+  key: string
+  station: string
+  year: number
+  sizeBytes: number
+  lastModified: string
+}
+
+// Lista todos os arquivos de histórico no R2 usando apenas metadados S3
+// (sem ler o conteúdo de cada arquivo — rápido, independente do nº de arquivos).
+export async function listYearStores(): Promise<R2FileInfo[]> {
+  const client = getClient()
+  if (!client) return []
+  try {
+    const result: R2FileInfo[] = []
+    let continuationToken: string | undefined
+    do {
+      const res = await client.send(new ListObjectsV2Command({
+        Bucket: bucket(),
+        Prefix: 'sondas/',
+        ContinuationToken: continuationToken,
+      }))
+      for (const obj of res.Contents ?? []) {
+        if (!obj.Key?.endsWith('.json')) continue
+        const m = obj.Key.match(/history-(?:(\d+)-)?(\d{4})\.json$/)
+        if (!m) continue
+        result.push({
+          key: obj.Key,
+          station: m[1] ?? DEFAULT_STATION_ID,
+          year: parseInt(m[2]),
+          sizeBytes: obj.Size ?? 0,
+          lastModified: obj.LastModified?.toISOString() ?? '',
+        })
+      }
+      continuationToken = res.NextContinuationToken
+    } while (continuationToken)
+    return result.sort((a, b) => b.year - a.year || a.station.localeCompare(b.station))
+  } catch (e) {
+    console.error('[R2] listYearStores falhou:', e)
+    return []
+  }
+}
+
+export async function deleteYearStore(station: string, year: number): Promise<void> {
+  const client = getClient()
+  if (!client) return
+  try {
+    await client.send(new DeleteObjectCommand({ Bucket: bucket(), Key: pathFor(station, year) }))
+  } catch (e) {
+    console.error('[R2] deleteYearStore falhou:', e)
+  }
+}
+
+// Retorna tamanho em bytes de um arquivo específico sem baixar o conteúdo.
+export async function getYearStoreSize(station: string, year: number): Promise<number> {
+  const client = getClient()
+  if (!client) return 0
+  try {
+    const res = await client.send(new HeadObjectCommand({ Bucket: bucket(), Key: pathFor(station, year) }))
+    return res.ContentLength ?? 0
+  } catch {
+    return 0
   }
 }

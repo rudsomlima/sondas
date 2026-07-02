@@ -5,7 +5,7 @@ import {
   History, RefreshCw, ChevronDown, TrendingUp, Calendar,
   AlertCircle, Wind, BarChart3, Trash2, Download, HardDrive, AlertTriangle,
   CheckCircle2, XCircle, Clock, Sun, Moon, Loader2, Map as MapIcon,
-  Radio, Search, Check
+  Radio, Search, Check, Server
 } from 'lucide-react'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts'
 import {
@@ -71,11 +71,11 @@ function isDaytime(timeLocal: string): boolean {
 
 // Mesmo lançamento clicado de novo: fecha o mapa em vez de reabrir
 function sameLaunch(a: Launch | null, b: Launch): boolean {
-  return !!a && a.date === b.date && a.time_utc === b.time_utc
+  return !!a && a.date === b.date && a.time_local === b.time_local
 }
 
 function launchKey(l: Launch): string {
-  return `${l.date}_${l.time_utc}`
+  return `${l.date}_${l.time_local}`
 }
 
 // Formata um timestamp "YYYY-MM-DD HH:mm:ssz" (UTC) do radiosondy.info como
@@ -101,6 +101,14 @@ export default function HistoricoPage() {
   const [cacheSizeBytes, setCacheSizeBytes] = useState(0)
   const [expandedCacheStations, setExpandedCacheStations] = useState<Set<string>>(new Set())
   const [showCachePanel, setShowCachePanel] = useState(false)
+  const [r2Files, setR2Files] = useState<{ key: string; station: string; year: number; sizeBytes: number; lastModified: string }[]>([])
+  const [r2TotalBytes, setR2TotalBytes] = useState(0)
+  const [r2Loading, setR2Loading] = useState(false)
+  const [r2Loaded, setR2Loaded] = useState(false)
+  const [r2Configured, setR2Configured] = useState(true)
+  const [r2DeleteConfirm, setR2DeleteConfirm] = useState<{ station?: string; year?: number; all?: boolean } | null>(null)
+  const [r2Deleting, setR2Deleting] = useState(false)
+  const [expandedR2Stations, setExpandedR2Stations] = useState<Set<string>>(new Set())
   const [bulkSyncFrom, setBulkSyncFrom] = useState(currentYear - 4)
   const [bulkSyncStatus, setBulkSyncStatus] = useState<string | null>(null)
   const [deleteConfirm, setDeleteConfirm] = useState<{ type: 'month' | 'year' | 'all' | 'station'; month?: number; year?: number; station?: string } | null>(null)
@@ -389,6 +397,42 @@ export default function HistoricoPage() {
     updateCacheStats()
     fetchData(year)
   }, [bulkSyncFrom, currentYear, station.id, updateCacheStats, fetchData, year])
+
+  const fetchR2Files = useCallback(async () => {
+    setR2Loading(true)
+    try {
+      const res = await fetch('/api/r2-admin')
+      if (res.ok) {
+        const json = await res.json()
+        setR2Configured(json.configured !== false)
+        setR2Files(json.files ?? [])
+        setR2TotalBytes(json.totalBytes ?? 0)
+        setR2Loaded(true)
+      }
+    } finally {
+      setR2Loading(false)
+    }
+  }, [])
+
+  const handleR2Delete = useCallback(async () => {
+    if (!r2DeleteConfirm) return
+    setR2Deleting(true)
+    try {
+      const params = new URLSearchParams()
+      if (r2DeleteConfirm.all) { params.set('all', '1') }
+      else if (r2DeleteConfirm.station && r2DeleteConfirm.year) {
+        params.set('station', r2DeleteConfirm.station)
+        params.set('year', String(r2DeleteConfirm.year))
+      } else if (r2DeleteConfirm.station) {
+        params.set('station', r2DeleteConfirm.station)
+      }
+      await fetch(`/api/r2-admin?${params}`, { method: 'DELETE' })
+      setR2DeleteConfirm(null)
+      await fetchR2Files()
+    } finally {
+      setR2Deleting(false)
+    }
+  }, [r2DeleteConfirm, fetchR2Files])
 
   // Group launches by month
   const byMonth: Record<number, Launch[]> = {}
@@ -755,6 +799,144 @@ export default function HistoricoPage() {
               <Trash2 size={12} />
               Limpar tudo
             </button>
+          </div>
+
+          {/* R2 — armazenamento no servidor */}
+          <div className="mt-5 pt-4 border-t border-[#2a2a2a]">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-xs font-semibold text-gray-300 flex items-center gap-2">
+                <Server size={13} className="text-orange-400" />
+                Armazenamento no servidor (R2)
+              </h3>
+              <button
+                onClick={fetchR2Files}
+                disabled={r2Loading}
+                className="flex items-center gap-1.5 px-2.5 py-1 bg-orange-600/20 border border-orange-500/30 rounded text-xs text-orange-400 hover:bg-orange-600/30 transition-all disabled:opacity-50"
+              >
+                {r2Loading ? <Loader2 size={11} className="animate-spin" /> : <RefreshCw size={11} />}
+                {!r2Loaded && !r2Loading ? 'Carregar' : 'Atualizar'}
+              </button>
+            </div>
+
+            {r2Loaded && !r2Configured && (
+              <p className="text-xs text-gray-500 mt-2">R2 não configurado — variáveis de ambiente ausentes.</p>
+            )}
+
+            {r2Loaded && r2Configured && r2Files.length === 0 && (
+              <p className="text-xs text-gray-500 mt-2">Nenhum arquivo encontrado no bucket R2.</p>
+            )}
+
+            {r2Files.length > 0 && (
+              <>
+                <div className="flex flex-wrap gap-4 mb-3 text-xs">
+                  <div>
+                    <span className="text-gray-400">Uso total: </span>
+                    <span className="text-white font-bold mono">
+                      {r2TotalBytes < 1024 * 1024
+                        ? `${(r2TotalBytes / 1024).toFixed(1)} KB`
+                        : `${(r2TotalBytes / 1024 / 1024).toFixed(2)} MB`}
+                    </span>
+                  </div>
+                  <div><span className="text-gray-400">Arquivos: </span><span className="text-white font-bold mono">{r2Files.length}</span></div>
+                </div>
+
+                {/* Agrupado por estação */}
+                <div className="space-y-1 mb-3">
+                  {Object.entries(
+                    r2Files.reduce<Record<string, typeof r2Files>>((acc, f) => {
+                      ;(acc[f.station] ??= []).push(f)
+                      return acc
+                    }, {})
+                  ).map(([st, files]) => (
+                    <div key={st} className="border border-[#2a2a2a] rounded bg-[#111]">
+                      <div className="flex items-center justify-between px-3 py-2">
+                        <button
+                          className="flex items-center gap-2 text-xs text-gray-300 hover:text-white flex-1 text-left"
+                          onClick={() => setExpandedR2Stations(prev => {
+                            const next = new Set(prev)
+                            next.has(st) ? next.delete(st) : next.add(st)
+                            return next
+                          })}
+                        >
+                          <ChevronDown size={12} className={`transition-transform ${expandedR2Stations.has(st) ? 'rotate-180' : ''}`} />
+                          <span className="mono font-medium">{st}</span>
+                          <span className="text-gray-500">— {files.length} ano{files.length !== 1 ? 's' : ''}</span>
+                          <span className="text-gray-600 text-[10px]">
+                            {(files.reduce((s, f) => s + f.sizeBytes, 0) / 1024).toFixed(0)} KB
+                          </span>
+                        </button>
+                        <button
+                          onClick={() => setR2DeleteConfirm({ station: st })}
+                          className="text-red-400 hover:text-red-300 ml-2"
+                          title="Apagar estação do R2"
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      </div>
+                      {expandedR2Stations.has(st) && (
+                        <div className="border-t border-[#2a2a2a] px-3 py-2 space-y-1">
+                          {files.map(f => (
+                            <div key={f.year} className="flex items-center justify-between text-xs">
+                              <span className="mono text-gray-400 w-12">{f.year}</span>
+                              <span className="text-gray-500 flex-1">{(f.sizeBytes / 1024).toFixed(0)} KB</span>
+                              <span className="text-gray-600 mr-3 text-[10px]">{f.lastModified ? new Date(f.lastModified).toLocaleDateString('pt-BR') : ''}</span>
+                              <button
+                                onClick={() => setR2DeleteConfirm({ station: st, year: f.year })}
+                                className="text-red-400 hover:text-red-300"
+                                title={`Apagar ${f.year} do R2`}
+                              >
+                                <Trash2 size={11} />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+
+                <button
+                  onClick={() => setR2DeleteConfirm({ all: true })}
+                  className="flex items-center gap-2 px-3 py-1.5 bg-red-600/20 border border-red-500/30 rounded text-xs text-red-400 hover:bg-red-600/30 transition-all"
+                >
+                  <Trash2 size={12} />
+                  Apagar tudo do R2
+                </button>
+              </>
+            )}
+
+            {/* Confirmação de delete R2 */}
+            {r2DeleteConfirm && (
+              <div className="mt-3 p-3 border border-yellow-500/30 rounded bg-yellow-500/5 flex items-start gap-3">
+                <AlertTriangle size={16} className="text-yellow-400 flex-shrink-0 mt-0.5" />
+                <div className="flex-1">
+                  <p className="text-xs text-yellow-400 font-medium">
+                    {r2DeleteConfirm.all
+                      ? 'Apagar TODOS os arquivos do R2?'
+                      : r2DeleteConfirm.year
+                        ? `Apagar ${r2DeleteConfirm.year} da estação ${r2DeleteConfirm.station} no R2?`
+                        : `Apagar todos os anos de ${r2DeleteConfirm.station} no R2?`}
+                  </p>
+                  <p className="text-[11px] text-gray-500 mt-1">Esta ação não pode ser desfeita. O histórico precisará ser re-sincronizado da Wyoming.</p>
+                  <div className="flex gap-2 mt-2">
+                    <button
+                      onClick={handleR2Delete}
+                      disabled={r2Deleting}
+                      className="px-3 py-1 bg-red-600 text-xs text-white rounded hover:bg-red-700 disabled:opacity-50 transition-all flex items-center gap-1"
+                    >
+                      {r2Deleting && <Loader2 size={10} className="animate-spin" />}
+                      Confirmar
+                    </button>
+                    <button
+                      onClick={() => setR2DeleteConfirm(null)}
+                      className="px-3 py-1 bg-[#2a2a2a] text-xs text-gray-400 rounded hover:text-white transition-all"
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

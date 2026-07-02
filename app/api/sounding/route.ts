@@ -64,13 +64,27 @@ function parseInventory(html: string, year: number): string[] {
   return result.sort()
 }
 
-// Converte datetime do inventário ("YYYY-MM-DD HH:MM:SS") para a chave usada
-// nos launches armazenados ("YYYY-MM-DD_HH:00Z"), que usa data local + hora UTC.
-// Na prática os dois coincidem porque o boundary guard mantém a data UTC quando
-// o ajuste de -3h cruza fronteira de mês/ano.
+// Converte datetime do inventário ("YYYY-MM-DD HH:MM:SS") para chave de dedup.
+// Usa a data UTC original do inventário + hora UTC — assim 2026-07-02 00:00:00
+// vira "2026-07-02_00:00Z", diferente de "2026-07-01_00:00Z".
 function inventoryDtToKey(dt: string): string {
   const [date, time] = dt.split(' ')
   return `${date}_${time.slice(0, 2)}:00Z`
+}
+
+// Reconstrói a chave de inventário a partir de um launch armazenado,
+// revertendo a conversão GMT-3 → UTC: se utcHour < localHour, o UTC é no dia
+// seguinte (ex: local 21:00 → UTC 00:00 do dia +1).
+function launchToInventoryKey(l: { date: string; time_local: string; time_utc: string }): string {
+  const utcHour = parseInt(l.time_utc.slice(0, 2))
+  const localHour = parseInt(l.time_local.slice(0, 2))
+  let date = l.date
+  if (utcHour < localHour) {
+    const d = new Date(l.date + 'T00:00:00Z')
+    d.setUTCDate(d.getUTCDate() + 1)
+    date = d.toISOString().slice(0, 10)
+  }
+  return `${date}_${l.time_utc}`
 }
 
 async function fetchInventory(station: string, year: number): Promise<string[]> {
@@ -371,7 +385,7 @@ async function syncMonth(
   let merged: Launch[] = existingForMonth
 
   try {
-    const existingKeys = new Set(existingWyoming.map(l => `${l.date}_${l.time_utc}`))
+    const existingKeys = new Set(existingWyoming.map(launchToInventoryKey))
     const fresh = await fetchWyomingMonth(station, year, month, existingKeys)
     wyomingOk = true
 
