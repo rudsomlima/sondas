@@ -20,16 +20,8 @@ interface Launch {
   day: number
   month: number
   year: number
-  // Preenchido pelo sync em segundo plano (app/api/radiosondy-sync) — quando
-  // já se sabe que não há correspondência, evita o fetch no navegador.
   radiosondyMatch?: 'yes' | 'no'
-  // Posição final da sonda (radiosondy.info ou sondehub.org), já resolvida —
-  // quando presente, monta o marcador direto, sem nenhum fetch ao vivo.
   position?: { lat: number; lon: number; sondeNumber: string; status: string; altitude?: number; course?: string }
-  // Estações sem cobertura na Wyoming (Station.wyomingSupported === false):
-  // 'radiosondy'/'sondehub' = horário aproximado, sem janela de match por
-  // horário exato (ver bloco approx no useEffect abaixo). Ausente = Wyoming
-  // (padrão).
   source?: 'wyoming' | 'radiosondy' | 'sondehub'
   approx?: boolean
 }
@@ -39,12 +31,7 @@ const BALLOON_SIZE = 15
 interface LaunchMapProps {
   launch: Launch
   onClose: () => void
-  // Avisa a página se este lançamento tem (true) ou não (false) correspondência
-  // no radiosondy.info, para indicar isso no badge do dia no calendário.
   onResult?: (found: boolean) => void
-  // Estação Wyoming selecionada — usada para achar o "startplace" correspondente
-  // no radiosondy.info (app/lib/stations.ts: getRadiosondyStartplace). Sem par
-  // conhecido, o mapa de recuperação não se aplica a essa estação.
   station?: string
 }
 
@@ -53,31 +40,19 @@ export default function LaunchMap({ launch, onClose, onResult, station = DEFAULT
   const mapDivRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<any>(null)
   const markersLayerRef = useRef<any>(null)
-  // Evita refazer o fetch ao radiosondy.info quando o usuário troca de
-  // horário/dia dentro do mesmo mês já carregado.
+  // Leaflet L guardado após o primeiro import — reutilizado sem await nos switches.
+  const leafletRef = useRef<any>(null)
   const featuresCacheRef = useRef<Map<string, RadiosondyFeature[]>>(new Map())
   const [status, setStatus] = useState<string | null>('Consultando radiosondy.info…')
   const [error, setError] = useState<string | null>(null)
   const [approx, setApprox] = useState(false)
-  // Link pra fonte (Wyoming) que confirma o lançamento, mostrado só quando o
-  // radiosondy.info não tem nenhuma correspondência real pra esse horário.
   const [sourceUrl, setSourceUrl] = useState<string | null>(null)
-  // Sem posição do radiosondy.info pra este lançamento específico — seja
-  // porque o mês inteiro não tem nada, seja porque tem outras posições mas
-  // nenhuma bate com este horário (ex.: o pouso ainda não foi registrado, ou
-  // o lançamento veio do sondehub.org sem nenhum voo do radiosondy.info por
-  // perto pra arredondar) — nesse caso não há nada nosso pra mostrar, então
-  // carrega o próprio mapa do sondehub.org no lugar, em vez de só um erro.
-  // Por padrão centralizado na estação; refinado pro serial exato do dia se
-  // achado no arquivo do sondehub.org (ver useEffect abaixo).
   const [sondeHubMapUrl, setSondeHubMapUrl] = useState<string | null>(null)
   const [isSondeHubPos, setIsSondeHubPos] = useState(false)
 
   const startplace = getRadiosondyStartplace(station)
   const externalUrl = startplace ? externalRadiosondyUrl(launch.year, launch.month, startplace) : null
 
-
-  // Rola a tela para deixar o mapa centralizado ao abrir
   useEffect(() => {
     containerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
   }, [launch.year, launch.month, launch.day, launch.time_utc, launch.time_local])
@@ -93,10 +68,103 @@ export default function LaunchMap({ launch, onClose, onResult, station = DEFAULT
       return `https://weather.uwyo.edu/wsgi/sounding?src=FM35&datetime=${dt.replace(' ', '%20')}&id=${station}&type=TEXT:LIST`
     }
 
+    // Atualiza marcadores no Leaflet já inicializado — chamado tanto do fast path
+    // (síncrono) quanto do slow path (após await). Recebe L como parâmetro para
+    // não depender de import dinâmico.
+    function applyMarkers(
+      L: any,
+      contextFeatures: RadiosondyFeature[],
+      pos: NonNullable<Launch['position']>,
+    ) {
+      const { lat, lon, sondeNumber, status: posStatus } = pos
+      const rdFeature = contextFeatures.find(f => f.sondeNumber === sondeNumber)
+      const markerLat = rdFeature ? rdFeature.lat : lat
+      const markerLon = rdFeature ? rdFeature.lon : lon
+      const markerStatus = rdFeature ? rdFeature.status : posStatus
+      const markerPopup = rdFeature
+        ? rdFeature.popupContent
+        : `<b>${sondeNumber}</b><br>Status: ${posStatus}` +
+          (pos.altitude ? `<br>Altitude: ${Math.round(pos.altitude).toLocaleString('pt-BR')} m` : '') +
+          (pos.course ? `<br>Course: ${pos.course}°` : '')
+
+      markersLayerRef.current.clearLayers()
+      for (const f of contextFeatures) {
+        if (f.sondeNumber === sondeNumber) continue
+        if (Math.abs(f.lat - lat) < 0.0001 && Math.abs(f.lon - lon) < 0.0001) continue
+        L.marker([f.lat, f.lon], { icon: buildBalloonIcon(L, statusColor(f.status), BALLOON_SIZE, gmt3IconLabel(f.date)) })
+          .addTo(markersLayerRef.current)
+          .bindPopup(f.popupContent)
+      }
+      L.marker([markerLat, markerLon], {
+        icon: buildHighlightBalloonIcon(L, statusColor(markerStatus), BALLOON_SIZE,
+          gmt3IconLabel(launchUtcInstant(launch.year, launch.month, launch.day, launch.time_utc, launch.time_local))),
+        zIndexOffset: 1000,
+      }).addTo(markersLayerRef.current).bindPopup(markerPopup)
+
+      if (isFirstLoad) {
+        mapRef.current.setView([markerLat, markerLon], 11)
+      } else {
+        mapRef.current.flyTo([markerLat, markerLon], 11, { duration: 0.8 })
+      }
+      setTimeout(() => mapRef.current?.invalidateSize(), 50)
+    }
+
+    function applyFeaturesMarkers(L: any, features: RadiosondyFeature[], highlight: RadiosondyFeature) {
+      markersLayerRef.current.clearLayers()
+      for (const f of features) {
+        if (f === highlight) continue
+        L.marker([f.lat, f.lon], { icon: buildBalloonIcon(L, statusColor(f.status), BALLOON_SIZE, gmt3IconLabel(f.date)) })
+          .addTo(markersLayerRef.current)
+          .bindPopup(f.popupContent)
+      }
+      L.marker([highlight.lat, highlight.lon], {
+        icon: buildHighlightBalloonIcon(L, statusColor(highlight.status), BALLOON_SIZE, gmt3IconLabel(highlight.date)),
+        zIndexOffset: 1000,
+      }).addTo(markersLayerRef.current).bindPopup(highlight.popupContent)
+
+      if (isFirstLoad) {
+        mapRef.current.setView([highlight.lat, highlight.lon], 11)
+      } else {
+        mapRef.current.panTo([highlight.lat, highlight.lon], { animate: true, duration: 0.25 })
+      }
+      setTimeout(() => mapRef.current?.invalidateSize(), 50)
+    }
+
     async function run() {
-      // Posição já resolvida e persistida no servidor (app/api/radiosondy-sync,
-      // ou já vinda de fábrica em lançamentos aproximados) — monta o marcador
-      // direto, sem nenhum fetch ao radiosondy.info/sondehub.org.
+      const cacheKey = startplace ? `${startplace}-${launch.year}-${launch.month}` : null
+      const now = new Date()
+      const isCurrentMonth = launch.year === now.getUTCFullYear() && launch.month === now.getUTCMonth() + 1
+      const cachedFeatures = (!isCurrentMonth && cacheKey) ? featuresCacheRef.current.get(cacheKey) : undefined
+
+      // ── FAST PATH ────────────────────────────────────────────────────────────
+      // Mapa já existe + Leaflet já carregado + features em cache:
+      // atualiza marcadores diretamente sem nenhum await nem setState.
+      if (!isFirstLoad && leafletRef.current && mapRef.current && markersLayerRef.current) {
+        if (launch.position && cachedFeatures !== undefined) {
+          // posição conhecida + contexto em cache → update síncrono
+          applyMarkers(leafletRef.current, cachedFeatures, launch.position)
+          onResult?.(true)
+          return
+        }
+        if (!launch.position && cachedFeatures && cachedFeatures.length > 0 && startplace) {
+          const launchInstant = launchUtcInstant(launch.year, launch.month, launch.day, launch.time_utc, launch.time_local)
+          const result = launch.approx
+            ? (() => { const f = cachedFeatures.find(f => roundToSynopticHour(f.date).getTime() === launchInstant.getTime()); return f ? { feature: f, approx: true } : null })()
+            : findRecoveredMatch(cachedFeatures, launchInstant)
+          if (result) {
+            setApprox(result.approx)
+            setStatus(null)
+            setError(null)
+            setIsSondeHubPos(false)
+            applyFeaturesMarkers(leafletRef.current, cachedFeatures, result.feature)
+            onResult?.(true)
+            return
+          }
+          // Sem match mas features disponíveis → vai para fallback sem mostrar overlay
+        }
+      }
+      // ── FIM DO FAST PATH ─────────────────────────────────────────────────────
+
       if (launch.position) {
         setStatus(null)
         setError(null)
@@ -104,71 +172,34 @@ export default function LaunchMap({ launch, onClose, onResult, station = DEFAULT
         setIsSondeHubPos(false)
         setApprox(false)
 
-        // Tenta buscar as features do mês pra mostrar os outros lançamentos
-        // como contexto — mesmo padrão do caminho sem `position`, mas sem
-        // bloquear: se falhar, mostra só o marcador destacado (que já é suficiente).
         let contextFeatures: RadiosondyFeature[] = []
         if (startplace) {
           try {
-            const cacheKey = `${startplace}-${launch.year}-${launch.month}`
-            let cached = featuresCacheRef.current.get(cacheKey)
+            let cached = cacheKey ? featuresCacheRef.current.get(cacheKey) : undefined
             if (!cached) {
               cached = await fetchRadiosondyFeatures(launch.year, launch.month, startplace)
-              if (!cancelled) featuresCacheRef.current.set(cacheKey, cached)
+              if (!cancelled && cacheKey && !isCurrentMonth) featuresCacheRef.current.set(cacheKey, cached)
             }
             if (!cancelled) contextFeatures = cached
-          } catch {
-            // Falha pontual: o marcador destacado já está disponível — continua sem contexto.
-          }
+          } catch {}
         }
         if (cancelled) return
 
-        const L = (await import('leaflet')).default
+        const L = leafletRef.current ?? (await import('leaflet')).default
         if (cancelled || !mapDivRef.current) return
 
         if (!mapRef.current) {
           const map = L.map(mapDivRef.current)
-          const streets = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            attribution: '&copy; OpenStreetMap contributors',
-          })
-          const satellite = L.tileLayer(
-            'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-            { attribution: 'Esri, Maxar, Earthstar Geographics' }
-          )
+          const streets = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '&copy; OpenStreetMap contributors' })
+          const satellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { attribution: 'Esri, Maxar, Earthstar Geographics' })
           streets.addTo(map)
           L.control.layers({ 'Mapa': streets, 'Satélite': satellite }).addTo(map)
           markersLayerRef.current = L.layerGroup().addTo(map)
           mapRef.current = map
-        }
-        const map = mapRef.current
-        const { lat, lon, sondeNumber, status } = launch.position
-
-        markersLayerRef.current.clearLayers()
-
-        // Marcadores de contexto (outros lançamentos do mesmo mês), excluindo
-        // qualquer feature que coincida com a posição já resolvida (evita duplo marcador).
-        for (const f of contextFeatures) {
-          if (Math.abs(f.lat - lat) < 0.0001 && Math.abs(f.lon - lon) < 0.0001) continue
-          L.marker([f.lat, f.lon], { icon: buildBalloonIcon(L, statusColor(f.status), BALLOON_SIZE, gmt3IconLabel(f.date)) })
-            .addTo(markersLayerRef.current)
-            .bindPopup(f.popupContent)
+          leafletRef.current = L
         }
 
-        L.marker([lat, lon], {
-          icon: buildHighlightBalloonIcon(L, statusColor(status), BALLOON_SIZE, gmt3IconLabel(launchUtcInstant(launch.year, launch.month, launch.day, launch.time_utc, launch.time_local))),
-          zIndexOffset: 1000,
-        }).addTo(markersLayerRef.current).bindPopup(
-          `<b>${sondeNumber}</b><br>Status: ${status}` +
-          (launch.position?.altitude ? `<br>Altitude: ${Math.round(launch.position.altitude).toLocaleString('pt-BR')} m` : '') +
-          (launch.position?.course ? `<br>Course: ${launch.position.course}°` : '')
-        )
-
-        if (isFirstLoad) {
-          map.setView([lat, lon], 11)
-        } else {
-          map.flyTo([lat, lon], 11, { duration: 0.8 })
-        }
-        setTimeout(() => map.invalidateSize(), 50)
+        applyMarkers(L, contextFeatures, launch.position)
         onResult?.(true)
         return
       }
@@ -180,55 +211,40 @@ export default function LaunchMap({ launch, onClose, onResult, station = DEFAULT
         return
       }
 
-      // Só mostra o overlay cheio na primeira carga do mês; trocar de
-      // horário/dia dentro do mesmo mês não deve escurecer o mapa já visível.
       if (isFirstLoad) setStatus('Consultando radiosondy.info…')
       setError(null)
       setSourceUrl(null)
       setIsSondeHubPos(false)
       setSondeHubMapUrl(null)
 
-      // Plota uma posição no Leaflet (reutilizado por radiosondy live e sondehub).
       async function plotPosition(lat: number, lon: number, label: string, source: string) {
-        const L = (await import('leaflet')).default
+        const L = leafletRef.current ?? (await import('leaflet')).default
         if (cancelled || !mapDivRef.current) return
         if (!mapRef.current) {
           const map = L.map(mapDivRef.current)
-          const streets = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            attribution: '&copy; OpenStreetMap contributors',
-          })
-          const satellite = L.tileLayer(
-            'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-            { attribution: 'Esri, Maxar, Earthstar Geographics' }
-          )
+          const streets = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '&copy; OpenStreetMap contributors' })
+          const satellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { attribution: 'Esri, Maxar, Earthstar Geographics' })
           streets.addTo(map)
           L.control.layers({ 'Mapa': streets, 'Satélite': satellite }).addTo(map)
           markersLayerRef.current = L.layerGroup().addTo(map)
           mapRef.current = map
+          leafletRef.current = L
         }
-        const map = mapRef.current
         markersLayerRef.current.clearLayers()
         const utcInstant = launchUtcInstant(launch.year, launch.month, launch.day, launch.time_utc, launch.time_local)
         L.marker([lat, lon], {
           icon: buildHighlightBalloonIcon(L, statusColor('UNKNOWN'), BALLOON_SIZE, gmt3IconLabel(utcInstant)),
           zIndexOffset: 1000,
         }).addTo(markersLayerRef.current).bindPopup(`<b>${label}</b><br>Fonte: ${source}`)
-        if (isFirstLoad) { map.setView([lat, lon], 10) } else { map.flyTo([lat, lon], 10, { duration: 0.8 }) }
-        setTimeout(() => map.invalidateSize(), 50)
+        if (isFirstLoad) { mapRef.current.setView([lat, lon], 10) }
+        else { mapRef.current.panTo([lat, lon], { animate: true, duration: 0.25 }) }
+        setTimeout(() => mapRef.current?.invalidateSize(), 50)
       }
 
-      // Sem posição do radiosondy.info (mês vazio ou horário sem match):
-      // 1. se ainda dentro da janela de voo → tenta o feed ao vivo do radiosondy.info
-      // 2. se não → tenta o arquivo histórico do sondehub.org (lag de meses)
-      // 3. se nada → mostra mensagem + link Wyoming
       async function fallbackToSondeHub(_reason: string) {
         setSourceUrl(buildSourceUrl())
         onResult?.(false)
-
         const launchInstant = launchUtcInstant(launch.year, launch.month, launch.day, launch.time_utc, launch.time_local)
-
-        // Passo 1: feed ao vivo do radiosondy.info (sonda pode ainda estar em voo
-        // ou acabou de pousar e ainda não apareceu no export_search.php)
         if (startplace && isWithinMatchWindow(launchInstant)) {
           setStatus('Consultando feed ao vivo do radiosondy.info…')
           try {
@@ -245,15 +261,10 @@ export default function LaunchMap({ launch, onClose, onResult, station = DEFAULT
           } catch {}
           if (cancelled) return
         }
-
-        // Passo 2: arquivo S3 histórico do sondehub.org
         setStatus('Consultando sondehub.org…')
         let sonde: Awaited<ReturnType<typeof fetchSondeHubArchiveSondeForDay>> = null
-        try {
-          sonde = await fetchSondeHubArchiveSondeForDay(station, launch.year, launch.month, launch.day)
-        } catch {}
+        try { sonde = await fetchSondeHubArchiveSondeForDay(station, launch.year, launch.month, launch.day) } catch {}
         if (cancelled) return
-
         if (sonde) {
           setStatus(null)
           setIsSondeHubPos(true)
@@ -265,99 +276,44 @@ export default function LaunchMap({ launch, onClose, onResult, station = DEFAULT
         }
       }
 
-      // Nota: não pulamos o fetch mesmo quando radiosondyMatch==='no', porque o
-      // cron pode ter marcado antes de o dado aparecer no radiosondy.info (lag de
-      // registro) — o browser re-checa sempre para garantir o resultado correto.
-
       try {
-        const cacheKey = `${startplace}-${launch.year}-${launch.month}`
-        const now = new Date()
-        const isCurrentMonth = launch.year === now.getUTCFullYear() && launch.month === now.getUTCMonth() + 1
-        let features = isCurrentMonth ? undefined : featuresCacheRef.current.get(cacheKey)
+        let features = cachedFeatures
         if (!features) {
           features = await fetchRadiosondyFeatures(launch.year, launch.month, startplace)
           if (cancelled) return
-          if (!isCurrentMonth) featuresCacheRef.current.set(cacheKey, features)
+          if (!isCurrentMonth && cacheKey) featuresCacheRef.current.set(cacheKey, features)
         }
-        if (features.length === 0) {
-          await fallbackToSondeHub('Sem dados no radiosondy.info este mês — mostrando o mapa do sondehub.org')
-          return
-        }
+        if (features.length === 0) { await fallbackToSondeHub(''); return }
 
         const launchInstant = launchUtcInstant(launch.year, launch.month, launch.day, launch.time_utc, launch.time_local)
-
-        // Lançamento aproximado (estação sem cobertura na Wyoming, horário
-        // derivado do próprio radiosondy.info): não existe um horário exato
-        // de lançamento pra aplicar a janela de match de findRecoveredMatch —
-        // a posição certa é a feature cujo arredondamento sinótico gerou esse
-        // horário aproximado em primeiro lugar.
         const result = launch.approx
-          ? (() => {
-              const feature = features.find(f => roundToSynopticHour(f.date).getTime() === launchInstant.getTime())
-              return feature ? { feature, approx: true } : null
-            })()
+          ? (() => { const f = features!.find(f => roundToSynopticHour(f.date).getTime() === launchInstant.getTime()); return f ? { feature: f, approx: true } : null })()
           : findRecoveredMatch(features, launchInstant)
 
-        if (!result) {
-          // Sem correspondência pra este horário específico (mesmo havendo
-          // outras posições no mês) — mesmo fallback do mês vazio, já que do
-          // nosso lado não há nada pra mostrar de qualquer forma.
-          await fallbackToSondeHub('Sem correspondência no radiosondy.info para este horário — mostrando o mapa do sondehub.org')
-          return
-        }
+        if (!result) { await fallbackToSondeHub(''); return }
         if (cancelled) return
 
         setApprox(result.approx)
         setStatus(null)
 
-        const L = (await import('leaflet')).default
+        const L = leafletRef.current ?? (await import('leaflet')).default
         if (cancelled || !mapDivRef.current) return
 
-        // Mapa e tile layers só são criados uma vez; trocar de lançamento
-        // dentro do mesmo mês só atualiza os marcadores e o foco (flyTo),
-        // sem recriar o Leaflet do zero.
         if (!mapRef.current) {
           const map = L.map(mapDivRef.current)
-          const streets = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            attribution: '&copy; OpenStreetMap contributors',
-          })
-          const satellite = L.tileLayer(
-            'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-            { attribution: 'Esri, Maxar, Earthstar Geographics' }
-          )
+          const streets = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '&copy; OpenStreetMap contributors' })
+          const satellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { attribution: 'Esri, Maxar, Earthstar Geographics' })
           streets.addTo(map)
           L.control.layers({ 'Mapa': streets, 'Satélite': satellite }).addTo(map)
           markersLayerRef.current = L.layerGroup().addTo(map)
           mapRef.current = map
-        }
-        const map = mapRef.current
-
-        markersLayerRef.current.clearLayers()
-        for (const f of features) {
-          if (f === result.feature) continue
-          L.marker([f.lat, f.lon], { icon: buildBalloonIcon(L, statusColor(f.status), BALLOON_SIZE, gmt3IconLabel(f.date)) })
-            .addTo(markersLayerRef.current)
-            .bindPopup(f.popupContent)
+          leafletRef.current = L
         }
 
-        L.marker([result.feature.lat, result.feature.lon], {
-          icon: buildHighlightBalloonIcon(L, statusColor(result.feature.status), BALLOON_SIZE, gmt3IconLabel(result.feature.date)),
-          zIndexOffset: 1000,
-        }).addTo(markersLayerRef.current).bindPopup(result.feature.popupContent)
-
-        if (isFirstLoad) {
-          map.setView([result.feature.lat, result.feature.lon], 11)
-        } else {
-          map.flyTo([result.feature.lat, result.feature.lon], 11, { duration: 0.8 })
-        }
-        setTimeout(() => map.invalidateSize(), 50)
+        applyFeaturesMarkers(L, features, result.feature)
         onResult?.(true)
       } catch (e: any) {
-        if (!cancelled) {
-          setError(e.message || 'Erro ao carregar o mapa')
-          setStatus(null)
-          onResult?.(false)
-        }
+        if (!cancelled) { setError(e.message || 'Erro ao carregar o mapa'); setStatus(null); onResult?.(false) }
       }
     }
 
@@ -369,6 +325,7 @@ export default function LaunchMap({ launch, onClose, onResult, station = DEFAULT
     return () => {
       mapRef.current?.remove()
       mapRef.current = null
+      leafletRef.current = null
     }
   }, [])
 
@@ -389,21 +346,13 @@ export default function LaunchMap({ launch, onClose, onResult, station = DEFAULT
           </span>
         )}
         {isSondeHubPos && sondeHubMapUrl ? (
-          <a
-            href={sondeHubMapUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="ml-auto text-xs text-violet-400 hover:underline flex items-center gap-1 flex-shrink-0"
-          >
+          <a href={sondeHubMapUrl} target="_blank" rel="noopener noreferrer"
+            className="ml-auto text-xs text-violet-400 hover:underline flex items-center gap-1 flex-shrink-0">
             Ver no sondehub.org <ExternalLink size={11} />
           </a>
         ) : externalUrl ? (
-          <a
-            href={externalUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="ml-auto text-xs text-blue-400 hover:underline flex items-center gap-1 flex-shrink-0"
-          >
+          <a href={externalUrl} target="_blank" rel="noopener noreferrer"
+            className="ml-auto text-xs text-blue-400 hover:underline flex items-center gap-1 flex-shrink-0">
             Ver no radiosondy.info <ExternalLink size={11} />
           </a>
         ) : null}
@@ -414,7 +363,6 @@ export default function LaunchMap({ launch, onClose, onResult, station = DEFAULT
 
       <div className="relative h-[420px] bg-[#111111]">
         <div ref={mapDivRef} className="absolute inset-0" />
-
 
         {!status && !error && (
           <div className="absolute bottom-3 right-3 z-[900] bg-[#111111]/40 backdrop-blur-sm rounded-md p-2.5 text-xs text-gray-200 space-y-1.5">

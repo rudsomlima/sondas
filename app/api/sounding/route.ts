@@ -189,8 +189,35 @@ async function fetchSingleSounding(station: string, datetime: string): Promise<L
   return null
 }
 
+// Converte um datetime do inventário ("YYYY-MM-DD HH:MM:SS") diretamente em
+// Launch — sem HTTP adicional. A sondagem individual (TEXT:LIST) só é necessária
+// para os dados atmosféricos em si; para a lista de lançamentos o inventário
+// já tem tudo que precisamos.
+function inventoryDtToLaunch(dt: string): Launch | null {
+  const m = dt.match(/^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):\d{2}$/)
+  if (!m) return null
+  const yr = parseInt(m[1]), monNum = parseInt(m[2]), dayUtc = parseInt(m[3]), hourUtc = parseInt(m[4])
+  const utcMs = Date.UTC(yr, monNum - 1, dayUtc, hourUtc, 0, 0)
+  let localDate = new Date(utcMs + GMT3)
+  // Mesmo boundary guard do parseSingleSounding: mantém data UTC quando GMT-3 cruza fronteira de mês.
+  if (localDate.getUTCFullYear() !== yr || localDate.getUTCMonth() + 1 !== monNum) {
+    localDate = new Date(utcMs)
+  }
+  const pad = (n: number) => n.toString().padStart(2, '0')
+  const launch: Launch = {
+    date: `${localDate.getUTCFullYear()}-${pad(localDate.getUTCMonth() + 1)}-${pad(localDate.getUTCDate())}`,
+    time_local: `${pad(localDate.getUTCHours())}:${pad(localDate.getUTCMinutes())}`,
+    time_utc: `${pad(hourUtc)}:00Z`,
+    day: localDate.getUTCDate(),
+    month: localDate.getUTCMonth() + 1,
+    year: localDate.getUTCFullYear(),
+  }
+  return validateLaunch(launch) ? launch : null
+}
+
 // Busca todas as sondagens Wyoming de um mês que ainda não estão em cache.
-// Retorna apenas as novas (a mesclagem com existentes fica em syncMonth).
+// Usa apenas o inventário anual (1 request/ano, cacheado) — sem buscar cada
+// sondagem individualmente, o que tornava o carregamento muito lento.
 async function fetchWyomingMonth(
   station: string, year: number, month: number, existingKeys: Set<string>
 ): Promise<Launch[]> {
@@ -202,17 +229,7 @@ async function fetchWyomingMonth(
 
   if (missing.length === 0) return []
 
-  // Busca em lotes paralelos para não sobrecarregar o servidor da Wyoming.
-  const BATCH = 5
-  const result: Launch[] = []
-  for (let i = 0; i < missing.length; i += BATCH) {
-    const batch = missing.slice(i, i + BATCH)
-    const settled = await Promise.allSettled(batch.map(dt => fetchSingleSounding(station, dt)))
-    for (const r of settled) {
-      if (r.status === 'fulfilled' && r.value) result.push(r.value)
-    }
-  }
-  return result
+  return missing.map(inventoryDtToLaunch).filter((l): l is Launch => l !== null)
 }
 
 interface LaunchPosition {
@@ -407,8 +424,17 @@ async function syncMonth(
       const complementary = isCurrentMonth
         ? await fetchComplementaryLaunches(stationInfo, year, month)
         : await fetchApproxLaunches(stationInfo, year, month, false)
+      // Para estações com Wyoming, fontes complementares só preenchem dias que
+      // a Wyoming ainda não publicou — evita duplicatas quando radiosondy.info /
+      // sondehub usam horários arredondados diferentes dos da Wyoming.
+      const wyomingDates = wyomingOk
+        ? new Set(merged.filter(l => !l.source).map(l => l.date))
+        : new Set<string>()
       const knownKeys = new Set(merged.map(l => `${l.date}_${l.time_utc}`))
-      merged = merged.concat(complementary.filter(l => !knownKeys.has(`${l.date}_${l.time_utc}`)))
+      merged = merged.concat(complementary.filter(l =>
+        !knownKeys.has(`${l.date}_${l.time_utc}`) &&
+        (wyomingDates.size === 0 || !wyomingDates.has(l.date))
+      ))
     } catch {
       // Falha pontual nas fontes complementares.
     }
@@ -453,8 +479,12 @@ export async function GET(request: NextRequest) {
             const complementary = wyomingOk
               ? await fetchComplementaryLaunches(stationInfo, year, month)
               : await fetchApproxLaunches(stationInfo, year, month, true)
+            const wyomingDates = wyomingOk ? new Set(launches.map(l => l.date)) : new Set<string>()
             const knownKeys = new Set(launches.map(l => `${l.date}_${l.time_utc}`))
-            launches = launches.concat(complementary.filter(l => !knownKeys.has(`${l.date}_${l.time_utc}`)))
+            launches = launches.concat(complementary.filter(l =>
+              !knownKeys.has(`${l.date}_${l.time_utc}`) &&
+              (wyomingDates.size === 0 || !wyomingDates.has(l.date))
+            ))
           } catch {
             // Falha pontual nas fontes complementares.
           }
