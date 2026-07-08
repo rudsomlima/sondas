@@ -66,9 +66,19 @@ A Vercel Cron job (see `vercel.json`, currently `0 6 * * *`, no auth) that pre-c
 - Launches still inside the match window with no result yet are left unset (re-checked next run) rather than marked `'no'`, since they may simply not be processed yet.
 - `LaunchMap.tsx` reads `launch.radiosondyMatch === 'no'` to skip the radiosondy.info fetch entirely and jump straight to showing a fallback link to the Wyoming sounding page for that exact day/hour (`region=samer&TYPE=TEXT:LIST&FROM={DD}{HH}&TO={DD}{HH}&STNM={station}`) — proof that a launch happened even without a tracked position.
 
+### Mission control refactor (branch mission-control)
+
+- **`app/lib/types.ts`** is now the single source of truth for `Launch`/`LaunchPosition`/`YearStore`/`YearData`/`TodayData` plus `GMT3`/`nowGMT3()` — the old 4-file duplication is gone; every consumer imports from here. New optional `Launch` fields: `sources?` (which sources confirmed the launch, written by the cron) and `flightStats?` (burst altitude/duration/drift, computed from SondeHub S3 frames by the cron). Both optional — old R2 YearStores stay valid.
+- **Design tokens**: CSS vars in `globals.css` (`--bg #0b0e13`, `--surface`, `--border`, `--status-*`, `--src-*`) mapped to Tailwind classes via `tailwind.config.js` (`bg-surface`, `border-border`, `text-src-wyoming`…); same hex mirrored in `app/lib/tokens.ts` for Leaflet/Recharts code. Don't hardcode hex colors in components.
+- **New libs**: `geo.ts` (haversineKm/bearingDeg), `trajectory.ts` (full flight path via `api.v2.sondehub.org/sonde/{serial}` + S3 archive, `analyzeTrajectory`), `confidence.ts` (`computeConfidence` → W/R/S source states), `chase.ts` (useGeolocation + Maps/Waze nav URLs), `metrics.ts` (year metrics, landing density), `settings.ts` (typed `sondas_settings`; `autoRefreshMinutes` is actually read by `useTodayData`), `leafletBase.ts` (`createBaseMap` dedup), `launchUtils.ts` (isDaytime/sameLaunch/formatGmt3/wyomingSoundingUrl).
+- **Hooks** in `app/historico/hooks/`: `useYearData`, `useTodayData`, `useLiveFlights` (pauses polling on `visibilitychange`) — shared by /historico and /painel.
+
 ### Pages
 
-- `app/page.tsx` — redirects to `/historico`.
+- `app/page.tsx` — redirects to `/painel`.
+- `app/painel/page.tsx` — mission control dashboard (grid 3-6-3): TopStatusBar (clocks UTC/GMT-3, synoptic-cycle countdown, status pill), LivePanel (today's sondes + recent launches), MissionMap (month landings + live sondes + selected flight trajectory + chase position), TelemetryPanel, ConfidencePanel (SourceBadges W/R/S), ChasePanel (geolocation, distance/bearing, Maps/Waze links).
+- `app/analytics/page.tsx` — flight metrics cards, landing heatmap (native Leaflet circles), drift rose (8 octants), station comparison (up to 3).
+- `app/configuracoes/page.tsx` — station picker, autoRefresh preference, and "Dados & Armazenamento" (LocalCachePanel + R2Panel moved here from the old histórico cache panel; histórico's HardDrive button links to `/configuracoes#dados`).
 - `app/historico/page.tsx` — main historical view, and also the home for live status:
   - "Ao vivo" card renders unconditionally as the first thing on the page (not gated on year data having loaded), polling `fetchTodayFlights()` every 20s — but only for the currently selected station, and only if it has a known `radiosondyStartplace` (`hasRadiosondyCoverage`). Shows per-sonde status (red = `isLive` i.e. still in flight, green = landed), altitude, sonde number, and last-report time converted to GMT-3 24h (`formatGmt3`), plus a "last checked" timestamp.
   - Below that: yearly bar chart (Recharts) of launches per month, backed by both server (`/api/sounding?action=year&station=...`) and client cache (`app/lib/cache.ts`).
@@ -84,5 +94,5 @@ A Vercel Cron job (see `vercel.json`, currently `0 6 * * *`, no auth) that pre-c
 - Don't fetch whole months on every request — always go through `syncMonth`'s incremental "fetch from last stored day" pattern.
 - Server memory cache, client localStorage cache, and the Blob store are three independent layers; a fix in one does not propagate to the others.
 - radiosondy.info's live feed (`export_map.php?live_map=1`) returns `report` timestamps with a lowercase trailing `z` (e.g. `"2026-06-23 12:57:32z"`) — appending another `Z` for `Date` parsing produces an invalid date silently. Always strip the existing `z`/`Z` before re-appending one (see `gmt3DateStr`/`formatGmt3` for the correct pattern).
-- `Launch` is duplicated as an identical interface across four files (`app/api/sounding/route.ts`, `app/lib/blobStore.ts`, `app/historico/page.tsx`, `app/historico/LaunchMap.tsx`) — there's no shared import; when adding a field (like `radiosondyMatch`), add it to all four.
-- Don't widen `MAX_MATCH_WINDOW_MS` (`app/lib/radiosondy.ts`) without re-verifying against real radiosondy.info data — it was deliberately narrowed from 18h to 3h to fix exactly this kind of cross-launch contamination; a too-wide window silently produces *wrong but plausible-looking* matches rather than an honest "no match".
+- `Launch` lives in `app/lib/types.ts` (shared import) — when adding a field, make it optional so persisted R2 YearStores stay valid.
+- Don't widen `MAX_MATCH_WINDOW_MS` (`app/lib/radiosondy.ts`, currently 4h) without re-verifying against real radiosondy.info data — a too-wide window silently produces *wrong but plausible-looking* matches (stealing the next launch's recovery) rather than an honest "no match".

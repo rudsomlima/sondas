@@ -4,6 +4,7 @@
  * O endpoint export_search.php devolve GeoJSON com CORS aberto, então a busca
  * é feita direto do navegador (sem precisar de proxy no nosso servidor).
  */
+import { STATUS_COLORS } from './tokens'
 
 export interface RadiosondyFeature {
   date: Date
@@ -301,10 +302,6 @@ const MAX_MATCH_WINDOW_MS = 4 * 60 * 60 * 1000
 // porque após 3h o voo típico já terminou — o feed ao vivo não seria útil.
 const LIVE_FLIGHT_WINDOW_MS = 3 * 60 * 60 * 1000
 
-export type RecoveryMatch =
-  | { kind: 'recovered'; feature: RadiosondyFeature; approx: boolean }
-  | { kind: 'live'; position: LiveSondePosition }
-
 // Indica se um lançamento é recente o suficiente para que ainda valha a pena
 // checar o feed ao vivo (sonda pode ainda estar em voo). Fora dessa janela,
 // não há razão pra gastar o fetch pesado do feed ao vivo (~1MB).
@@ -358,31 +355,16 @@ export function findLiveMatch(liveFlights: LiveSondePosition[], startplace: stri
   return liveFlights.find(f => matchesStartplace(f, startplace)) ?? null
 }
 
-// Conveniência que faz os 3 passos, buscando o feed ao vivo já pronto (uso
-// típico: quem já tem liveFlights em mãos, ex. o job de sync em segundo
-// plano, que busca uma vez só por execução em vez de uma vez por chamada).
-export function findRecoveryMatch(
-  features: RadiosondyFeature[], liveFlights: LiveSondePosition[], startplace: string, launch: Date
-): RecoveryMatch | null {
-  const recovered = findRecoveredMatch(features, launch)
-  if (recovered) return { kind: 'recovered', ...recovered }
-  if (isWithinMatchWindow(launch)) {
-    const live = findLiveMatch(liveFlights, startplace)
-    if (live) return { kind: 'live', position: live }
-  }
-  return null
-}
-
 // Azul/vermelho/amarelo: o verde original se confundia com áreas verdes do mapa
 export function statusColor(status: string): string {
-  if (status === 'FOUND' || status === 'startIcon') return '#3b82f6'
-  if (status === 'LOST' || status === 'endIcon') return '#ef4444'
-  return '#eab308'
+  if (status === 'FOUND' || status === 'startIcon') return STATUS_COLORS.found
+  if (status === 'LOST' || status === 'endIcon') return STATUS_COLORS.lost
+  return STATUS_COLORS.unknown
 }
 
 // Mesma cor usada para o marcador de paraquedas (sonda ainda em voo, sem
 // pouso registrado) em buildHighlightLiveBalloonIcon.
-export const LIVE_COLOR = '#38bdf8'
+export const LIVE_COLOR = STATUS_COLORS.live
 
 export const LEGEND_ITEMS: { label: string; color: string }[] = [
   { label: 'Encontrada', color: statusColor('FOUND') },

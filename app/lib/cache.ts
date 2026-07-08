@@ -58,14 +58,6 @@ export function writeCache(entry: CacheEntry): void {
 }
 
 /**
- * Lê cache para mês específico
- */
-export function getCacheEntry(year: number, month: number, station: string = DEFAULT_STATION): CacheEntry | null {
-  const entries = readCache()
-  return entries.find(e => e.year === year && e.month === month && stationOf(e) === station) ?? null
-}
-
-/**
  * Lê todos os meses de um ano
  */
 export function getCacheByYear(year: number, station: string = DEFAULT_STATION): CacheEntry[] {

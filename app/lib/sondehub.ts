@@ -15,8 +15,9 @@
  * sido hoje (e o radiosondy.info ainda não tenha processado a recuperação).
  */
 import { TodayFlight, toReportStr, roundToSynopticHour } from './radiosondy'
+import { haversineKm } from './geo'
 
-interface SondeHubFrame {
+export interface SondeHubFrame {
   lat: number
   lon: number
   alt: number
@@ -33,15 +34,6 @@ function gmt3DateStr(date: Date): string {
   const local = new Date(date.getTime() + GMT3)
   const pad = (n: number) => String(n).padStart(2, '0')
   return `${local.getUTCFullYear()}-${pad(local.getUTCMonth() + 1)}-${pad(local.getUTCDate())}`
-}
-
-function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const R = 6371
-  const dLat = (lat2 - lat1) * Math.PI / 180
-  const dLon = (lon2 - lon1) * Math.PI / 180
-  const a = Math.sin(dLat / 2) ** 2 +
-    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) ** 2
-  return R * 2 * Math.asin(Math.sqrt(a))
 }
 
 // Busca a telemetria das últimas 12h de toda sonda ativa no mundo e devolve
@@ -198,14 +190,13 @@ export interface SondeHubArchivedSonde {
   lon: number
 }
 
-// Acha a sonda arquivada de um dia específico (mesmo bucket de
-// fetchSondeHubArchiveLaunches, mas já filtrado por dia em vez de mês
-// inteiro) — usado quando se sabe exatamente qual lançamento se quer focar
-// no mapa do sondehub.org (ex.: link com `f=`/`q=` apontando pro serial
-// certo, em vez de só centralizar na estação).
-export async function fetchSondeHubArchiveSondeForDay(
+// Baixa o arquivo completo de frames de um voo arquivado de um dia — o mesmo
+// JSON usado por fetchSondeHubArchiveSondeForDay, mas devolvendo TODOS os
+// frames (trajetória inteira: subida → estouro → descida), não só o último.
+// Usado por app/lib/trajectory.ts.
+export async function fetchSondeHubArchiveFramesForDay(
   stationId: string, year: number, month: number, day: number
-): Promise<SondeHubArchivedSonde | null> {
+): Promise<{ serial: string; frames: SondeHubFrame[] } | null> {
   const prefix = `launchsites/${stationId}/${year}/${String(month).padStart(2, '0')}/${String(day).padStart(2, '0')}/`
   const res = await fetch(`${HISTORY_BUCKET}/?list-type=2&prefix=${encodeURIComponent(prefix)}`, { cache: 'no-store' })
   if (!res.ok) throw new Error(`Erro ${res.status} ao consultar arquivo do sondehub.org`)
@@ -219,9 +210,19 @@ export async function fetchSondeHubArchiveSondeForDay(
   if (!fileRes.ok) return null
   const frames: SondeHubFrame[] = await fileRes.json()
   if (!frames.length) return null
-  const last = frames[frames.length - 1]
+  return { serial: serialMatch[1], frames }
+}
+
+// Acha a sonda arquivada de um dia específico (só a posição final) — usado
+// quando se quer focar o pouso no mapa sem precisar da trajetória inteira.
+export async function fetchSondeHubArchiveSondeForDay(
+  stationId: string, year: number, month: number, day: number
+): Promise<SondeHubArchivedSonde | null> {
+  const result = await fetchSondeHubArchiveFramesForDay(stationId, year, month, day)
+  if (!result) return null
+  const last = result.frames[result.frames.length - 1]
   if (typeof last.lat !== 'number' || typeof last.lon !== 'number') return null
-  return { serial: serialMatch[1], lat: last.lat, lon: last.lon }
+  return { serial: result.serial, lat: last.lat, lon: last.lon }
 }
 
 /**

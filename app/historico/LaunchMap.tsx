@@ -12,19 +12,9 @@ import {
 } from '@/app/lib/radiosondy'
 import { fetchSondeHubArchiveSondeForDay } from '@/app/lib/sondehub'
 import { getRadiosondyStartplace, DEFAULT_STATION } from '@/app/lib/stations'
-
-interface Launch {
-  date: string
-  time_local: string
-  time_utc: string
-  day: number
-  month: number
-  year: number
-  radiosondyMatch?: 'yes' | 'no'
-  position?: { lat: number; lon: number; sondeNumber: string; status: string; altitude?: number; course?: string }
-  source?: 'wyoming' | 'radiosondy' | 'sondehub'
-  approx?: boolean
-}
+import type { Launch } from '@/app/lib/types'
+import { fetchLiveTrajectory, fetchArchiveTrajectory, analyzeTrajectory, FlightAnalysis } from '@/app/lib/trajectory'
+import { drawTrajectory } from '@/app/components/TrajectoryLayer'
 
 const BALLOON_SIZE = 15
 
@@ -49,12 +39,77 @@ export default function LaunchMap({ launch, onClose, onResult, station = DEFAULT
   const [sourceUrl, setSourceUrl] = useState<string | null>(null)
   const [sondeHubMapUrl, setSondeHubMapUrl] = useState<string | null>(null)
   const [isSondeHubPos, setIsSondeHubPos] = useState(false)
+  // Trajetória completa do voo (sondehub.org): camada própria sobre o mapa.
+  const trajectoryLayerRef = useRef<any>(null)
+  const [trajLoading, setTrajLoading] = useState(false)
+  const [trajAnalysis, setTrajAnalysis] = useState<FlightAnalysis | null>(null)
+  const [trajError, setTrajError] = useState<string | null>(null)
 
   const startplace = getRadiosondyStartplace(station)
   const externalUrl = startplace ? externalRadiosondyUrl(launch.year, launch.month, startplace) : null
 
+  // Serial conhecida (posição resolvida) habilita o botão de trajetória.
+  const serial = launch.position?.sondeNumber
+
+  async function toggleTrajectory() {
+    const L = leafletRef.current
+    const map = mapRef.current
+    if (!L || !map) return
+
+    // Já desenhada: remove (toggle off).
+    if (trajAnalysis) {
+      trajectoryLayerRef.current?.clearLayers()
+      setTrajAnalysis(null)
+      setTrajError(null)
+      return
+    }
+
+    setTrajLoading(true)
+    setTrajError(null)
+    try {
+      // Voo recente (até ~5 dias): API de telemetria tem alta resolução.
+      // Voo antigo: arquivo S3 (pode ser resumido).
+      let points = null as Awaited<ReturnType<typeof fetchLiveTrajectory>> | null
+      const launchAge = Date.now() - new Date(`${launch.date}T12:00:00Z`).getTime()
+      const isRecent = launchAge < 5 * 24 * 60 * 60 * 1000
+
+      if (isRecent && serial) {
+        try { points = await fetchLiveTrajectory(serial) } catch {}
+      }
+      if (!points || points.length < 2) {
+        const archive = await fetchArchiveTrajectory(station, launch.year, launch.month, launch.day)
+        if (archive && archive.points.length >= 2) points = archive.points
+      }
+      if (!points || points.length < 2) {
+        setTrajError('Trajetória não disponível para este voo.')
+        return
+      }
+
+      const analysis = analyzeTrajectory(points)
+      if (!trajectoryLayerRef.current) {
+        trajectoryLayerRef.current = L.layerGroup().addTo(map)
+      }
+      trajectoryLayerRef.current.clearLayers()
+      drawTrajectory(L, trajectoryLayerRef.current, points, analysis)
+      setTrajAnalysis(analysis)
+
+      // Enquadra a trilha inteira.
+      const lats = points.map(p => p.lat)
+      const lons = points.map(p => p.lon)
+      map.fitBounds([[Math.min(...lats), Math.min(...lons)], [Math.max(...lats), Math.max(...lons)]], { padding: [30, 30] })
+    } catch (e: any) {
+      setTrajError(e?.message || 'Erro ao buscar a trajetória.')
+    } finally {
+      setTrajLoading(false)
+    }
+  }
+
   useEffect(() => {
     containerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    // Troca de lançamento: limpa a trajetória do voo anterior.
+    trajectoryLayerRef.current?.clearLayers()
+    setTrajAnalysis(null)
+    setTrajError(null)
   }, [launch.year, launch.month, launch.day, launch.time_utc, launch.time_local])
 
   useEffect(() => {
@@ -330,8 +385,8 @@ export default function LaunchMap({ launch, onClose, onResult, station = DEFAULT
   }, [])
 
   return (
-    <div ref={containerRef} className="mt-3 border border-[#2a2a2a] rounded overflow-hidden">
-      <div className="px-3 py-2 bg-[#1a1a1a] border-b border-[#2a2a2a] flex items-center gap-3 flex-wrap">
+    <div ref={containerRef} className="mt-3 border border-border rounded overflow-hidden">
+      <div className="px-3 py-2 bg-surface border-b border-border flex items-center gap-3 flex-wrap">
         <span className="text-xs text-gray-300">
           Lançamento {String(launch.day).padStart(2, '0')}/{String(launch.month).padStart(2, '0')}/{launch.year} às {launch.time_local} (GMT-3)
         </span>
@@ -345,6 +400,30 @@ export default function LaunchMap({ launch, onClose, onResult, station = DEFAULT
             <AlertTriangle size={12} /> via sondehub.org
           </span>
         )}
+        {serial && !status && !error && (
+          <button
+            onClick={toggleTrajectory}
+            disabled={trajLoading}
+            className={`text-xs flex items-center gap-1 px-2 py-0.5 rounded border transition-all disabled:opacity-50 ${
+              trajAnalysis
+                ? 'text-sky-300 border-sky-500/40 bg-sky-500/10'
+                : 'text-gray-400 border-border hover:text-sky-300 hover:border-sky-500/40'
+            }`}
+            title="Desenhar a trajetória completa do voo (subida, estouro, descida) via sondehub.org"
+          >
+            {trajLoading ? <Loader2 size={11} className="animate-spin" /> : null}
+            {trajAnalysis ? 'Ocultar trajetória' : 'Trajetória do voo'}
+          </button>
+        )}
+        {trajAnalysis && (
+          <span className="text-[11px] text-dim mono">
+            estouro {(trajAnalysis.maxAltM / 1000).toFixed(1)} km
+            {trajAnalysis.durationMin ? ` · ${trajAnalysis.durationMin} min` : ''}
+            {trajAnalysis.distanceKm ? ` · deriva ${Math.round(trajAnalysis.distanceKm)} km` : ''}
+            {trajAnalysis.pointCount < 5 ? ' · trajetória resumida' : ''}
+          </span>
+        )}
+        {trajError && <span className="text-[11px] text-red-400">{trajError}</span>}
         {isSondeHubPos && sondeHubMapUrl ? (
           <a href={sondeHubMapUrl} target="_blank" rel="noopener noreferrer"
             className="ml-auto text-xs text-violet-400 hover:underline flex items-center gap-1 flex-shrink-0">
@@ -361,11 +440,11 @@ export default function LaunchMap({ launch, onClose, onResult, station = DEFAULT
         </button>
       </div>
 
-      <div className="relative h-[420px] bg-[#111111]">
+      <div className="relative h-[420px] bg-bg">
         <div ref={mapDivRef} className="absolute inset-0" />
 
         {!status && !error && (
-          <div className="absolute bottom-3 right-3 z-[900] bg-[#111111]/40 backdrop-blur-sm rounded-md p-2.5 text-xs text-gray-200 space-y-1.5">
+          <div className="absolute bottom-3 right-3 z-[900] bg-bg/40 backdrop-blur-sm rounded-md p-2.5 text-xs text-gray-200 space-y-1.5">
             {LEGEND_ITEMS.map(item => (
               <div key={item.label} className="flex items-center gap-2">
                 <span className="inline-block w-2.5 h-3 rounded-sm flex-shrink-0" style={{ background: item.color }} />
@@ -376,7 +455,7 @@ export default function LaunchMap({ launch, onClose, onResult, station = DEFAULT
         )}
 
         {(status || error) && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-[#111111]/95 z-[1000]">
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-bg/95 z-[1000]">
             {error ? (
               <>
                 <AlertCircle className="text-red-400" size={26} />

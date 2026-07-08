@@ -1,0 +1,9 @@
+{
+  "name": "sondas",
+  "description": "Next.js application for mapping and data visualization",
+  "version": "0.1.0",
+  "language": "typescript",
+  "sourceDir": "app",
+  "excludeDirs": ["node_modules", ".next", ".vercel"],
+  "extensions": ["ts", "tsx", "js", "jsx"]
+}

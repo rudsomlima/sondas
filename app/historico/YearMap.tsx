@@ -114,8 +114,8 @@ export default function YearMap({ year, station, monthsWithData, onClose }: Year
   }, [])
 
   return (
-    <div ref={containerRef} className="mt-3 border border-[#2a2a2a] rounded overflow-hidden">
-      <div className="px-3 py-2 bg-[#1a1a1a] border-b border-[#2a2a2a] flex items-center gap-3 flex-wrap">
+    <div ref={containerRef} className="mt-3 border border-border rounded overflow-hidden">
+      <div className="px-3 py-2 bg-surface border-b border-border flex items-center gap-3 flex-wrap">
         <span className="text-xs text-gray-300">
           Todas as sondas de {year}
         </span>
@@ -124,11 +124,11 @@ export default function YearMap({ year, station, monthsWithData, onClose }: Year
         </button>
       </div>
 
-      <div className="relative h-[420px] bg-[#111111]">
+      <div className="relative h-[420px] bg-bg">
         <div ref={mapDivRef} className="absolute inset-0" />
 
         {!status && !error && (
-          <div className="absolute bottom-3 right-3 z-[900] bg-[#111111]/40 backdrop-blur-sm rounded-md p-2.5 text-xs text-gray-200 space-y-1.5">
+          <div className="absolute bottom-3 right-3 z-[900] bg-bg/40 backdrop-blur-sm rounded-md p-2.5 text-xs text-gray-200 space-y-1.5">
             {LEGEND_ITEMS.map(item => (
               <div key={item.label} className="flex items-center gap-2">
                 <span className="inline-block w-2.5 h-3 rounded-sm flex-shrink-0" style={{ background: item.color }} />
@@ -139,7 +139,7 @@ export default function YearMap({ year, station, monthsWithData, onClose }: Year
         )}
 
         {(status || error) && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-[#111111]/95 z-[1000]">
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-bg/95 z-[1000]">
             {error ? (
               <>
                 <AlertCircle className="text-red-400" size={26} />

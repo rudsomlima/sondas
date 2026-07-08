@@ -12,6 +12,9 @@
  * Sem essas variáveis (ex.: dev local sem .env.local), as funções são no-op.
  */
 import { S3Client, GetObjectCommand, PutObjectCommand, ListObjectsV2Command, DeleteObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3'
+import type { YearStore, SyncStatus } from './types'
+
+export type { YearStore }
 
 function getClient(): S3Client | null {
   const accountId = process.env.R2_ACCOUNT_ID
@@ -27,35 +30,6 @@ function getClient(): S3Client | null {
 
 function bucket(): string {
   return process.env.R2_BUCKET_NAME || 'sondas'
-}
-
-interface LaunchPosition {
-  lat: number
-  lon: number
-  sondeNumber: string
-  status: string
-  altitude?: number
-  course?: string
-}
-
-interface Launch {
-  date: string
-  time_local: string
-  time_utc: string
-  day: number
-  month: number
-  year: number
-  radiosondyMatch?: 'yes' | 'no'
-  position?: LaunchPosition
-  source?: 'wyoming' | 'radiosondy' | 'sondehub'
-  approx?: boolean
-}
-
-export interface YearStore {
-  year: number
-  launches: Launch[]
-  monthsComplete: number[]
-  updatedAt: number
 }
 
 const DEFAULT_STATION_ID = '82599'
@@ -159,5 +133,38 @@ export async function getYearStoreSize(station: string, year: number): Promise<n
     return res.ContentLength ?? 0
   } catch {
     return 0
+  }
+}
+
+const SYNC_STATUS_KEY = 'sondas/sync-status.json'
+
+// Status da última execução do cron radiosondy-sync — dá visibilidade dos
+// "bastidores" da sincronização (ver app/api/sync-status/route.ts).
+export async function readSyncStatus(): Promise<SyncStatus | null> {
+  const client = getClient()
+  if (!client) return null
+  try {
+    const res = await client.send(new GetObjectCommand({ Bucket: bucket(), Key: SYNC_STATUS_KEY }))
+    const body = await res.Body?.transformToString()
+    return body ? JSON.parse(body) : null
+  } catch (e: any) {
+    if (e?.name === 'NoSuchKey' || e?.$metadata?.httpStatusCode === 404) return null
+    console.error('[R2] readSyncStatus falhou:', e)
+    return null
+  }
+}
+
+export async function writeSyncStatus(status: SyncStatus): Promise<void> {
+  const client = getClient()
+  if (!client) return
+  try {
+    await client.send(new PutObjectCommand({
+      Bucket: bucket(),
+      Key: SYNC_STATUS_KEY,
+      Body: JSON.stringify(status),
+      ContentType: 'application/json',
+    }))
+  } catch (e) {
+    console.error('[R2] writeSyncStatus falhou:', e)
   }
 }

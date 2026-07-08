@@ -5,15 +5,33 @@
 @tailwind utilities;
 
 :root {
-  --bg: #111111;
-  --surface: #1a1a1a;
-  --border: #2a2a2a;
-  --accent: #3b82f6;
-  --text: #e5e7eb;
+  /* superfícies — tema mission control (mais frio/profundo) */
+  --bg: #0b0e13;
+  --surface: #12161d;
+  --surface-2: #1a2029;
+  --border: #232a35;
+  --border-strong: #38414f;
+  /* texto */
+  --text: #e6e9ee;
+  --text-dim: #9aa4b2;
+  --text-faint: #5c6570;
   --muted: #6b7280;
+  /* acento e status operacionais */
+  --accent: #3b82f6;
+  --status-live: #38bdf8;
+  --status-found: #3b82f6;
+  --status-lost: #ef4444;
+  --status-unknown: #eab308;
   --success: #22c55e;
   --warning: #f59e0b;
   --danger: #ef4444;
+  /* fontes de dados */
+  --src-wyoming: #38bdf8;
+  --src-radiosondy: #34d399;
+  --src-sondehub: #a78bfa;
+  /* dia/noite */
+  --day: #f59e0b;
+  --night: #818cf8;
 }
 
 * {
@@ -30,6 +48,7 @@ html, body {
 
 ::-webkit-scrollbar {
   width: 6px;
+  height: 6px;
 }
 ::-webkit-scrollbar-track {
   background: var(--surface);
@@ -49,8 +68,32 @@ html, body {
   @apply text-white bg-blue-600/20 border border-blue-600/30;
 }
 
+/* Painel padrão do mission control */
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+}
+.panel-title {
+  @apply text-[11px] uppercase tracking-wider font-semibold;
+  color: var(--text-dim);
+}
+.value-lg {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 1.75rem;
+  font-weight: 600;
+  line-height: 1.1;
+}
+.label-xs {
+  @apply text-[11px] uppercase tracking-wide;
+  color: var(--text-faint);
+}
+
+/* alias legado — remover quando a migração terminar */
 .card {
-  @apply bg-[#1a1a1a] border border-[#2a2a2a] rounded-lg;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
 }
 
 .badge {
@@ -80,4 +123,12 @@ html, body {
 }
 .radar-pulse-ring {
   animation: radar-pulse 1.8s ease-out infinite;
+}
+
+@keyframes pulse-soft {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+.pulse-soft {
+  animation: pulse-soft 2s ease-in-out infinite;
 }

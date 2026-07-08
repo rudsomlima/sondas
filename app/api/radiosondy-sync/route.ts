@@ -1,18 +1,15 @@
 import { NextResponse } from 'next/server'
-import { readYearStore, writeYearStore } from '@/app/lib/blobStore'
+import { readYearStore, writeYearStore, writeSyncStatus } from '@/app/lib/blobStore'
 import {
   fetchRadiosondyFeatures, fetchLiveFlights, findRecoveredMatch, findLiveMatch,
   isWithinMatchWindow, launchUtcInstant, LiveSondePosition, parsePopupTelemetry,
 } from '@/app/lib/radiosondy'
-import { fetchSondeHubArchiveSondeForDay } from '@/app/lib/sondehub'
+import { fetchSondeHubArchiveFramesForDay } from '@/app/lib/sondehub'
 import { SOUTH_AMERICA_STATIONS } from '@/app/lib/stations'
+import { nowGMT3 } from '@/app/lib/types'
+import { analyzeTrajectory, pointsFromFrames } from '@/app/lib/trajectory'
 
 export const maxDuration = 60
-
-const GMT3 = -3 * 60 * 60 * 1000
-function nowGMT3() {
-  return new Date(Date.now() + GMT3)
-}
 
 /**
  * Checagem em segundo plano de correspondência no radiosondy.info, pra não
@@ -33,6 +30,7 @@ function nowGMT3() {
  *   retoma de onde ficou, já que só o que falta fica sem `radiosondyMatch`.
  */
 export async function GET() {
+  const startedAt = Date.now()
   const local = nowGMT3()
   const currentYear = local.getUTCFullYear()
   const currentMonth = local.getUTCMonth() + 1
@@ -58,12 +56,18 @@ export async function GET() {
     const store = await readYearStore(station.id, currentYear)
     if (!store || store.launches.length === 0) continue
 
-    // Reprocessa por posição ausente, não só por radiosondyMatch ausente —
-    // assim, lançamentos já marcados 'no' antes da posição existir como campo
-    // também são revisitados (e podem ganhar posição via sondehub.org).
+    // Reprocessa por posição OU `sources` ausentes — não só por posição. Isso
+    // também revisita lançamentos gravados por uma versão anterior do código
+    // que já tinham `position` mas não tinham `sources` explicitado por
+    // completo (ex.: sondehub nunca marcado como `false` quando o
+    // radiosondy.info já havia resolvido) — sem isso, o badge de confiança
+    // dessa fonte ficava "pendente" (piscando) pra sempre.
+    const isFullyResolved = (l: (typeof store.launches)[number]) =>
+      !!l.position && l.sources?.wyoming !== undefined && l.sources?.radiosondy !== undefined && l.sources?.sondehub !== undefined
+
     const byMonth = new Map<number, typeof store.launches>()
     for (const l of store.launches) {
-      if (l.position || l.month > currentMonth) continue
+      if (isFullyResolved(l) || l.month > currentMonth) continue
       const list = byMonth.get(l.month) ?? []
       list.push(l)
       byMonth.set(l.month, list)
@@ -94,6 +98,11 @@ export async function GET() {
             altitude: altitude || undefined,
             course: course || undefined,
           }
+          // sondehub explicitamente false (não undefined): o radiosondy.info já
+          // resolveu, então o sondehub.org nunca chega a ser consultado — sem
+          // isso, computeConfidence() tratava "nunca checado" como "pendente"
+          // (badge piscando pra sempre, mesmo já tudo resolvido).
+          l.sources = { wyoming: !l.source, radiosondy: true, sondehub: false }
           changed = true
           checked++
           yes++
@@ -106,6 +115,7 @@ export async function GET() {
             l.radiosondyMatch = 'yes'
             l.position = { lat: live.lat, lon: live.lon, sondeNumber: live.sondeNumber, status: 'UNKNOWN',
               altitude: live.altitude || undefined, course: live.course || undefined }
+            l.sources = { wyoming: !l.source, radiosondy: true, sondehub: false }
             changed = true
             checked++
             yes++
@@ -123,15 +133,33 @@ export async function GET() {
         // (arquivo S3) como segunda fonte antes de desistir — cobre voos só
         // rastreados por RF, sem recuperação física registrada (caso real:
         // Fernando de Noronha, 12/03/2026, V2931576).
-        let sonde = null
+        let sonde: { serial: string; lat: number; lon: number } | null = null
         try {
-          sonde = await fetchSondeHubArchiveSondeForDay(station.id, l.year, l.month, l.day)
+          const archive = await fetchSondeHubArchiveFramesForDay(station.id, l.year, l.month, l.day)
+          if (archive) {
+            const points = pointsFromFrames(archive.frames)
+            const last = points[points.length - 1]
+            if (last) {
+              sonde = { serial: archive.serial, lat: last.lat, lon: last.lon }
+              // Frames já baixados: estatísticas de voo a custo ~zero.
+              const a = analyzeTrajectory(points)
+              if (a.pointCount >= 5) {
+                l.flightStats = {
+                  burstAltM: Math.round(a.maxAltM),
+                  durationMin: a.durationMin ?? undefined,
+                  distanceKm: a.distanceKm ? Math.round(a.distanceKm * 10) / 10 : undefined,
+                  bearingDeg: a.bearingDeg ? Math.round(a.bearingDeg) : undefined,
+                }
+              }
+            }
+          }
         } catch {
           // Falha pontual: trata como sem posição, tenta de novo no próximo run.
         }
         if (sonde) {
           l.radiosondyMatch = 'yes'
           l.position = { lat: sonde.lat, lon: sonde.lon, sondeNumber: sonde.serial, status: 'UNKNOWN' }
+          l.sources = { wyoming: !l.source, radiosondy: false, sondehub: true }
         } else {
           // Só marca 'no' definitivamente se o lançamento tem mais de 7 dias —
           // recuperações tardias (usuário registra no radiosondy.info dias depois)
@@ -139,8 +167,12 @@ export async function GET() {
           const ageMs = Date.now() - instant.getTime()
           if (ageMs > 7 * 24 * 60 * 60 * 1000) {
             l.radiosondyMatch = 'no'
+            // Ambas as fontes já foram checadas nesta execução (radiosondy.info
+            // acima, sondehub.org agora) e nenhuma achou nada — marca as duas
+            // como explicitamente ausentes, não "pendente" (evita piscar pra sempre).
+            l.sources = { wyoming: !l.source, radiosondy: false, sondehub: false }
           }
-          // else: deixa undefined → cron re-checa no próximo run
+          // else: deixa tudo undefined → cron re-checa no próximo run
         }
         changed = true
         checked++
@@ -156,6 +188,13 @@ export async function GET() {
       summary[station.id] = { checked, yes, no, pending }
     }
   }
+
+  await writeSyncStatus({
+    lastRunAt: startedAt,
+    durationMs: Date.now() - startedAt,
+    year: currentYear,
+    stations: summary,
+  })
 
   return NextResponse.json({ ok: true, year: currentYear, stations: summary })
 }

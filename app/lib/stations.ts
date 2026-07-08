@@ -28,8 +28,6 @@ export interface Station {
   wyomingSupported?: boolean
 }
 
-export const REGION = 'samer'
-
 export const DEFAULT_STATION: Station = {
   id: '82599', name: 'Natal Aeroporto, Brazil', lat: -5.91, lon: -35.25,
   radiosondyStartplace: 'Barreira do Inferno Launch Center (BR)',

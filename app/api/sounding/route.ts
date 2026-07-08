@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { readYearStore, writeYearStore, YearStore } from '@/app/lib/blobStore'
+import { readYearStore, writeYearStore } from '@/app/lib/blobStore'
 import { findStation, Station } from '@/app/lib/stations'
 import { fetchRadiosondyLaunches } from '@/app/lib/radiosondy'
 import { fetchSondeHubApproxLaunches, fetchSondeHubArchiveLaunches } from '@/app/lib/sondehub'
+import { GMT3, nowGMT3, Launch, YearStore } from '@/app/lib/types'
 
-const GMT3 = -3 * 60 * 60 * 1000
 const DEFAULT_STATION_ID = '82599'
 const WYOMING_BASE = 'https://weather.uwyo.edu/wsgi/sounding'
 const WYOMING_SRC = 'FM35'
@@ -14,14 +14,6 @@ const TIMEOUT = 15000 // 15 segundos por requisição
 const memoryCache = new Map<string, { data: any; timestamp: number }>()
 // Cache de inventário anual separado (mais estável que sondagens individuais)
 const inventoryCache = new Map<string, { datetimes: string[]; timestamp: number }>()
-
-// Date.now() já é um instante absoluto (UTC); somar getTimezoneOffset() aqui
-// fazia o resultado depender do fuso horário configurado na máquina/servidor
-// (ex: certo na Vercel, que roda em UTC, mas errado num dev local em GMT-3,
-// ou vice-versa). Sem esse termo, o cálculo é determinístico em qualquer ambiente.
-function nowGMT3() {
-  return new Date(Date.now() + GMT3)
-}
 
 const MONTH_MAP: Record<string, number> = {
   Jan: 1, Feb: 2, Mar: 3, Apr: 4, May: 5, Jun: 6,
@@ -232,37 +224,6 @@ async function fetchWyomingMonth(
   return missing.map(inventoryDtToLaunch).filter((l): l is Launch => l !== null)
 }
 
-interface LaunchPosition {
-  lat: number
-  lon: number
-  sondeNumber: string
-  status: string
-  altitude?: number
-  course?: string
-}
-
-interface Launch {
-  date: string
-  time_local: string
-  time_utc: string
-  day: number
-  month: number
-  year: number
-  // Preenchido pelo sync em segundo plano (app/api/radiosondy-sync/route.ts).
-  radiosondyMatch?: 'yes' | 'no'
-  // Posição final da sonda (radiosondy.info ou sondehub.org) — ver
-  // app/historico/LaunchMap.tsx, que usa isso pra não precisar de fetch ao vivo.
-  position?: LaunchPosition
-  // Estações sem cobertura na Wyoming (Station.wyomingSupported === false):
-  // 'radiosondy' = horário aproximado, derivado de fetchRadiosondyLaunches
-  // (app/lib/radiosondy.ts); 'sondehub' = idem, via fetchSondeHubApproxLaunches
-  // (app/lib/sondehub.ts) — cobre voos sem recuperação física registrada no
-  // radiosondy.info, mas só alcança os últimos 3 dias (sem busca histórica).
-  // Ausente = Wyoming (comportamento padrão, todas as estações antigas).
-  source?: 'wyoming' | 'radiosondy' | 'sondehub'
-  approx?: boolean
-}
-
 function validateLaunch(launch: Launch): boolean {
   // Validação básica
   return (
@@ -409,9 +370,16 @@ async function syncMonth(
     const seenWyoming = new Set(existingWyoming.map(l => `${l.date}_${l.time_utc}`))
     const mergedWyoming = existingWyoming.concat(fresh.filter(l => !seenWyoming.has(`${l.date}_${l.time_utc}`)))
 
-    // Descarta entradas aproximadas que a Wyoming já confirmou no horário exato.
-    const wyomingKeys = new Set(mergedWyoming.map(l => `${l.date}_${l.time_utc}`))
-    merged = mergedWyoming.concat(existingApprox.filter(l => !wyomingKeys.has(`${l.date}_${l.time_utc}`)))
+    // Descarta entradas aproximadas de qualquer data que a Wyoming já cobre —
+    // por DATA, não por horário exato. Um filtro por chave exata (date+time_utc)
+    // não pega o caso em que a fonte complementar (radiosondy/sondehub) estimou
+    // um horário sinótico diferente do da Wyoming pro mesmo dia (ex.: sondehub
+    // arredondou pra 06:00Z a partir do primeiro frame recebido, enquanto a
+    // Wyoming publicou o lançamento oficial em 12:00Z) — isso deixava a mesma
+    // sonda persistida duas vezes indefinidamente, já que a chave exata nunca
+    // batia pra remover a entrada aproximada antiga.
+    const wyomingDatesNow = new Set(mergedWyoming.map(l => l.date))
+    merged = mergedWyoming.concat(existingApprox.filter(l => !wyomingDatesNow.has(l.date)))
   } catch {
     // Wyoming indisponível — usa fontes alternativas (radiosondy.info + sondehub)
     // para não deixar o mês vazio enquanto a Wyoming estiver fora.
