@@ -1,5 +1,6 @@
 'use client'
 
+import { useEffect, useState } from 'react'
 import { BarChart3 } from 'lucide-react'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts'
 import { CHART } from '@/app/lib/tokens'
@@ -29,6 +30,15 @@ const CustomTooltip = ({ active, payload, label }: any) => {
 }
 
 export default function MonthlyChart({ year, byMonth }: MonthlyChartProps) {
+  const [isMobile, setIsMobile] = useState(false)
+
+  useEffect(() => {
+    const checkMobile = () => setIsMobile(window.innerWidth < 640)
+    checkMobile()
+    window.addEventListener('resize', checkMobile)
+    return () => window.removeEventListener('resize', checkMobile)
+  }, [])
+
   const chartData = MONTHS.map((name, idx) => {
     const launches = byMonth[idx + 1] ?? []
     return { name, lançamentos: launches.length, dias: new Set(launches.map(l => l.date)).size }
@@ -42,7 +52,7 @@ export default function MonthlyChart({ year, byMonth }: MonthlyChartProps) {
       </h2>
       <ResponsiveContainer width="100%" height={200}>
         <BarChart data={chartData} barGap={4}>
-          <XAxis dataKey="name" tick={{ fill: CHART.tick, fontSize: 11 }} axisLine={false} tickLine={false} />
+          <XAxis dataKey="name" tick={{ fill: CHART.tick, fontSize: 11 }} axisLine={false} tickLine={false} interval={isMobile ? 2 : 0} />
           <YAxis tick={{ fill: CHART.tick, fontSize: 11 }} axisLine={false} tickLine={false} width={28} />
           <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(255,255,255,0.03)' }} />
           <Bar dataKey="lançamentos" radius={[3, 3, 0, 0]}>

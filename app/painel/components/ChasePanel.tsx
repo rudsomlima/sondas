@@ -38,7 +38,7 @@ export default function ChasePanel({ selected, geo }: ChasePanelProps) {
             <span className="text-green-400 flex items-center gap-1.5">
               <Crosshair size={12} className="pulse-soft" /> Localizando
             </span>
-            <button onClick={geo.stop} className="text-gray-500 hover:text-red-400 flex items-center gap-1">
+            <button onClick={geo.stop} className="text-gray-500 hover:text-red-400 flex items-center gap-1 px-2 py-1">
               <StopCircle size={12} /> parar
             </button>
           </div>
@@ -69,14 +69,14 @@ export default function ChasePanel({ selected, geo }: ChasePanelProps) {
                   <a
                     href={googleMapsNavUrl(target.lat, target.lon)}
                     target="_blank" rel="noopener noreferrer"
-                    className="flex-1 flex items-center justify-center gap-1.5 px-2 py-1.5 bg-green-600/20 border border-green-500/30 rounded text-green-300 hover:bg-green-600/30 transition-all"
+                    className="flex-1 flex items-center justify-center gap-1.5 px-2 py-2 bg-green-600/20 border border-green-500/30 rounded text-green-300 hover:bg-green-600/30 transition-all"
                   >
                     <Navigation size={11} /> Maps <ExternalLink size={9} />
                   </a>
                   <a
                     href={wazeNavUrl(target.lat, target.lon)}
                     target="_blank" rel="noopener noreferrer"
-                    className="flex-1 flex items-center justify-center gap-1.5 px-2 py-1.5 bg-sky-600/20 border border-sky-500/30 rounded text-sky-300 hover:bg-sky-600/30 transition-all"
+                    className="flex-1 flex items-center justify-center gap-1.5 px-2 py-2 bg-sky-600/20 border border-sky-500/30 rounded text-sky-300 hover:bg-sky-600/30 transition-all"
                   >
                     <Navigation size={11} /> Waze <ExternalLink size={9} />
                   </a>

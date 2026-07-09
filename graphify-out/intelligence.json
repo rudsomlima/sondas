@@ -1,0 +1,36 @@
+{
+  "hotspots": [
+    {
+      "label": "LaunchMap()",
+      "risk": 0.617,
+      "type": "FUNCTION"
+    },
+    {
+      "label": "ConfiguracoesPage()",
+      "risk": 0.376,
+      "type": "FUNCTION"
+    },
+    {
+      "label": "useYearData()",
+      "risk": 0.226,
+      "type": "FUNCTION"
+    },
+    {
+      "label": "GET()",
+      "risk": 0.213,
+      "type": "FUNCTION"
+    },
+    {
+      "label": "nextConfig",
+      "risk": 0.211,
+      "type": "FUNCTION"
+    }
+  ],
+  "blast_radius": {
+    "GET()": 34,
+    "map": 18,
+    "pad()": 13,
+    "now": 11,
+    "has": 10
+  }
+}

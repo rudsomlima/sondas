@@ -102,7 +102,7 @@ export default function PainelPage() {
           />
         </div>
 
-        <div className="lg:col-span-6 min-h-[420px] lg:min-h-0 order-1 lg:order-2">
+        <div className="lg:col-span-6 h-[280px] sm:h-[340px] lg:h-auto order-1 lg:order-2">
           <MissionMap
             station={station}
             monthLaunches={monthLaunches}

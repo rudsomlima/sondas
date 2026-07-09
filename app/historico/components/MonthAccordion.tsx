@@ -125,7 +125,7 @@ export default function MonthAccordion({
                   ) : (
                     <button
                       onClick={() => onRequestDeleteMonth(m)}
-                      className="p-1.5 text-gray-400 hover:text-red-400 hover:bg-red-500/10 rounded transition-all"
+                      className="p-2 text-gray-400 hover:text-red-400 hover:bg-red-500/10 rounded transition-all"
                       title="Deletar mês"
                     >
                       <Trash2 size={14} />

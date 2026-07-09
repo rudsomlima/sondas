@@ -15,11 +15,11 @@ export interface LaunchConfidence {
   notes: string[]
 }
 
-const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000
+const ONE_DAY_MS = 1 * 24 * 60 * 60 * 1000
 
 export function computeConfidence(l: Launch, wyomingSupported = true): LaunchConfidence {
   const ageMs = Date.now() - new Date(`${l.date}T12:00:00Z`).getTime()
-  const isRecent = ageMs < SEVEN_DAYS_MS
+  const isRecent = ageMs < ONE_DAY_MS
   const notes: string[] = []
 
   // Wyoming: registro sem `source` veio dela; com `source`, ela não publicou (ainda).
@@ -45,7 +45,7 @@ export function computeConfidence(l: Launch, wyomingSupported = true): LaunchCon
   } else if (l.radiosondyMatch === 'no') {
     radiosondy = 'absent'
   } else {
-    radiosondy = 'pending'
+    radiosondy = isRecent ? 'pending' : 'absent'
   }
 
   // sondehub.org
@@ -60,7 +60,7 @@ export function computeConfidence(l: Launch, wyomingSupported = true): LaunchCon
     sondehub = 'confirmed'
     notes.push('Posição derivada de telemetria RF (sem recuperação física registrada).')
   } else {
-    sondehub = 'pending'
+    sondehub = isRecent ? 'pending' : 'absent'
   }
 
   if (l.approx) notes.push('Horário aproximado (arredondado para o ciclo sinótico).')

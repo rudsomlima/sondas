@@ -91,7 +91,7 @@ export default function LandingHeatmap({ station, cells }: LandingHeatmapProps) 
       <div className="px-4 py-3 border-b border-border">
         <p className="panel-title">Mapa de calor de pousos</p>
       </div>
-      <div className="relative h-[420px] bg-bg">
+      <div className="relative h-[280px] sm:h-[340px] lg:h-[420px] bg-bg">
         <div ref={divRef} className="absolute inset-0" />
         <div className="absolute bottom-3 right-3 z-[900] bg-bg/50 backdrop-blur-sm rounded-md p-2 text-[10px] text-gray-300 space-y-1">
           <div className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full" style={{ background: '#38bdf8' }} /> poucos</div>

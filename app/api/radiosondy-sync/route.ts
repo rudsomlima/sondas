@@ -161,18 +161,25 @@ export async function GET() {
           l.position = { lat: sonde.lat, lon: sonde.lon, sondeNumber: sonde.serial, status: 'UNKNOWN' }
           l.sources = { wyoming: !l.source, radiosondy: false, sondehub: true }
         } else {
-          // Só marca 'no' definitivamente se o lançamento tem mais de 7 dias —
-          // recuperações tardias (usuário registra no radiosondy.info dias depois)
-          // ou dados atrasados do sondehub S3 ainda podem aparecer antes disso.
-          const ageMs = Date.now() - instant.getTime()
-          if (ageMs > 7 * 24 * 60 * 60 * 1000) {
+          // Se Wyoming já confirmou este lançamento: ambas as fontes (radiosondy.info
+          // e sondehub.org) já foram tentadas nesta execução — não achou nada em nenhuma,
+          // então marca como ausência definitiva JÁ. Não faz sentido ficar rechecando por
+          // dias quando já temos confirmação de uma fonte independente.
+          // Se Wyoming NÃO confirmou (source é radiosondy/sondehub): sem fonte independente,
+          // mantém tolerância de 7 dias antes de desistir (recuperação tardia ou dados
+          // atrasados no S3 ainda podem aparecer).
+          const wyomingConfirmed = !l.source
+          if (wyomingConfirmed) {
             l.radiosondyMatch = 'no'
-            // Ambas as fontes já foram checadas nesta execução (radiosondy.info
-            // acima, sondehub.org agora) e nenhuma achou nada — marca as duas
-            // como explicitamente ausentes, não "pendente" (evita piscar pra sempre).
-            l.sources = { wyoming: !l.source, radiosondy: false, sondehub: false }
+            l.sources = { wyoming: true, radiosondy: false, sondehub: false }
+          } else {
+            const ageMs = Date.now() - instant.getTime()
+            if (ageMs > 7 * 24 * 60 * 60 * 1000) {
+              l.radiosondyMatch = 'no'
+              l.sources = { wyoming: !l.source, radiosondy: false, sondehub: false }
+            }
+            // else: deixa tudo undefined → cron re-checa no próximo run
           }
-          // else: deixa tudo undefined → cron re-checa no próximo run
         }
         changed = true
         checked++

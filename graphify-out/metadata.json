@@ -1,0 +1,143 @@
+{
+  "projectName": "sondas",
+  "communityLabels": {
+    "0": "Radiosonde Access",
+    "1": "Launch Calendar",
+    "2": "Balloon Flight Tracker",
+    "3": "Weather Station Cache",
+    "4": "Community 4",
+    "5": "YearStore Persistence",
+    "6": "Station Launch UI",
+    "7": "Community 7",
+    "8": "Community 8",
+    "9": "File List Manager",
+    "10": "Station Entry UI",
+    "11": "Flight Analytics",
+    "12": "Map Interaction",
+    "13": "Weather Data Retrieval",
+    "14": "Community 14",
+    "15": "Configuration Management",
+    "16": "Community 16",
+    "17": "Page Presentation",
+    "18": "Community 18",
+    "19": "Daily Flight Stats",
+    "20": "Search Component",
+    "21": "unknown",
+    "22": "Build Automation",
+    "23": "unknown",
+    "24": "Monthly Chart Data",
+    "25": "Date Formatting",
+    "26": "Element State",
+    "27": "Next.js config",
+    "28": "unknown",
+    "29": "unknown",
+    "30": "unknown",
+    "31": "unknown",
+    "32": "unknown",
+    "33": "unknown",
+    "34": "unknown",
+    "35": "unknown",
+    "36": "unknown",
+    "37": "unknown",
+    "38": "unknown",
+    "39": "unknown"
+  },
+  "communitySummaries": {
+    "0": "Retrieves, parses, caches, and synchronizes radiosonde launch and sounding data for weather reporting.",
+    "1": "Manages rocket launch scheduling, data synchronization, and month\u2011based display, including cancellation and confirmation flows.",
+    "2": "Handles fetching radiosonde flight data and rendering live and historical balloon icons and legends on a map interface.",
+    "3": "Manages caching, retrieval, and statistical analysis of weather station data across years and months, and supports confidence calculations and synchronization.",
+    "4": "",
+    "5": "Manages CRUD and sync of yearly store data in a bucket, including matching and status tracking operations.",
+    "6": "Handles station lookup, selection, and UI state for weather balloon launches, enabling navigation and mapping of launch sites.",
+    "7": "",
+    "8": "",
+    "9": "Handles loading, displaying, and modifying a paginated file list with delete support and progress tracking.",
+    "10": "Manages the state and data needed to create, display, and toggle station entries while handling loading status, errors, and chart visualizations.",
+    "11": "Provides tools for calculating geographic bearings, distances, trajectory analysis, landing density, and annual metrics for flight or navigation data.",
+    "12": "It manages rendering a map view, handling markers, info balloons, and associated UI state such as error and status.",
+    "13": "Handles generation of URLs and formatting for retrieving and interpreting Wyoming weather sounding data and associated date-time information.",
+    "14": "",
+    "15": "Manages application configuration values, providing defaults and defining storage keys.",
+    "16": "",
+    "17": "Handles metadata and viewport settings to control how a web page is rendered and displayed on different devices.",
+    "18": "",
+    "19": "Tracks a user's flight activity for the day, recording how many flights were taken, whether a flight occurred today, and the month.",
+    "20": "Manages query input, selection state, and displays the search results.",
+    "21": "Unable to determine domain due to missing code entities.",
+    "22": "Manages compiling code, creating distributable packages, and configuring deployment targets.",
+    "23": "Unable to determine domain due to missing code entities.",
+    "24": "Stores and formats data for generating monthly visualizations.",
+    "25": "Handles mapping of numeric months to full month names for display.",
+    "26": "Keeps track of whether an element is selected and its position within the layout.",
+    "27": "Defines build\u2011time and runtime settings for a Next.js application, such as environment variables, routing, and transpilation options.",
+    "28": "Unable to determine domain due to missing code entities.",
+    "29": "Unable to determine domain due to missing code entities.",
+    "30": "Unable to determine domain due to missing code entities.",
+    "31": "Unable to determine domain due to missing code entities.",
+    "32": "Unable to determine domain due to missing code entities.",
+    "33": "Unable to determine domain due to missing code entities.",
+    "34": "Unable to determine domain due to missing code entities.",
+    "35": "Unable to determine domain due to missing code entities.",
+    "36": "Unable to determine domain due to missing code entities.",
+    "37": "Unable to determine domain due to missing code entities.",
+    "38": "Unable to determine domain due to missing code entities.",
+    "39": "Unable to determine domain due to missing code entities."
+  },
+  "communityLinks": {
+    "1": {
+      "3": 2
+    },
+    "3": {
+      "1": 1,
+      "4": 2
+    },
+    "7": {
+      "4": 1,
+      "0": 1
+    },
+    "4": {
+      "11": 1,
+      "2": 1
+    },
+    "10": {
+      "5": 1
+    },
+    "5": {
+      "0": 9,
+      "3": 4,
+      "2": 3,
+      "4": 5,
+      "11": 2,
+      "6": 1
+    },
+    "0": {
+      "3": 5,
+      "4": 5,
+      "6": 1,
+      "2": 4
+    },
+    "2": {
+      "4": 2,
+      "0": 7,
+      "3": 1,
+      "5": 2
+    },
+    "11": {
+      "0": 2,
+      "4": 1
+    },
+    "6": {
+      "2": 1
+    },
+    "12": {
+      "2": 1
+    },
+    "14": {
+      "0": 1
+    },
+    "13": {
+      "0": 2
+    }
+  }
+}

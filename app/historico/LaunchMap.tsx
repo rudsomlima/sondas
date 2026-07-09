@@ -440,7 +440,7 @@ export default function LaunchMap({ launch, onClose, onResult, station = DEFAULT
         </button>
       </div>
 
-      <div className="relative h-[420px] bg-bg">
+      <div className="relative h-[280px] sm:h-[340px] lg:h-[420px] bg-bg">
         <div ref={mapDivRef} className="absolute inset-0" />
 
         {!status && !error && (

@@ -124,7 +124,7 @@ export default function YearMap({ year, station, monthsWithData, onClose }: Year
         </button>
       </div>
 
-      <div className="relative h-[420px] bg-bg">
+      <div className="relative h-[280px] sm:h-[340px] lg:h-[420px] bg-bg">
         <div ref={mapDivRef} className="absolute inset-0" />
 
         {!status && !error && (

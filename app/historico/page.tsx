@@ -110,14 +110,14 @@ export default function HistoricoPage() {
             <button
               onClick={() => fetchData(year)}
               disabled={syncing}
-              className="flex items-center gap-2 px-3 py-2 bg-surface border border-border rounded-md text-sm text-gray-400 hover:text-white hover:border-border-strong transition-all"
+              className="flex items-center gap-2 px-3 py-2.5 bg-surface border border-border rounded-md text-sm text-gray-400 hover:text-white hover:border-border-strong transition-all"
               title="Atualizar"
             >
               <RefreshCw size={14} className={syncing ? 'animate-spin' : ''} />
             </button>
             <Link
               href="/configuracoes#dados"
-              className="flex items-center gap-2 px-3 py-2 bg-surface border border-border rounded-md text-sm text-gray-400 hover:text-white hover:border-border-strong transition-all"
+              className="flex items-center gap-2 px-3 py-2.5 bg-surface border border-border rounded-md text-sm text-gray-400 hover:text-white hover:border-border-strong transition-all"
               title="Dados & Armazenamento"
             >
               <HardDrive size={14} />
