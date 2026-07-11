@@ -128,8 +128,8 @@ export default function ReceiverPanel({
             <div className="flex items-center gap-3 mb-3 text-[10px] text-dim mono">
               {uptimeMs != null && <span>ligado há {formatUptime(uptimeMs)}</span>}
               {ttgoBattV != null && (
-                <span className={`flex items-center gap-1 ${ttgoBattV < 3.4 ? 'text-amber-400' : ''}`}>
-                  <BatteryMedium size={11} /> {ttgoBattV.toFixed(2)} V
+                <span className="flex items-center gap-1 text-red-400 font-semibold text-sm">
+                  <BatteryMedium size={15} /> {ttgoBattV.toFixed(2)} V
                 </span>
               )}
             </div>
