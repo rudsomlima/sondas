@@ -3,7 +3,8 @@ import { readYearStore, writeYearStore } from '@/app/lib/blobStore'
 import { findStation, Station } from '@/app/lib/stations'
 import { fetchRadiosondyLaunches } from '@/app/lib/radiosondy'
 import { fetchSondeHubApproxLaunches, fetchSondeHubArchiveLaunches } from '@/app/lib/sondehub'
-import { GMT3, nowGMT3, Launch, YearStore } from '@/app/lib/types'
+import { nowGMT3, Launch, YearStore } from '@/app/lib/types'
+import { gmt3DateWithMonthGuard } from '@/app/lib/launchUtils'
 
 const DEFAULT_STATION_ID = '82599'
 const WYOMING_BASE = 'https://weather.uwyo.edu/wsgi/sounding'
@@ -131,12 +132,7 @@ function parseSingleSounding(html: string): Launch | null {
   if (!monNum || hourUtc < 0 || hourUtc > 23 || day < 1 || day > 31) return null
 
   const utcMs = Date.UTC(yr, monNum - 1, day, hourUtc, 0, 0)
-  let localDate = new Date(utcMs + GMT3)
-  // Mesmo boundary guard do parseLaunches original: mantém data UTC quando
-  // o ajuste de -3h cruzaria fronteira de mês/ano.
-  if (localDate.getUTCFullYear() !== yr || localDate.getUTCMonth() + 1 !== monNum) {
-    localDate = new Date(utcMs)
-  }
+  const localDate = gmt3DateWithMonthGuard(utcMs)
 
   const pad = (n: number) => n.toString().padStart(2, '0')
   const launch: Launch = {
@@ -150,35 +146,57 @@ function parseSingleSounding(html: string): Launch | null {
   return validateLaunch(launch) ? launch : null
 }
 
-async function fetchSingleSounding(station: string, datetime: string): Promise<Launch | null> {
-  const cacheKey = `sounding_${station}_${datetime}`
+// Verifica se a sondagem individual (type=TEXT:LIST) de um datetime já listado
+// no inventário (type=INVENTORY) realmente retorna dados. Os dois endpoints da
+// Wyoming podem divergir de forma não-determinística no lado do servidor deles
+// (confirmado: inventário lista um datetime, mas TEXT:LIST responde 400
+// "Unable to retrieve the data" para o mesmo id/datetime).
+// Retorna true (dados ok) / false (confirmado ausente, HTTP 400) / null
+// (falha de rede/timeout — estado desconhecido, não cacheia, tenta de novo na
+// próxima sync). Só é chamado para launches novos dentro de syncMonth, nunca
+// no caminho "today" (que não persiste e é chamado a cada poll).
+async function checkWyomingDataAvailable(station: string, datetime: string): Promise<boolean | null> {
+  const cacheKey = `avail_${station}_${datetime}`
   const cached = memoryCache.get(cacheKey)
   if (cached) return cached.data
 
   const url = `${WYOMING_BASE}?datetime=${datetime.replace(' ', '%20')}&id=${station}&src=${WYOMING_SRC}&type=TEXT:LIST`
 
-  const RETRIES = 3
+  const RETRIES = 2
   for (let attempt = 0; attempt < RETRIES; attempt++) {
     try {
       const res = await fetch(url, {
         signal: AbortSignal.timeout(TIMEOUT),
         headers: { 'User-Agent': 'Mozilla/5.0 (compatible; SondasNatal/1.0)', 'Accept': 'text/html,application/xhtml+xml' },
       })
-      // 400 = slot sem dados (determinístico) — não faz retry, cacheia null
       if (res.status === 400) {
-        memoryCache.set(cacheKey, { data: null, timestamp: Date.now() })
-        return null
+        memoryCache.set(cacheKey, { data: false, timestamp: Date.now() })
+        return false
       }
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const html = await res.text()
-      const launch = parseSingleSounding(html)
-      memoryCache.set(cacheKey, { data: launch, timestamp: Date.now() })
-      return launch
-    } catch (e: any) {
-      if (attempt < RETRIES - 1) await new Promise(r => setTimeout(r, 1000 * (attempt + 1)))
+      const ok = parseSingleSounding(html) !== null
+      memoryCache.set(cacheKey, { data: ok, timestamp: Date.now() })
+      return ok
+    } catch {
+      if (attempt < RETRIES - 1) await new Promise(r => setTimeout(r, 500))
     }
   }
   return null
+}
+
+// Roda `fn` sobre `items` com no máximo `limit` chamadas concorrentes — evita
+// disparar dezenas de requisições simultâneas contra a Wyoming numa sync
+// inicial grande (backfill de um mês/ano inteiro).
+async function mapWithConcurrency<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
+  let idx = 0
+  async function worker() {
+    while (idx < items.length) {
+      const i = idx++
+      await fn(items[i])
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
 }
 
 // Converte um datetime do inventário ("YYYY-MM-DD HH:MM:SS") diretamente em
@@ -190,11 +208,7 @@ function inventoryDtToLaunch(dt: string): Launch | null {
   if (!m) return null
   const yr = parseInt(m[1]), monNum = parseInt(m[2]), dayUtc = parseInt(m[3]), hourUtc = parseInt(m[4])
   const utcMs = Date.UTC(yr, monNum - 1, dayUtc, hourUtc, 0, 0)
-  let localDate = new Date(utcMs + GMT3)
-  // Mesmo boundary guard do parseSingleSounding: mantém data UTC quando GMT-3 cruza fronteira de mês.
-  if (localDate.getUTCFullYear() !== yr || localDate.getUTCMonth() + 1 !== monNum) {
-    localDate = new Date(utcMs)
-  }
+  const localDate = gmt3DateWithMonthGuard(utcMs)
   const pad = (n: number) => n.toString().padStart(2, '0')
   const launch: Launch = {
     date: `${localDate.getUTCFullYear()}-${pad(localDate.getUTCMonth() + 1)}-${pad(localDate.getUTCDate())}`,
@@ -210,9 +224,12 @@ function inventoryDtToLaunch(dt: string): Launch | null {
 // Busca todas as sondagens Wyoming de um mês que ainda não estão em cache.
 // Usa apenas o inventário anual (1 request/ano, cacheado) — sem buscar cada
 // sondagem individualmente, o que tornava o carregamento muito lento.
-async function fetchWyomingMonth(
+// Retorna também o datetime de inventário original de cada launch (usado por
+// syncMonth para verificar disponibilidade real via checkWyomingDataAvailable
+// sem precisar reconstruir a string a partir dos campos já convertidos).
+async function fetchWyomingMonthPairs(
   station: string, year: number, month: number, existingKeys: Set<string>
-): Promise<Launch[]> {
+): Promise<{ dt: string; launch: Launch }[]> {
   const allDatetimes = await fetchInventory(station, year)
   const monthStr = String(month).padStart(2, '0')
   const missing = allDatetimes
@@ -221,7 +238,16 @@ async function fetchWyomingMonth(
 
   if (missing.length === 0) return []
 
-  return missing.map(inventoryDtToLaunch).filter((l): l is Launch => l !== null)
+  return missing
+    .map(dt => ({ dt, launch: inventoryDtToLaunch(dt) }))
+    .filter((p): p is { dt: string; launch: Launch } => p.launch !== null)
+}
+
+async function fetchWyomingMonth(
+  station: string, year: number, month: number, existingKeys: Set<string>
+): Promise<Launch[]> {
+  const pairs = await fetchWyomingMonthPairs(station, year, month, existingKeys)
+  return pairs.map(p => p.launch)
 }
 
 function validateLaunch(launch: Launch): boolean {
@@ -364,8 +390,19 @@ async function syncMonth(
 
   try {
     const existingKeys = new Set(existingWyoming.map(launchToInventoryKey))
-    const fresh = await fetchWyomingMonth(station, year, month, existingKeys)
+    const freshPairs = await fetchWyomingMonthPairs(station, year, month, existingKeys)
     wyomingOk = true
+
+    // Verifica, só para os launches novos desta sync (o backlog já sincronizado
+    // não é reverificado), se a sondagem individual realmente existe — o
+    // inventário e o TEXT:LIST da Wyoming podem divergir (ver
+    // checkWyomingDataAvailable). Concorrência limitada para não disparar
+    // dezenas de requisições de uma vez num backfill grande.
+    await mapWithConcurrency(freshPairs, 4, async ({ dt, launch }) => {
+      const ok = await checkWyomingDataAvailable(station, dt)
+      if (ok !== null) launch.wyomingDataOk = ok
+    })
+    const fresh = freshPairs.map(p => p.launch)
 
     const seenWyoming = new Set(existingWyoming.map(l => `${l.date}_${l.time_utc}`))
     const mergedWyoming = existingWyoming.concat(fresh.filter(l => !seenWyoming.has(`${l.date}_${l.time_utc}`)))

@@ -55,6 +55,13 @@ export interface Launch {
   // aproximado. Ausente = Wyoming (padrão).
   source?: SourceId
   approx?: boolean
+  // Wyoming listou este datetime no inventário, mas a sondagem individual
+  // (type=TEXT:LIST) não retornou dados ao ser verificada (ver
+  // checkWyomingDataAvailable em app/api/sounding/route.ts). true = dados
+  // confirmados; false = inventário e dados divergem (flakiness do servidor
+  // da Wyoming); ausente = ainda não verificado (launches persistidos antes
+  // desta checagem existir, ou verificação falhou por erro de rede/timeout).
+  wyomingDataOk?: boolean
   // Novos campos opcionais (reformulação mission control):
   sources?: LaunchSources
   flightStats?: FlightStats

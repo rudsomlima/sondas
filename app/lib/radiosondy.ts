@@ -5,6 +5,8 @@
  * é feita direto do navegador (sem precisar de proxy no nosso servidor).
  */
 import { STATUS_COLORS } from './tokens'
+import { gmt3DateStr, gmt3DateWithMonthGuard, isDaytimeHour } from './launchUtils'
+import { GMT3 } from './types'
 
 export interface RadiosondyFeature {
   date: Date
@@ -85,14 +87,6 @@ export function matchesStartplace(pos: LiveSondePosition, startplace: string): b
 // centro era fixo em Natal/RN, errado para qualquer outra estação/sonde.
 export function sondeHubUrl(sondeNumber: string, lat: number, lon: number, mz = 10): string {
   return `https://sondehub.org/?sondehub=1#!mt=Mapnik&mz=${mz}&qm=12h&mc=${lat},${lon}&f=${sondeNumber}&q=${sondeNumber}`
-}
-
-const GMT3 = -3 * 60 * 60 * 1000
-
-function gmt3DateStr(date: Date): string {
-  const local = new Date(date.getTime() + GMT3)
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${local.getUTCFullYear()}-${pad(local.getUTCMonth() + 1)}-${pad(local.getUTCDate())}`
 }
 
 export interface TodayFlight {
@@ -222,7 +216,6 @@ export interface ApproxLaunch {
 // sem cobertura na Wyoming (ver Station.wyomingSupported em app/lib/stations.ts).
 export async function fetchRadiosondyLaunches(year: number, month: number, startplace: string): Promise<ApproxLaunch[]> {
   const features = await fetchRadiosondyFeatures(year, month, startplace)
-  const GMT3_MS = -3 * 60 * 60 * 1000
   const pad = (n: number) => String(n).padStart(2, '0')
 
   const byRoundedUtc = new Map<number, RadiosondyFeature>()
@@ -236,13 +229,11 @@ export async function fetchRadiosondyLaunches(year: number, month: number, start
     const utcDate = new Date(utcMs)
     if (utcDate.getUTCFullYear() !== year || utcDate.getUTCMonth() + 1 !== month) continue
 
-    // Mesmo cuidado de fronteira de mês usado em app/api/sounding/route.ts
-    // (parseLaunches): o ajuste de -3h pode empurrar a data pro mês anterior.
-    // Quando isso acontece, mantém a data original em UTC em vez da local.
-    let localDate = new Date(utcMs + GMT3_MS)
-    if (localDate.getUTCFullYear() !== year || localDate.getUTCMonth() + 1 !== month) {
-      localDate = utcDate
-    }
+    // Mesmo cuidado de fronteira de mês usado em app/api/sounding/route.ts e
+    // app/lib/sondehub.ts (ver gmt3DateWithMonthGuard): o ajuste de -3h pode
+    // empurrar a data pro mês anterior. Quando isso acontece, mantém a data
+    // original em UTC em vez da local.
+    const localDate = gmt3DateWithMonthGuard(utcMs)
     out.push({
       date: `${localDate.getUTCFullYear()}-${pad(localDate.getUTCMonth() + 1)}-${pad(localDate.getUTCDate())}`,
       time_local: `${pad(localDate.getUTCHours())}:${pad(localDate.getUTCMinutes())}`,
@@ -384,7 +375,7 @@ export interface IconLabel {
 // (mesmo critério já usado nos badges: 06h–18h local = dia).
 export function gmt3IconLabel(date: Date): IconLabel {
   const local = new Date(date.getTime() + GMT3)
-  return { day: local.getUTCDate(), daytime: local.getUTCHours() >= 6 && local.getUTCHours() < 18 }
+  return { day: local.getUTCDate(), daytime: isDaytimeHour(local.getUTCHours()) }
 }
 
 // Mesma conversão de gmt3IconLabel, mas incluindo o mês — usado no mapa do
@@ -395,7 +386,7 @@ export function gmt3IconLabelWithMonth(date: Date): IconLabel {
   return {
     day: local.getUTCDate(),
     month: local.getUTCMonth() + 1,
-    daytime: local.getUTCHours() >= 6 && local.getUTCHours() < 18,
+    daytime: isDaytimeHour(local.getUTCHours()),
   }
 }
 

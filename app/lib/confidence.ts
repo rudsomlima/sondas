@@ -5,7 +5,7 @@
  */
 import type { Launch } from './types'
 
-export type SourceState = 'confirmed' | 'absent' | 'pending'
+export type SourceState = 'confirmed' | 'absent' | 'pending' | 'error'
 
 export interface LaunchConfidence {
   wyoming: SourceState
@@ -27,7 +27,15 @@ export function computeConfidence(l: Launch, wyomingSupported = true): LaunchCon
   if (l.sources?.wyoming !== undefined) {
     wyoming = l.sources.wyoming ? 'confirmed' : (isRecent && wyomingSupported ? 'pending' : 'absent')
   } else if (!l.source) {
-    wyoming = 'confirmed'
+    // Listado no inventário da Wyoming, mas a sondagem individual (TEXT:LIST)
+    // confirmadamente não retorna dados — inconsistência do lado do servidor
+    // deles (ver checkWyomingDataAvailable em app/api/sounding/route.ts).
+    if (l.wyomingDataOk === false) {
+      wyoming = 'error'
+      notes.push('Wyoming listou este horário no inventário, mas a sondagem individual não está disponível.')
+    } else {
+      wyoming = 'confirmed'
+    }
   } else if (wyomingSupported && isRecent) {
     wyoming = 'pending'
     notes.push('Wyoming ainda não publicou este lançamento (atraso normal).')

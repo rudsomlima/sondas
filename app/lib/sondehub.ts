@@ -16,6 +16,7 @@
  */
 import { TodayFlight, toReportStr, roundToSynopticHour } from './radiosondy'
 import { haversineKm } from './geo'
+import { gmt3DateStr, gmt3DateWithMonthGuard } from './launchUtils'
 
 export interface SondeHubFrame {
   lat: number
@@ -28,13 +29,6 @@ export interface SondeHubFrame {
 // Sonda ainda transmitindo recentemente = ainda em voo, mesmo critério
 // conceitual usado pro feed ao vivo do radiosondy.info (presença = em voo).
 const LIVE_STALE_MS = 10 * 60 * 1000
-
-const GMT3 = -3 * 60 * 60 * 1000
-function gmt3DateStr(date: Date): string {
-  const local = new Date(date.getTime() + GMT3)
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${local.getUTCFullYear()}-${pad(local.getUTCMonth() + 1)}-${pad(local.getUTCDate())}`
-}
 
 // Busca a telemetria das últimas 12h de toda sonda ativa no mundo e devolve
 // só as de hoje (GMT-3) que estiverem a até `radiusKm` da estação dada —
@@ -105,10 +99,7 @@ export interface SondeHubApproxLaunch {
 function toApproxLaunch(utcMs: number, position?: LaunchPosition): SondeHubApproxLaunch {
   const pad = (n: number) => String(n).padStart(2, '0')
   const utcDate = new Date(utcMs)
-  let localDate = new Date(utcMs + GMT3)
-  if (localDate.getUTCFullYear() !== utcDate.getUTCFullYear() || localDate.getUTCMonth() !== utcDate.getUTCMonth()) {
-    localDate = utcDate
-  }
+  const localDate = gmt3DateWithMonthGuard(utcMs)
   return {
     date: `${localDate.getUTCFullYear()}-${pad(localDate.getUTCMonth() + 1)}-${pad(localDate.getUTCDate())}`,
     time_local: `${pad(localDate.getUTCHours())}:${pad(localDate.getUTCMinutes())}`,

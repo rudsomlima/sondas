@@ -185,7 +185,7 @@ export default function MonthAccordion({
                                     }}
                                     title={title}
                                     className={`mono font-semibold flex items-center gap-1 hover:underline ${
-                                      noMatch ? 'text-gray-400' : isDaytime(l.time_local) ? 'text-amber-400' : 'text-indigo-400'
+                                      isDaytime(l.time_local) ? 'text-amber-400' : 'text-indigo-400'
                                     }`}
                                   >
                                     {isDaytime(l.time_local) ? <Sun size={10} /> : <Moon size={10} />}

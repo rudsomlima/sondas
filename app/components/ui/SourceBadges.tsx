@@ -9,7 +9,10 @@ const SOURCES: { key: keyof Pick<LaunchConfidence, 'wyoming' | 'radiosondy' | 's
 ]
 
 function stateLabel(s: SourceState): string {
-  return s === 'confirmed' ? 'confirmado' : s === 'pending' ? 'aguardando' : 'sem registro'
+  return s === 'confirmed' ? 'confirmado'
+    : s === 'pending' ? 'aguardando'
+    : s === 'error' ? 'listado, mas indisponível'
+    : 'sem registro'
 }
 
 interface SourceBadgesProps {
@@ -31,6 +34,7 @@ export default function SourceBadges({ confidence, size = 'sm' }: SourceBadgesPr
         const cls =
           state === 'confirmed' ? `${colorClass} ${borderClass} bg-white/5`
           : state === 'pending' ? `${colorClass} ${borderClass} opacity-60 pulse-soft`
+          : state === 'error' ? 'text-red-400 border-red-500/50 bg-red-500/10'
           : 'text-gray-600 border-gray-700 line-through'
         return (
           <span key={key} className={`${base} ${cls}`} title={`${name}: ${stateLabel(state)}`}>

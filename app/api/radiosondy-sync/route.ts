@@ -6,7 +6,7 @@ import {
 } from '@/app/lib/radiosondy'
 import { fetchSondeHubArchiveFramesForDay } from '@/app/lib/sondehub'
 import { SOUTH_AMERICA_STATIONS } from '@/app/lib/stations'
-import { nowGMT3 } from '@/app/lib/types'
+import { nowGMT3, SyncStationStatus } from '@/app/lib/types'
 import { analyzeTrajectory, pointsFromFrames } from '@/app/lib/trajectory'
 
 export const maxDuration = 60
@@ -49,7 +49,7 @@ export async function GET() {
     return liveFlightsCache
   }
 
-  const summary: Record<string, { checked: number; yes: number; no: number; pending: number }> = {}
+  const summary: Record<string, SyncStationStatus> = {}
 
   for (const station of stations) {
     const startplace = station.radiosondyStartplace!
@@ -102,7 +102,7 @@ export async function GET() {
           // resolveu, então o sondehub.org nunca chega a ser consultado — sem
           // isso, computeConfidence() tratava "nunca checado" como "pendente"
           // (badge piscando pra sempre, mesmo já tudo resolvido).
-          l.sources = { wyoming: !l.source, radiosondy: true, sondehub: false }
+          l.sources = { ...l.sources, wyoming: !l.source, radiosondy: true, sondehub: false }
           changed = true
           checked++
           yes++
@@ -115,7 +115,7 @@ export async function GET() {
             l.radiosondyMatch = 'yes'
             l.position = { lat: live.lat, lon: live.lon, sondeNumber: live.sondeNumber, status: 'UNKNOWN',
               altitude: live.altitude || undefined, course: live.course || undefined }
-            l.sources = { wyoming: !l.source, radiosondy: true, sondehub: false }
+            l.sources = { ...l.sources, wyoming: !l.source, radiosondy: true, sondehub: false }
             changed = true
             checked++
             yes++
@@ -159,7 +159,7 @@ export async function GET() {
         if (sonde) {
           l.radiosondyMatch = 'yes'
           l.position = { lat: sonde.lat, lon: sonde.lon, sondeNumber: sonde.serial, status: 'UNKNOWN' }
-          l.sources = { wyoming: !l.source, radiosondy: false, sondehub: true }
+          l.sources = { ...l.sources, wyoming: !l.source, radiosondy: false, sondehub: true }
         } else {
           // Se Wyoming já confirmou este lançamento: ambas as fontes (radiosondy.info
           // e sondehub.org) já foram tentadas nesta execução — não achou nada em nenhuma,
@@ -171,12 +171,12 @@ export async function GET() {
           const wyomingConfirmed = !l.source
           if (wyomingConfirmed) {
             l.radiosondyMatch = 'no'
-            l.sources = { wyoming: true, radiosondy: false, sondehub: false }
+            l.sources = { ...l.sources, wyoming: true, radiosondy: false, sondehub: false }
           } else {
             const ageMs = Date.now() - instant.getTime()
             if (ageMs > 7 * 24 * 60 * 60 * 1000) {
               l.radiosondyMatch = 'no'
-              l.sources = { wyoming: !l.source, radiosondy: false, sondehub: false }
+              l.sources = { ...l.sources, wyoming: !l.source, radiosondy: false, sondehub: false }
             }
             // else: deixa tudo undefined → cron re-checa no próximo run
           }

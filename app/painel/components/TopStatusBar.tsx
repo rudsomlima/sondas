@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { Radio, Clock } from 'lucide-react'
 import type { Station } from '@/app/lib/stations'
 import type { TodayFlight } from '@/app/lib/radiosondy'
+import { GMT3 } from '@/app/lib/types'
 import type { TodayData } from '@/app/lib/types'
 
 interface TopStatusBarProps {
@@ -42,7 +43,7 @@ export default function TopStatusBar({
 
   const pad = (n: number) => String(n).padStart(2, '0')
   const utcStr = `${pad(now.getUTCHours())}:${pad(now.getUTCMinutes())}:${pad(now.getUTCSeconds())}`
-  const gmt3 = new Date(now.getTime() - 3 * 60 * 60 * 1000)
+  const gmt3 = new Date(now.getTime() + GMT3)
   const gmt3Str = `${pad(gmt3.getUTCHours())}:${pad(gmt3.getUTCMinutes())}:${pad(gmt3.getUTCSeconds())}`
   const cycle = nextSynopticCycle(now)
 
