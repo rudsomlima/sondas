@@ -28,7 +28,7 @@ export interface SondeHubFrame {
 
 // Sonda ainda transmitindo recentemente = ainda em voo, mesmo critério
 // conceitual usado pro feed ao vivo do radiosondy.info (presença = em voo).
-const LIVE_STALE_MS = 10 * 60 * 1000
+export const LIVE_STALE_MS = 10 * 60 * 1000
 
 // Busca a telemetria das últimas 12h de toda sonda ativa no mundo e devolve
 // só as de hoje (GMT-3) que estiverem a até `radiusKm` da estação dada —
@@ -68,6 +68,121 @@ export async function fetchSondeHubFlights(
   }
 
   return out
+}
+
+/**
+ * "Meu receptor": telemetria filtrada pelo uploader_callsign de um receptor
+ * do próprio usuário (rdzTTGOsonde/auto_rx) que já sobe frames pro SondeHub.
+ *
+ * Usa `GET /sondes?lat=&lon=&distance=&last=` — devolve o ÚLTIMO frame de
+ * cada sonda ativa num raio (payload de poucos KB, com filtro geográfico
+ * server-side, ao contrário do /sondes/telemetry global usado acima). Schema
+ * verificado em produção (2026-07): objeto `{serial: frame}` plano, e o frame
+ * traz `uploader_callsign`/`rssi`/`snr`/`frequency`/`software_name` do
+ * ÚLTIMO uploader apenas — quando várias estações recebem a mesma sonda, o
+ * callsign "pisca" entre polls. Por isso o consumidor (useReceiverStatus)
+ * mantém memória sticky por sessão dos serials já vistos com o callsign do
+ * usuário, em vez de confiar num único poll.
+ *
+ * Upgrade futuro se um dia precisarmos de latência ~1s: assinar só
+ * `sondes/{serial}` no feed MQTT-over-WebSocket público
+ * (wss://ws-reader.v2.sondehub.org/) DEPOIS que este polling descobrir o
+ * serial — nunca o tópico global, que é a telemetria do mundo inteiro.
+ */
+export interface NearbySonde {
+  serial: string
+  lat: number
+  lon: number
+  alt: number
+  vel_v: number
+  datetime: string // ISO UTC do frame
+  frequency?: number // MHz
+  type?: string // RS41, DFM, M20...
+  uploaderCallsign?: string
+  // rssi/snr nem sempre vêm (dependem do software e do tipo de sonda).
+  rssi?: number
+  snr?: number
+  softwareName?: string
+  battV?: number // bateria DA SONDA (volts), quando o frame traz
+}
+
+interface NearbySondeApiFrame {
+  lat?: number
+  lon?: number
+  alt?: number
+  vel_v?: number
+  datetime?: string
+  frequency?: number
+  type?: string
+  uploader_callsign?: string
+  rssi?: number
+  snr?: number
+  software_name?: string
+  batt?: number
+}
+
+export async function fetchNearbySondes(
+  lat: number, lon: number, radiusKm: number, lastSeconds = 3 * 3600
+): Promise<NearbySonde[]> {
+  const url = `https://api.v2.sondehub.org/sondes?lat=${lat}&lon=${lon}` +
+    `&distance=${Math.round(radiusKm * 1000)}&last=${lastSeconds}`
+  const res = await fetch(url, { cache: 'no-store' })
+  if (!res.ok) throw new Error(`Erro ${res.status} ao consultar sondehub.org`)
+  const data: Record<string, NearbySondeApiFrame> = await res.json()
+
+  const out: NearbySonde[] = []
+  for (const [serial, f] of Object.entries(data)) {
+    if (!f || typeof f.lat !== 'number' || typeof f.lon !== 'number' || !f.datetime) continue
+    out.push({
+      serial,
+      lat: f.lat,
+      lon: f.lon,
+      alt: f.alt ?? 0,
+      vel_v: f.vel_v ?? 0,
+      datetime: f.datetime,
+      frequency: typeof f.frequency === 'number' ? f.frequency : undefined,
+      type: f.type,
+      uploaderCallsign: f.uploader_callsign,
+      rssi: typeof f.rssi === 'number' ? f.rssi : undefined,
+      snr: typeof f.snr === 'number' ? f.snr : undefined,
+      softwareName: f.software_name,
+      battV: typeof f.batt === 'number' ? f.batt : undefined,
+    })
+  }
+  return out
+}
+
+// Compara callsigns tolerando espaços e caixa — o firmware grava livre.
+export function sameCallsign(a: string | undefined, b: string): boolean {
+  return (a ?? '').trim().toUpperCase() === b.trim().toUpperCase()
+}
+
+// Sondas cujo último frame veio do callsign dado. Helper puro; ver nota acima
+// sobre o "pisca" quando há mais de um uploader — o chamador deve combinar
+// isto com memória sticky, não usar o resultado de um poll isolado.
+export function filterByUploader(sondes: NearbySonde[], callsign: string): NearbySonde[] {
+  if (!callsign.trim()) return []
+  return sondes.filter(s => sameCallsign(s.uploaderCallsign, callsign))
+}
+
+export interface ReceiverStatus {
+  online: boolean
+  lastHeardUtc: string | null // datetime do frame mais recente do callsign
+}
+
+// "Online" = algum frame do callsign nos últimos 30 min. Importante: o
+// receptor só sobe frames quando há sonda decodificável no ar — "offline"
+// aqui costuma significar apenas "sem sonda agora", não receptor desligado.
+const RECEIVER_ONLINE_MS = 30 * 60 * 1000
+
+export function deriveReceiverStatus(mySondes: NearbySonde[], now = Date.now()): ReceiverStatus {
+  let lastMs = -Infinity
+  let lastHeardUtc: string | null = null
+  for (const s of mySondes) {
+    const t = new Date(s.datetime).getTime()
+    if (!isNaN(t) && t > lastMs) { lastMs = t; lastHeardUtc = s.datetime }
+  }
+  return { online: now - lastMs < RECEIVER_ONLINE_MS, lastHeardUtc }
 }
 
 export interface LaunchPosition {

@@ -7,9 +7,13 @@ import { useGeolocation } from '@/app/lib/chase'
 import type { Launch } from '@/app/lib/types'
 import { useTodayData } from '../historico/hooks/useTodayData'
 import { useLiveFlights } from '../historico/hooks/useLiveFlights'
+import { useReceiver } from './hooks/useReceiver'
+import { useReceiverAlerts } from './hooks/useReceiverAlerts'
+import { getSettings } from '@/app/lib/settings'
 import StationPicker from '../historico/components/StationPicker'
 import TopStatusBar from './components/TopStatusBar'
 import LivePanel from './components/LivePanel'
+import ReceiverPanel from './components/ReceiverPanel'
 import MissionMap from './components/MissionMap'
 import TelemetryPanel from './components/TelemetryPanel'
 import ConfidencePanel from './components/ConfidencePanel'
@@ -26,9 +30,20 @@ export default function PainelPage() {
     setStation(getSelectedStation())
   }, [])
 
+  const [callsign, setCallsign] = useState('')
+  useEffect(() => { setCallsign(getSettings().uploaderCallsign) }, [])
+
   const { todayData, todayLoading, lastFetchAt } = useTodayData(station)
   const { todayFlights, liveFlightChecked } = useLiveFlights(station, todayData?.today)
+  const receiver = useReceiver()
+  useReceiverAlerts(receiver.mySondes, receiver.checked, setSelected)
   const geo = useGeolocation()
+
+  // Serials sendo recebidos pelo receptor local — badge "RX local" no LivePanel.
+  const mySerials = useMemo(
+    () => new Set(receiver.mySondes.map(m => m.serial)),
+    [receiver.mySondes]
+  )
 
   // Lançamentos do mês corrente: pinta do localStorage e sincroniza com a API.
   useEffect(() => {
@@ -92,13 +107,31 @@ export default function PainelPage() {
 
       {/* Grid mission control: 3-6-3 no desktop; coluna única no mobile */}
       <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-4 min-h-0">
-        <div className="lg:col-span-3 lg:overflow-y-auto min-h-0 order-2 lg:order-1">
+        <div className="lg:col-span-3 lg:overflow-y-auto min-h-0 order-2 lg:order-1 space-y-4">
+          <ReceiverPanel
+            status={receiver.status}
+            mySondes={receiver.mySondes}
+            checked={receiver.checked}
+            enabled={receiver.enabled}
+            callsign={callsign}
+            source={receiver.source}
+            mqttConfigured={receiver.mqttConfigured}
+            mqttConnected={receiver.mqttConnected}
+            uptimeMs={receiver.uptimeMs}
+            ttgoBattV={receiver.ttgoBattV}
+            sleeping={receiver.sleeping}
+            receiverIp={receiver.receiverIp}
+            mqttLastMessageAt={receiver.mqttLastMessageAt}
+            selected={selected}
+            onSelect={setSelected}
+          />
           <LivePanel
             todayFlights={todayFlights}
             liveFlightChecked={liveFlightChecked}
             recentLaunches={recentLaunches}
             selected={selected}
             onSelect={setSelected}
+            mySerials={mySerials}
           />
         </div>
 
@@ -109,6 +142,7 @@ export default function PainelPage() {
             todayFlights={todayFlights}
             selected={selected}
             chasePos={geo.pos ? { lat: geo.pos.lat, lon: geo.pos.lon } : null}
+            receiverPos={receiver.rxPosition}
           />
         </div>
 

@@ -42,6 +42,30 @@ export default function TelemetryPanel({ selected }: { selected: SelectedTarget 
               {selected.isLive ? 'EM VOO' : selected.launch?.position?.status ?? 'POUSADA'}
             </span>
           </div>
+          {selected.frequency !== undefined && (
+            <div className="flex justify-between gap-2">
+              <span className="label-xs">Frequência</span>
+              <span className="mono text-sky-300">{selected.frequency.toFixed(2)} MHz</span>
+            </div>
+          )}
+          {selected.snr !== undefined && (
+            <div className="flex justify-between gap-2">
+              <span className="label-xs">SNR (meu RX)</span>
+              <span className="mono text-emerald-400">{selected.snr.toFixed(1)} dB</span>
+            </div>
+          )}
+          {selected.rssi !== undefined && (
+            <div className="flex justify-between gap-2">
+              <span className="label-xs">RSSI (meu RX)</span>
+              <span className="mono text-violet-300">{selected.rssi.toFixed(0)} dBm</span>
+            </div>
+          )}
+          {selected.battV !== undefined && (
+            <div className="flex justify-between gap-2">
+              <span className="label-xs">Bateria da sonda</span>
+              <span className="mono text-white">{selected.battV.toFixed(1)} V</span>
+            </div>
+          )}
           {selected.lastReportUtc && (
             <div className="flex justify-between gap-2">
               <span className="label-xs">Último report</span>

@@ -8,6 +8,7 @@ import {
   LIVE_COLOR, LEGEND_ITEMS,
 } from '@/app/lib/radiosondy'
 import { createBaseMap } from '@/app/lib/leafletBase'
+import { SOURCE_COLORS } from '@/app/lib/tokens'
 import { fetchLiveTrajectory, fetchArchiveTrajectory, analyzeTrajectory } from '@/app/lib/trajectory'
 import { drawTrajectory } from '@/app/components/TrajectoryLayer'
 import type { Station } from '@/app/lib/stations'
@@ -17,23 +18,43 @@ import type { SelectedTarget } from '../selection'
 
 const BALLOON_SIZE = 15
 
+// Ícone de antena (mesmos paths do lucide-react "Antenna", viewBox 24x24)
+// para o marcador do "meu receptor" no mapa — círculo colorido de fundo +
+// glifo branco, mesmo tratamento visual (sombra) dos ícones de balão.
+function antennaIconMarkup(color: string, sizePx: number): string {
+  return `
+    <div style="
+      width:${sizePx}px;height:${sizePx}px;border-radius:50%;background:${color};
+      display:flex;align-items:center;justify-content:center;
+      box-shadow:0 1px 3px rgba(0,0,0,0.6);border:1px solid black;
+    ">
+      <svg width="${Math.round(sizePx * 0.62)}" height="${Math.round(sizePx * 0.62)}" viewBox="0 0 24 24"
+        fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M2 12 7 2"/><path d="m7 12 5-10"/><path d="m12 12 5-10"/><path d="m17 12 5-10"/>
+        <path d="M4.5 7h15"/><path d="M12 16v6"/>
+      </svg>
+    </div>`
+}
+
 interface MissionMapProps {
   station: Station
   monthLaunches: Launch[] // lançamentos do mês corrente (pousos como contexto)
   todayFlights: TodayFlight[]
   selected: SelectedTarget | null
   chasePos: { lat: number; lon: number } | null
+  receiverPos?: { lat: number; lon: number } | null // posição do "meu receptor" (rxlat/rxlon via MQTT)
 }
 
 // Mapa central do mission control: pousos do mês + sondas de hoje +
 // trajetória do voo selecionado + posição do caçador.
-export default function MissionMap({ station, monthLaunches, todayFlights, selected, chasePos }: MissionMapProps) {
+export default function MissionMap({ station, monthLaunches, todayFlights, selected, chasePos, receiverPos }: MissionMapProps) {
   const mapDivRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<any>(null)
   const leafletRef = useRef<any>(null)
   const markersLayerRef = useRef<any>(null)
   const trajectoryLayerRef = useRef<any>(null)
   const chaseLayerRef = useRef<any>(null)
+  const receiverLayerRef = useRef<any>(null)
   const [trajNote, setTrajNote] = useState<string | null>(null)
 
   // Inicialização única do Leaflet.
@@ -49,6 +70,7 @@ export default function MissionMap({ station, monthLaunches, todayFlights, selec
       markersLayerRef.current = markersLayer
       trajectoryLayerRef.current = L.layerGroup().addTo(map)
       chaseLayerRef.current = L.layerGroup().addTo(map)
+      receiverLayerRef.current = L.layerGroup().addTo(map)
       map.setView([station.lat, station.lon], 9)
       setTimeout(() => map.invalidateSize(), 50)
     }
@@ -194,6 +216,27 @@ export default function MissionMap({ station, monthLaunches, todayFlights, selec
       }).addTo(layer)
     }
   }, [chasePos, selected])
+
+  // Posição do "meu receptor" (rxlat/rxlon publicado via MQTT) — ícone de
+  // antena para diferenciar de "Você" (círculo azul, geolocalização do
+  // navegador) e das sondas (balão/paraquedas).
+  useEffect(() => {
+    const L = leafletRef.current
+    const layer = receiverLayerRef.current
+    if (!L || !layer) return
+    layer.clearLayers()
+    if (!receiverPos) return
+
+    const size = 26
+    L.marker([receiverPos.lat, receiverPos.lon], {
+      icon: L.divIcon({
+        html: antennaIconMarkup(SOURCE_COLORS.sondehub, size),
+        className: '',
+        iconSize: [size, size],
+        iconAnchor: [size / 2, size / 2],
+      }),
+    }).addTo(layer).bindPopup('<b>Meu receptor</b>')
+  }, [receiverPos])
 
   return (
     <div className="panel overflow-hidden h-full flex flex-col">

@@ -1,6 +1,6 @@
 'use client'
 
-import { Wind, Loader2, Sun, Moon } from 'lucide-react'
+import { Wind, Loader2, Sun, Moon, Antenna } from 'lucide-react'
 import type { TodayFlight } from '@/app/lib/radiosondy'
 import { isDaytime, formatGmt3 } from '@/app/lib/launchUtils'
 import type { Launch } from '@/app/lib/types'
@@ -12,11 +12,12 @@ interface LivePanelProps {
   recentLaunches: Launch[] // últimos lançamentos com posição conhecida
   selected: SelectedTarget | null
   onSelect: (t: SelectedTarget | null) => void
+  mySerials?: Set<string> // serials sendo recebidos pelo receptor do usuário
 }
 
 // Painel esquerdo: sondas de hoje + últimos lançamentos com posição.
 export default function LivePanel({
-  todayFlights, liveFlightChecked, recentLaunches, selected, onSelect,
+  todayFlights, liveFlightChecked, recentLaunches, selected, onSelect, mySerials,
 }: LivePanelProps) {
   return (
     <div className="flex flex-col gap-4">
@@ -52,6 +53,11 @@ export default function LivePanel({
                       {f.isLive ? (f.climbing >= 0 ? 'Subindo' : 'Descendo') : 'Pousada'}
                     </span>
                     <span className="text-xs text-emerald-400 mono">{Math.round(f.altitude).toLocaleString('pt-BR')} m</span>
+                    {mySerials?.has(f.sondeNumber) && (
+                      <span className="badge badge-info text-[9px] px-1.5 py-0 pulse-soft">
+                        <Antenna size={9} /> RX local
+                      </span>
+                    )}
                   </div>
                   <div className="mono text-xs text-amber-400 mt-1">{f.sondeNumber}</div>
                   <div className="text-[10px] text-faint mono mt-0.5">{formatGmt3(f.lastReportUtc)}</div>
