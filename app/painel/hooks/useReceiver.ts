@@ -22,6 +22,9 @@ export interface ReceiverState {
   // Deep sleep v2 do firmware: receptor dormindo de propósito até `until`
   // (epoch ms). Distingue "dormindo" de "morto/offline" no card.
   sleeping: { until: number; reason?: string } | null
+  // Escuta estendida: acordado ouvindo um lançamento atrasado (modos A/B/C)
+  // até `until`. Diferente de "dormindo" — o receptor está ativo, só esperando.
+  waitingLate: { until: number; reason?: string } | null
   // Posição/IP mudam raramente — mostrados a partir da última mensagem
   // conhecida (mesmo retained), diferente de uptimeMs/status que exigem
   // mensagem "live" para não afirmar "ligado" com dado velho.
@@ -104,12 +107,18 @@ export function useReceiver(): ReceiverState {
       : null
     const receiverIp = lastKnown?.ip ?? null
 
-    // Retained de propósito: o aviso de sleep é publicado ANTES de dormir e
+    // Retained de propósito: o aviso é publicado ANTES de dormir/economizar e
     // fica no broker; expira sozinho quando sleep_until passa (com 10 min de
-    // tolerância para o drift do RTC do TTGO).
+    // tolerância para o drift do RTC do TTGO). As razões "listen_*" significam
+    // "acordado, aguardando lançamento atrasado" — não é sleep de verdade.
     const s = mqtt.sleepState
-    const sleeping = s && s.sleepUntil > 0 && now < s.sleepUntil * 1000 + 10 * 60_000
-      ? { until: s.sleepUntil * 1000, reason: s.reason }
+    const active = !!s && s.sleepUntil > 0 && now < s.sleepUntil * 1000 + 10 * 60_000
+    const isListen = active && (s!.reason?.startsWith('listen') ?? false)
+    const sleeping = active && !isListen
+      ? { until: s!.sleepUntil * 1000, reason: s!.reason }
+      : null
+    const waitingLate = active && isListen
+      ? { until: s!.sleepUntil * 1000, reason: s!.reason }
       : null
 
     return {
@@ -124,6 +133,7 @@ export function useReceiver(): ReceiverState {
       uptimeMs: up?.uptimeMs ?? null,
       ttgoBattV: mqtt.ttgoBattV,
       sleeping,
+      waitingLate,
       rxPosition,
       receiverIp,
       mqttLastMessageAt: mqtt.lastLiveMessageAt,

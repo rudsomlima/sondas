@@ -120,6 +120,7 @@ export default function PainelPage() {
             uptimeMs={receiver.uptimeMs}
             ttgoBattV={receiver.ttgoBattV}
             sleeping={receiver.sleeping}
+            waitingLate={receiver.waitingLate}
             receiverIp={receiver.receiverIp}
             mqttLastMessageAt={receiver.mqttLastMessageAt}
             selected={selected}

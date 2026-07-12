@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { Antenna, Loader2, BatteryMedium, Moon, Network, Radio } from 'lucide-react'
+import { Antenna, Loader2, BatteryMedium, Moon, Network, Radio, Clock } from 'lucide-react'
 import { formatGmt3 } from '@/app/lib/launchUtils'
 import type { ReceiverStatus } from '@/app/lib/sondehub'
 import type { MyReceiverSonde } from '../hooks/useReceiverStatus'
@@ -21,6 +21,7 @@ interface ReceiverPanelProps {
   uptimeMs: number | null
   ttgoBattV: number | null
   sleeping: { until: number; reason?: string } | null
+  waitingLate: { until: number; reason?: string } | null
   receiverIp: string | null
   mqttLastMessageAt: number | null // epoch (ms) da última msg MQTT não-retida
   selected: SelectedTarget | null
@@ -38,6 +39,14 @@ const SLEEP_REASONS: Record<string, string> = {
   vpanic: 'proteção da bateria (opt-in)',
 }
 
+// Escuta estendida (lançamento atrasado): o receptor está ACORDADO ouvindo,
+// não dormindo. Cada modo tem uma postura de energia diferente.
+const LISTEN_REASONS: Record<string, string> = {
+  listen_extend: 'aguardando lançamento (WiFi economizado, ao vivo)',
+  listen_wifioff: 'aguardando lançamento (WiFi desligado p/ economia)',
+  listen_check: 'verificando sonda periodicamente (economia máxima)',
+}
+
 // "ligado há 2h 14min" a partir do uptime (millis) publicado pelo firmware.
 function formatUptime(ms: number): string {
   const min = Math.floor(ms / 60000)
@@ -53,7 +62,7 @@ function formatUptime(ms: number): string {
 // telemetria, como no LivePanel.
 export default function ReceiverPanel({
   status, mySondes, checked, enabled, callsign,
-  source, mqttConfigured, mqttConnected, uptimeMs, ttgoBattV, sleeping,
+  source, mqttConfigured, mqttConnected, uptimeMs, ttgoBattV, sleeping, waitingLate,
   receiverIp, mqttLastMessageAt,
   selected, onSelect,
 }: ReceiverPanelProps) {
@@ -90,7 +99,7 @@ export default function ReceiverPanel({
         <>
           <div className="flex items-center gap-2 mb-1 flex-wrap">
             <span className={`w-2 h-2 rounded-full ${
-              sleeping ? 'bg-indigo-400' : status?.online ? 'bg-green-400 pulse-soft' : 'bg-gray-600'
+              sleeping ? 'bg-indigo-400' : waitingLate ? 'bg-amber-400 pulse-soft' : status?.online ? 'bg-green-400 pulse-soft' : 'bg-gray-600'
             }`} />
             <span className="mono text-xs text-white">{callsign}</span>
             {sleeping ? (
@@ -99,6 +108,13 @@ export default function ReceiverPanel({
                 title={sleeping.reason ? SLEEP_REASONS[sleeping.reason] ?? sleeping.reason : undefined}
               >
                 <Moon size={9} /> dormindo até {formatGmt3(new Date(sleeping.until).toISOString()).slice(11, 16)}
+              </span>
+            ) : waitingLate ? (
+              <span
+                className="badge badge-warning text-[9px] px-1.5 py-0"
+                title={waitingLate.reason ? LISTEN_REASONS[waitingLate.reason] ?? waitingLate.reason : undefined}
+              >
+                <Clock size={9} /> aguardando lançamento até {formatGmt3(new Date(waitingLate.until).toISOString()).slice(11, 16)}
               </span>
             ) : source === 'mqtt' ? (
               <span
