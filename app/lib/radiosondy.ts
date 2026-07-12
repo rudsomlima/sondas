@@ -5,7 +5,7 @@
  * é feita direto do navegador (sem precisar de proxy no nosso servidor).
  */
 import { STATUS_COLORS } from './tokens'
-import { gmt3DateStr, gmt3DateWithMonthGuard, isDaytimeHour } from './launchUtils'
+import { gmt3DateStr, gmt3DateWithMonthGuard, isDaytimeHour, parseUtcDateStr } from './launchUtils'
 import { GMT3 } from './types'
 
 export interface RadiosondyFeature {
@@ -82,6 +82,16 @@ export function matchesStartplace(pos: LiveSondePosition, startplace: string): b
   return false
 }
 
+// true só quando o texto do startplace bate exatamente com o publicado pelo
+// radiosondy.info. O fallback por bounding box (Natal/RN) em matchesStartplace
+// casa QUALQUER balão passando pela região, de outro local de lançamento —
+// sozinho isso não é confirmação de que Natal lançou hoje, só de que algo
+// está sobrevoando o estado (ver fetchTodayFlights, que usa isto pra não
+// marcar "teve voo" com esse match ainda mais fraco).
+export function matchesStartplaceExact(pos: LiveSondePosition, startplace: string): boolean {
+  return pos.startplace === startplace
+}
+
 // Link para o mapa de rastreamento externo do SondeHub, centrado na última
 // posição conhecida da própria sonde (em voo ou já pousada) — antes este
 // centro era fixo em Natal/RN, errado para qualquer outra estação/sonde.
@@ -97,6 +107,11 @@ export interface TodayFlight {
   lon: number
   lastReportUtc: string // "YYYY-MM-DD HH:mm:ssz", igual ao formato do feed ao vivo
   isLive: boolean // true = ainda em voo agora; false = já pousou
+  // 'radiosondy' = startplace batendo exato (confiável sozinho); 'radiosondy-approx'
+  // = só o fallback por bounding box da região casou (pode ser balão de outro
+  // local sobrevoando a área — não confirma "teve voo" sozinho, ver LiveCard);
+  // 'sondehub' = casado só por proximidade geográfica com a estação.
+  source: 'radiosondy' | 'radiosondy-approx' | 'sondehub'
 }
 
 export function toReportStr(date: Date): string {
@@ -129,7 +144,7 @@ export async function fetchTodayFlights(todayStr: string, startplace: string): P
   const live = await fetchLiveFlights()
   for (const f of live) {
     if (!matchesStartplace(f, startplace)) continue
-    if (gmt3DateStr(new Date(f.lastReportUtc.replace(' ', 'T').replace(/z$/i, '') + 'Z')) !== todayStr) continue
+    if (gmt3DateStr(parseUtcDateStr(f.lastReportUtc)) !== todayStr) continue
     bySondeNumber.set(f.sondeNumber, {
       sondeNumber: f.sondeNumber,
       altitude: f.altitude,
@@ -138,6 +153,7 @@ export async function fetchTodayFlights(todayStr: string, startplace: string): P
       lon: f.lon,
       lastReportUtc: f.lastReportUtc,
       isLive: true,
+      source: matchesStartplaceExact(f, startplace) ? 'radiosondy' : 'radiosondy-approx',
     })
   }
 
@@ -154,6 +170,7 @@ export async function fetchTodayFlights(todayStr: string, startplace: string): P
       lon: f.lon,
       lastReportUtc: toReportStr(f.date),
       isLive: false,
+      source: 'radiosondy',
     })
   }
 

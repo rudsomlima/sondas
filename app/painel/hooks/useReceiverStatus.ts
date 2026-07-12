@@ -57,6 +57,12 @@ export function useReceiverStatus(pollSeconds = 20) {
   const [alertsEnabled, setAlertsEnabled] = useState(false)
   const stickyRef = useRef<Map<string, StickyEntry>>(new Map())
   const settingsRef = useRef(getSettings())
+  // Último frame do MEU callsign visto nesta sessão, sem o esquecimento de
+  // FORGET_MS que `sticky` aplica — assim "ouvido HH:MM" no card continua
+  // mostrando quando o receptor foi visto pela última vez mesmo horas depois
+  // da sonda ter sumido da lista (antes o card virava "sem frames recentes"
+  // sem nenhuma indicação de tempo).
+  const lastMineUtcRef = useRef<string | null>(null)
 
   useEffect(() => {
     // getSettings() é no-op no servidor; relê no mount pro valor real do browser.
@@ -83,6 +89,9 @@ export function useReceiverStatus(pollSeconds = 20) {
         } else if (isMine) {
           sticky.set(sonde.serial, { latest: sonde, mine: sonde })
         }
+        if (isMine && (lastMineUtcRef.current == null || sonde.datetime > lastMineUtcRef.current)) {
+          lastMineUtcRef.current = sonde.datetime
+        }
       }
 
       // Esquece sondas sem frame recente (pousadas há horas / fora da janela).
@@ -108,9 +117,9 @@ export function useReceiverStatus(pollSeconds = 20) {
       })).sort((a, b) => b.myLastHeardUtc.localeCompare(a.myLastHeardUtc))
 
       setMySondes(list)
-      setStatus(deriveReceiverStatus(
-        list.map(m => ({ datetime: m.myLastHeardUtc } as NearbySonde)), now
-      ))
+      const statusEntries = list.map(m => ({ datetime: m.myLastHeardUtc } as NearbySonde))
+      if (lastMineUtcRef.current) statusEntries.push({ datetime: lastMineUtcRef.current } as NearbySonde)
+      setStatus(deriveReceiverStatus(statusEntries, now))
     } catch {
       // Falha pontual de rede: mantém o que está na tela, tenta no próximo poll.
     }

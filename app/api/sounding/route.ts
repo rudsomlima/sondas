@@ -153,8 +153,9 @@ function parseSingleSounding(html: string): Launch | null {
 // "Unable to retrieve the data" para o mesmo id/datetime).
 // Retorna true (dados ok) / false (confirmado ausente, HTTP 400) / null
 // (falha de rede/timeout — estado desconhecido, não cacheia, tenta de novo na
-// próxima sync). Só é chamado para launches novos dentro de syncMonth, nunca
-// no caminho "today" (que não persiste e é chamado a cada poll).
+// próxima chamada). Chamado para launches novos dentro de syncMonth, e também
+// no caminho "today" mas só para os lançamentos de HOJE (no máximo 1-2) — o
+// resultado fica em memoryCache, então polls repetidos não pagam o custo de novo.
 async function checkWyomingDataAvailable(station: string, datetime: string): Promise<boolean | null> {
   const cacheKey = `avail_${station}_${datetime}`
   const cached = memoryCache.get(cacheKey)
@@ -241,13 +242,6 @@ async function fetchWyomingMonthPairs(
   return missing
     .map(dt => ({ dt, launch: inventoryDtToLaunch(dt) }))
     .filter((p): p is { dt: string; launch: Launch } => p.launch !== null)
-}
-
-async function fetchWyomingMonth(
-  station: string, year: number, month: number, existingKeys: Set<string>
-): Promise<Launch[]> {
-  const pairs = await fetchWyomingMonthPairs(station, year, month, existingKeys)
-  return pairs.map(p => p.launch)
 }
 
 function validateLaunch(launch: Launch): boolean {
@@ -474,7 +468,21 @@ export async function GET(request: NextRequest) {
         let wyomingOk = false
         try {
           // Para "today", busca o mês inteiro via inventário (cache torna isso barato em chamadas repetidas).
-          launches = await fetchWyomingMonth(station, year, month, new Set())
+          const pairs = await fetchWyomingMonthPairs(station, year, month, new Set())
+          // O inventário pode listar um datetime que a sondagem individual
+          // (TEXT:LIST) ainda não consegue servir — "Unable to retrieve the
+          // data", confirmado ao vivo em produção. syncMonth já verifica isso
+          // via checkWyomingDataAvailable antes de persistir, mas o caminho
+          // "today" nunca verificava (comentário antigo dizia não valer a pena
+          // no poll) — só que sem isso o card "Ao vivo" anuncia um horário que
+          // a própria Wyoming não confirma. Só verifica os pares de HOJE (no
+          // máximo 1-2), e o resultado fica em memoryCache, então o custo em
+          // polls repetidos seguintes é zero.
+          await mapWithConcurrency(pairs.filter(p => p.launch.date === todayStr), 4, async ({ dt, launch }) => {
+            const ok = await checkWyomingDataAvailable(station, dt)
+            if (ok !== null) launch.wyomingDataOk = ok
+          })
+          launches = pairs.filter(p => p.launch.wyomingDataOk !== false).map(p => p.launch)
           wyomingOk = true
         } catch {
           launches = []

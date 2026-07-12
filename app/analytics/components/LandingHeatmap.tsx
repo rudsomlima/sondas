@@ -3,13 +3,21 @@
 import { useEffect, useRef } from 'react'
 import 'leaflet/dist/leaflet.css'
 import { createBaseMap } from '@/app/lib/leafletBase'
-import type { LandingCell } from '@/app/lib/metrics'
+import { LANDING_CELL_DEG, type LandingCell } from '@/app/lib/metrics'
 import type { Station } from '@/app/lib/stations'
 
 interface LandingHeatmapProps {
   station: Station
   cells: LandingCell[]
 }
+
+// Raio geográfico (metros) da célula do heatmap — metade do lado da célula,
+// pra células adjacentes se tocarem sem se sobrepor. Usa L.circle (raio em
+// metros) em vez de L.circleMarker (raio em pixels): o circleMarker manteria
+// o mesmo tamanho na tela em qualquer zoom, então a ÁREA REAL coberta encolhe
+// conforme se dá zoom in, abrindo buracos entre células que na verdade são
+// vizinhas — daí a sensação de "perder cobertura" ao ampliar o mapa.
+const CELL_RADIUS_M = (LANDING_CELL_DEG * 111_320) / 2
 
 // Gradiente de intensidade: ciano → âmbar → vermelho.
 function cellColor(count: number, max: number): string {
@@ -25,6 +33,14 @@ export default function LandingHeatmap({ station, cells }: LandingHeatmapProps) 
   const mapRef = useRef<any>(null)
   const leafletRef = useRef<any>(null)
   const layerRef = useRef<any>(null)
+  // O import('leaflet') dentro de init() é assíncrono e frequentemente resolve
+  // DEPOIS que `cells` já chegou do fetch — sem esta ref, draw() fecharia sobre
+  // o `cells`/`station` da renderização do mount (tipicamente vazio), e o
+  // efeito de [cells, station.id] não adiantaria nada por rodar antes do mapa
+  // existir. Com a ref, draw() sempre lê o valor mais recente, não importa
+  // quem chame primeiro.
+  const latestRef = useRef({ cells, station })
+  latestRef.current = { cells, station }
 
   useEffect(() => {
     let cancelled = false
@@ -58,6 +74,7 @@ export default function LandingHeatmap({ station, cells }: LandingHeatmapProps) 
     const layer = layerRef.current
     const map = mapRef.current
     if (!L || !layer || !map) return
+    const { cells, station } = latestRef.current
     layer.clearLayers()
 
     // Estação
@@ -69,11 +86,13 @@ export default function LandingHeatmap({ station, cells }: LandingHeatmapProps) 
     const max = Math.max(...cells.map(c => c.count))
 
     for (const c of cells) {
-      L.circleMarker([c.lat, c.lon], {
-        radius: 6 + Math.min(14, c.count * 3),
+      // Raio fixo em metros (não em pixels): a intensidade é só cor/opacidade,
+      // então a cobertura geográfica desenhada não muda com o zoom.
+      L.circle([c.lat, c.lon], {
+        radius: CELL_RADIUS_M,
         color: cellColor(c.count, max),
         fillColor: cellColor(c.count, max),
-        fillOpacity: 0.45,
+        fillOpacity: 0.25 + 0.45 * (c.count / max),
         weight: 1,
       }).addTo(layer).bindPopup(`${c.count} pouso${c.count > 1 ? 's' : ''} nesta área`)
     }
@@ -83,7 +102,8 @@ export default function LandingHeatmap({ station, cells }: LandingHeatmapProps) 
     map.fitBounds([[Math.min(...lats), Math.min(...lons)], [Math.max(...lats), Math.max(...lons)]], { padding: [30, 30] })
   }
 
-  // Redesenha quando as células mudam (ano/estação trocados).
+  // Redesenha quando as células mudam (ano/estação trocados) — e também
+  // cobre o caso em que os dados chegam antes do mapa terminar de inicializar.
   useEffect(() => { draw() /* eslint-disable-line react-hooks/exhaustive-deps */ }, [cells, station.id])
 
   return (

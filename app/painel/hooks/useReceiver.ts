@@ -5,6 +5,7 @@ import { LIVE_STALE_MS, ReceiverStatus } from '@/app/lib/sondehub'
 import { MQTT_FRESH_MS, UPTIME_ONLINE_MS } from '@/app/lib/mqtt'
 import { useReceiverStatus, MyReceiverSonde, FORGET_MS } from './useReceiverStatus'
 import { useReceiverMqtt } from './useReceiverMqtt'
+import { parseUtcDateStr } from '@/app/lib/launchUtils'
 
 export type ReceiverSource = 'mqtt' | 'sondehub'
 
@@ -35,6 +36,10 @@ export interface ReceiverState {
   // (não um "há Xs" pré-calculado) para o componente tickar por conta própria
   // a cada segundo, em vez de depender de re-renders de outras partes do app.
   mqttLastMessageAt: number | null
+  // Epoch (ms) de quando o firmware publicou a última msg uptime (campo
+  // `time`, dev2), lido mesmo de mensagem retained — dá "visto pela última
+  // vez" real ao abrir a aba já com o receptor dormindo, sem sonda no ar.
+  mqttPublishedAt: number | null
 }
 
 /**
@@ -106,6 +111,12 @@ export function useReceiver(): ReceiverState {
       ? { lat: lastKnown.rxlat, lon: lastKnown.rxlon }
       : null
     const receiverIp = lastKnown?.ip ?? null
+    // Epoch (ms) de quando o firmware (dev2) publicou a última msg uptime, lido
+    // do campo `time` do payload — vale mesmo em msg retained (diferente de
+    // mqtt.uptime.receivedAt, que numa retained é só a hora em que a aba
+    // conectou). É o que dá "visto pela última vez" real ao abrir a aba com o
+    // receptor já dormindo, sem depender de outra sonda ter aparecido agora.
+    const mqttPublishedAt = lastKnown?.publishedUtc ? parseUtcDateStr(lastKnown.publishedUtc).getTime() : null
 
     // Retained de propósito: o aviso é publicado ANTES de dormir/economizar e
     // fica no broker; expira sozinho quando sleep_until passa (com 10 min de
@@ -137,6 +148,7 @@ export function useReceiver(): ReceiverState {
       rxPosition,
       receiverIp,
       mqttLastMessageAt: mqtt.lastLiveMessageAt,
+      mqttPublishedAt,
     }
   }, [sondehub, mqtt])
 }

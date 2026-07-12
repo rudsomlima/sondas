@@ -123,6 +123,7 @@ export default function PainelPage() {
             waitingLate={receiver.waitingLate}
             receiverIp={receiver.receiverIp}
             mqttLastMessageAt={receiver.mqttLastMessageAt}
+            mqttPublishedAt={receiver.mqttPublishedAt}
             selected={selected}
             onSelect={setSelected}
           />

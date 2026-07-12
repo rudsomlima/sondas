@@ -54,8 +54,14 @@ export interface LandingCell {
   count: number
 }
 
+// Tamanho da célula do heatmap, em graus — exportado para o componente de
+// mapa poder desenhar círculos com raio geográfico real (metros) do mesmo
+// tamanho da célula, em vez de raio fixo em pixels (que encolhe em área real
+// conforme o zoom, dando a impressão de "buracos" na cobertura).
+export const LANDING_CELL_DEG = 0.05
+
 // Agrupa posições de pouso em células de ~0.05° para o heatmap.
-export function landingDensity(launches: Launch[], cellDeg = 0.05): LandingCell[] {
+export function landingDensity(launches: Launch[], cellDeg = LANDING_CELL_DEG): LandingCell[] {
   const cells = new Map<string, LandingCell>()
   for (const l of launches) {
     if (!l.position) continue

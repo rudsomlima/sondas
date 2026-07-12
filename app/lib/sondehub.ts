@@ -64,6 +64,7 @@ export async function fetchSondeHubFlights(
       lon: last.lon,
       lastReportUtc: toReportStr(reportDate),
       isLive: now - reportDate.getTime() < LIVE_STALE_MS,
+      source: 'sondehub',
     })
   }
 

@@ -52,11 +52,20 @@ export function launchKey(l: Launch): string {
   return `${l.date}_${l.time_local}`
 }
 
+// Normaliza "YYYY-MM-DD HH:mm:ss[z]" (formato do radiosondy.info e do firmware
+// do TTGO, sem 'T' e com 'z' minúsculo opcional) pra ISO parseável como UTC.
+// Sem isso, motores JS tratam a string sem 'Z' como horário LOCAL do
+// navegador (não UTC) — bug real observado: "visto em" mostrando um horário
+// no futuro porque o -3h do formatGmt3 foi aplicado em cima de um valor já
+// deslocado pro timezone do navegador.
+export function parseUtcDateStr(str: string): Date {
+  return new Date(str.replace(' ', 'T').replace(/z$/i, '') + 'Z')
+}
+
 // Formata um timestamp "YYYY-MM-DD HH:mm:ssz" (UTC) do radiosondy.info como
 // dd-mm-yyyy hh:mm:ss em GMT-3, 24h.
 export function formatGmt3(utcStr: string): string {
-  const iso = utcStr.replace(' ', 'T').replace(/z$/i, '') + 'Z'
-  const d = new Date(iso)
+  const d = parseUtcDateStr(utcStr)
   if (isNaN(d.getTime())) return utcStr
   const local = new Date(d.getTime() + GMT3)
   const pad = (n: number) => String(n).padStart(2, '0')

@@ -22,8 +22,15 @@ export default function LiveCard({
   todayData, todayLoading, todayFlights, liveFlightChecked, lastFetchAt,
   selectedLaunch, onExpandMonth, onSelectLaunch,
 }: LiveCardProps) {
-  const hadFlightToday = todayData?.launched_today || todayFlights.length > 0
-  const count = Math.max(todayData?.count ?? 0, todayFlights.length)
+  // Sondehub casa por proximidade geográfica (raio), então sozinho pode
+  // pegar um voo de outra estação passando perto — só conta como "teve voo"
+  // quando a Wyoming (fonte oficial) já confirmou o lançamento de hoje ou o
+  // radiosondy.info (amarrado ao startplace exato) achou a sonda.
+  const hadFlightToday = todayData?.launched_today || todayFlights.some(f => f.source === 'radiosondy')
+  // Sem confirmação (Wyoming/radiosondy.info), não deixa matches soltos do
+  // sondehub inflarem a contagem exibida — o card já mostraria "Nenhum
+  // lançamento" enquanto o número dissesse o contrário.
+  const count = Math.max(todayData?.count ?? 0, hadFlightToday ? todayFlights.length : 0)
   const todayMonth = todayData?.today
     ? parseInt(todayData.today.split('-')[1], 10)
     : new Date().getMonth() + 1

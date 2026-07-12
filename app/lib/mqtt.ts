@@ -50,6 +50,13 @@ export interface RdzUptime {
   VER?: string
   batt?: number // bateria DO TTGO (V) — firmwares antigos patchados; no dev2 vem no tópico pmu
   ip?: string // IP local (LAN) do TTGO — só alcançável se o app rodar na mesma rede
+  // Campo `time` (UTC) do dev2 — quando a MENSAGEM foi de fato publicada pelo
+  // firmware, diferente de MqttUptimeState.receivedAt (quando NÓS a recebemos,
+  // que numa mensagem retained é só o momento em que a aba conectou/assinou,
+  // não tem relação com quando o TTGO realmente publicou). É o que permite
+  // mostrar "visto pela última vez" correto mesmo abrindo a aba já com o
+  // receptor dormindo (retained), sem precisar de outra sonda no ar.
+  publishedUtc?: string
 }
 
 const IPV4_RE = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/
@@ -135,6 +142,7 @@ export function parseRdzUptime(payload: string): RdzUptime | null {
     VER: typeof raw.VER === 'string' ? raw.VER : undefined,
     batt: num(raw.batt) ?? num(raw.vbatt),
     ip: typeof raw.ip === 'string' && IPV4_RE.test(raw.ip) ? raw.ip : undefined,
+    publishedUtc: typeof raw.time === 'string' ? raw.time : undefined,
   }
 }
 

@@ -24,6 +24,7 @@ interface ReceiverPanelProps {
   waitingLate: { until: number; reason?: string } | null
   receiverIp: string | null
   mqttLastMessageAt: number | null // epoch (ms) da última msg MQTT não-retida
+  mqttPublishedAt: number | null // epoch (ms) da última msg uptime publicada pelo firmware (mesmo retained)
   selected: SelectedTarget | null
   onSelect: (t: SelectedTarget | null) => void
 }
@@ -63,7 +64,7 @@ function formatUptime(ms: number): string {
 export default function ReceiverPanel({
   status, mySondes, checked, enabled, callsign,
   source, mqttConfigured, mqttConnected, uptimeMs, ttgoBattV, sleeping, waitingLate,
-  receiverIp, mqttLastMessageAt,
+  receiverIp, mqttLastMessageAt, mqttPublishedAt,
   selected, onSelect,
 }: ReceiverPanelProps) {
   // Ticker próprio de 1s — não depende de re-renders de outras partes do
@@ -75,6 +76,16 @@ export default function ReceiverPanel({
     return () => clearInterval(id)
   }, [])
   const mqttAgoS = mqttLastMessageAt != null ? Math.max(0, Math.round((nowTick - mqttLastMessageAt) / 1000)) : null
+
+  // "Visto pela última vez": combina a fonte SondeHub (status.lastHeardUtc,
+  // só existe quando alguma sonda foi decodificada) com a MQTT (qualquer
+  // tópico não-retido — uptime/pmu chegam a cada ~60s mesmo sem sonda no ar,
+  // então continuam marcando presença do receptor mesmo dormindo/sem voo).
+  // Sem isso, o card ficava mudo ("sem frames recentes") sempre que não havia
+  // sonda nesta sessão, mesmo com o TTGO respondendo via MQTT segundos atrás.
+  const lastHeardMs = status?.lastHeardUtc ? new Date(status.lastHeardUtc).getTime() : null
+  const candidates = [lastHeardMs, mqttLastMessageAt, mqttPublishedAt].filter((v): v is number => v != null)
+  const lastSeenMs = candidates.length > 0 ? Math.max(...candidates) : null
 
   return (
     <div className="panel p-4">
@@ -135,11 +146,21 @@ export default function ReceiverPanel({
               <span className="badge text-[9px] px-1.5 py-0 text-dim border border-border">SondeHub ~20s</span>
             )}
             <span className="text-[10px] text-faint">
-              {status?.lastHeardUtc
-                ? `ouvido ${formatGmt3(status.lastHeardUtc)}`
+              {lastSeenMs != null
+                ? `Visto em ${formatGmt3(new Date(lastSeenMs).toISOString())}`
                 : status?.online ? 'ligado, sem sonda no ar' : 'sem frames recentes'}
             </span>
           </div>
+          {/* Motivo da economia de energia — antes só aparecia escondido no
+              title (tooltip), invisível em toque/mobile. Fica registrado aqui
+              junto do resto das informações do receptor, não como notificação. */}
+          {(sleeping?.reason || waitingLate?.reason) && (
+            <p className="text-[10px] text-dim mb-2">
+              {sleeping
+                ? SLEEP_REASONS[sleeping.reason!] ?? sleeping.reason
+                : LISTEN_REASONS[waitingLate!.reason!] ?? waitingLate!.reason}
+            </p>
+          )}
           {(uptimeMs != null || ttgoBattV != null) && (
             <div className="flex items-center gap-3 mb-3 text-[10px] text-dim mono">
               {uptimeMs != null && <span>ligado há {formatUptime(uptimeMs)}</span>}
