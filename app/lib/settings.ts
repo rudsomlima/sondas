@@ -9,11 +9,20 @@
  * disso exige acesso à LAN do receptor. Callsign vazio = feature desligada.
  */
 
+export interface KnownReceiver {
+  prefix: string       // mqtt.prefix exato do firmware (chave única)
+  displayName: string  // nome amigável (pode ser igual ao prefix se não customizado)
+  addedAt: number      // epoch ms
+}
+
 export interface AppSettings {
   autoRefreshMinutes: number // 0 = desativado
   uploaderCallsign: string // callsign como configurado no firmware/SondeHub; '' = desligado
   homeLat: number | null // posição de casa (centro da busca por sondas próximas)
   homeLon: number | null
+  // Lista de todos os receptores conhecidos (descobertos via MQTT ou adicionados manualmente).
+  // O receptor ativo é sempre aquele cujo prefix === mqttTopicPrefix.
+  knownReceivers: KnownReceiver[]
   receiverAlertsEnabled: boolean // Notification API ao decodificar sonda nova
   alertRadiusKm: number // 0 = sem filtro de distância
   // MQTT direto do firmware (opcional, desligado por padrão): o TTGO publica
@@ -29,6 +38,7 @@ export interface AppSettings {
   // canal MQTT gravar; leitura MQTT e o canal HTTP não exigem segredo).
   rdzConfigChannel: 'http' | 'mqtt' | null
   rdzConfigSecret: string
+  mqttDiscoveryBase: string // prefixo-raiz para wildcard de descoberta; '' = desabilitado
 }
 
 const SETTINGS_KEY = 'sondas_settings'
@@ -37,6 +47,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   uploaderCallsign: '',
   homeLat: null,
   homeLon: null,
+  knownReceivers: [],
   receiverAlertsEnabled: false,
   alertRadiusKm: 0,
   mqttEnabled: false,
@@ -44,6 +55,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   mqttTopicPrefix: '',
   rdzConfigChannel: null,
   rdzConfigSecret: '',
+  mqttDiscoveryBase: '',
 }
 
 export function getSettings(): AppSettings {
@@ -69,9 +81,13 @@ export function getSettings(): AppSettings {
       mqttBrokerUrl: typeof parsed.mqttBrokerUrl === 'string' && /^wss?:\/\//.test(parsed.mqttBrokerUrl.trim())
         ? parsed.mqttBrokerUrl.trim()
         : DEFAULT_SETTINGS.mqttBrokerUrl,
+      knownReceivers: Array.isArray(parsed.knownReceivers)
+        ? parsed.knownReceivers.filter((r: any) => r && typeof r.prefix === 'string' && r.prefix)
+        : DEFAULT_SETTINGS.knownReceivers,
       mqttTopicPrefix: typeof parsed.mqttTopicPrefix === 'string' ? parsed.mqttTopicPrefix.trim() : DEFAULT_SETTINGS.mqttTopicPrefix,
       rdzConfigChannel: parsed.rdzConfigChannel === 'http' || parsed.rdzConfigChannel === 'mqtt' ? parsed.rdzConfigChannel : null,
       rdzConfigSecret: typeof parsed.rdzConfigSecret === 'string' ? parsed.rdzConfigSecret : DEFAULT_SETTINGS.rdzConfigSecret,
+      mqttDiscoveryBase: typeof parsed.mqttDiscoveryBase === 'string' ? parsed.mqttDiscoveryBase.trim() : DEFAULT_SETTINGS.mqttDiscoveryBase,
     }
   } catch {
     return DEFAULT_SETTINGS

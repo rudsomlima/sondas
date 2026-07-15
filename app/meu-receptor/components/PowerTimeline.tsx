@@ -2,8 +2,6 @@
 
 import { useState } from 'react'
 import { Battery, Info, Trash2 } from 'lucide-react'
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
-import { CHART } from '@/app/lib/tokens'
 import { GMT3 } from '@/app/lib/types'
 import type { PowerHistoryEntry, PowerHistoryState } from '@/app/painel/hooks/usePowerStateHistory'
 import type { RdzConfig } from '@/app/lib/rdzConfig'
@@ -15,23 +13,22 @@ interface PowerTimelineProps {
   onDeleteDay: (dayKey: string) => void
 }
 
-const DAYS = 7
+const DAYS   = 7
 const DAY_MS = 24 * 60 * 60 * 1000
 
 // ──────────────────────────────────────────────────────────────
-// Estados detalhados (derivados em tempo de render dos campos
-// cpuMhz / wifi armazenados em cada PowerHistoryEntry)
+// Estados granulares
 // ──────────────────────────────────────────────────────────────
 type DetailState =
   | 'sleeping'       // deep sleep
   | 'eco'            // bateria crítica
-  | 'listening'      // escuta estendida, WiFi normal ou desconhecido
-  | 'listen_wifips'  // escuta estendida, WiFi modem sleep (extendmode=0)
-  | 'listen_nowifi'  // escuta estendida, WiFi off (extendmode=1)
-  | 'awake_nowifi'   // acordado, WiFi completamente desligado
-  | 'awake_wifips'   // acordado, WiFi modem sleep
-  | 'awake_cpu80'    // acordado, CPU 80 MHz (WiFi normal)
-  | 'awake'          // acordado, potência total (240 MHz + WiFi on)
+  | 'listening'      // escuta estendida, WiFi normal
+  | 'listen_wifips'  // escuta estendida, WiFi modem_sleep
+  | 'listen_nowifi'  // escuta estendida, WiFi off
+  | 'awake_nowifi'   // acordado sem WiFi
+  | 'awake_wifips'   // acordado WiFi modem_sleep
+  | 'awake_cpu80'    // acordado CPU 80 MHz
+  | 'awake'          // potência total
 
 function entryDetailState(e: PowerHistoryEntry): DetailState {
   const { state, cpuMhz, wifi } = e
@@ -49,17 +46,17 @@ function entryDetailState(e: PowerHistoryEntry): DetailState {
 }
 
 const COLORS: Record<DetailState | 'awakePred' | 'sleepingPred' | 'noData', string> = {
-  sleeping:      '#818cf8', // indigo-400   — deep sleep
-  eco:           '#ef4444', // red-500      — bateria crítica
-  listening:     '#fbbf24', // amber-400    — escuta estendida (WiFi normal)
-  listen_wifips: '#a78bfa', // violet-400   — escuta + WiFi modem_sleep
-  listen_nowifi: '#fb7185', // rose-400     — escuta + WiFi off
-  awake_nowifi:  '#f97316', // orange-500   — acordado sem WiFi
-  awake_wifips:  '#22d3ee', // cyan-400     — acordado WiFi modem_sleep
-  awake_cpu80:   '#a3e635', // lime-400     — acordado CPU 80 MHz
-  awake:         '#34d399', // emerald-400  — acordado potência total
-  awakePred:     '#065f46', // emerald-900  — previsto acordado
-  sleepingPred:  '#312e81', // indigo-900   — previsto dormindo
+  sleeping:      '#818cf8', // indigo-400
+  eco:           '#ef4444', // red-500
+  listening:     '#fbbf24', // amber-400
+  listen_wifips: '#a78bfa', // violet-400
+  listen_nowifi: '#fb7185', // rose-400
+  awake_nowifi:  '#f97316', // orange-500
+  awake_wifips:  '#22d3ee', // cyan-400
+  awake_cpu80:   '#a3e635', // lime-400
+  awake:         '#34d399', // emerald-400
+  awakePred:     '#065f46', // emerald-900
+  sleepingPred:  '#312e81', // indigo-900
   noData:        '#232a35',
 }
 
@@ -79,7 +76,7 @@ const LABELS: Record<DetailState | 'awakePred' | 'sleepingPred' | 'noData', stri
 }
 
 // ──────────────────────────────────────────────────────────────
-// Dia local (GMT-3)
+// Dias (GMT-3)
 // ──────────────────────────────────────────────────────────────
 function localDayKey(utcMs: number): string {
   const local = new Date(utcMs + GMT3)
@@ -105,7 +102,7 @@ function lastNDayKeys(n: number): string[] {
 }
 
 // ──────────────────────────────────────────────────────────────
-// Janelas de recepção (previsão baseada na config do firmware)
+// Janelas de recepção (previsão)
 // ──────────────────────────────────────────────────────────────
 interface SleepWindow { startMin: number; durMin: number }
 
@@ -122,70 +119,38 @@ function parseSleepWindows(config: RdzConfig): SleepWindow[] | null {
   return ws.length > 0 ? ws : null
 }
 
-// Sub-estado previsto para o período acordado (baseado em sleep.cpu80 / sleep.wifips)
-function predictedAwakeState(config: RdzConfig): DetailState {
-  const cpu80  = parseInt(String(config['sleep.cpu80']  ?? '0'), 10) === 1
-  const wifips = parseInt(String(config['sleep.wifips'] ?? '0'), 10) === 1
-  if (cpu80 && wifips) return 'awake_cpu80'   // cpu80 domina visualmente
-  if (wifips) return 'awake_wifips'
-  if (cpu80)  return 'awake_cpu80'
-  return 'awake'
+// ──────────────────────────────────────────────────────────────
+// Segmentos posicionados no tempo (nova estrutura)
+// ──────────────────────────────────────────────────────────────
+type SegState = DetailState | 'awakePred' | 'sleepingPred' | 'noData'
+
+interface DaySegment {
+  startFrac: number  // 0.0–1.0 da meia-noite local
+  durFrac:   number
+  state:     SegState
+  startMs:   number  // UTC ms (para tooltip)
+  endMs:     number
 }
 
-function intersectMs(a: number, b: number, c: number, d: number): number {
-  return Math.max(0, Math.min(b, d) - Math.max(a, c))
-}
-
-// ──────────────────────────────────────────────────────────────
-// Linha de dados do gráfico
-// ──────────────────────────────────────────────────────────────
-type DayRow = {
-  day: string
+interface DayTimeline {
   dateKey: string
-  // Observado
-  sleeping: number
-  eco: number
-  listening: number
-  listen_wifips: number
-  listen_nowifi: number
-  awake_nowifi: number
-  awake_wifips: number
-  awake_cpu80: number
-  awake: number
-  // Previsto
-  awakePred: number
-  sleepingPred: number
-  // Sem info
-  noData: number
-  // Meta
-  hasData: boolean
-  hasPrediction: boolean
+  day:     string   // "DD/MM"
+  segments: DaySegment[]
+  hasData:  boolean
 }
 
-function emptyRow(dayKey: string): DayRow {
-  const [, m, d] = dayKey.split('-')
-  return {
-    day: `${d}/${m}`, dateKey: dayKey,
-    sleeping: 0, eco: 0, listening: 0, listen_wifips: 0, listen_nowifi: 0,
-    awake_nowifi: 0, awake_wifips: 0, awake_cpu80: 0, awake: 0,
-    awakePred: 0, sleepingPred: 0, noData: 0,
-    hasData: false, hasPrediction: false,
-  }
-}
-
-function computeDailyDurations(
+function computeDailyTimelines(
   history: PowerHistoryEntry[],
   days: number,
   config: RdzConfig | null,
   mqttConnected: boolean,
-): DayRow[] {
-  const dayKeys = lastNDayKeys(days)
-  const windows = config ? parseSleepWindows(config) : null
-  const awakeSubState: DetailState = config ? predictedAwakeState(config) : 'awake'
-  const now = Date.now()
+): DayTimeline[] {
+  const dayKeys    = lastNDayKeys(days)
+  const windows    = config ? parseSleepWindows(config) : null
+  const now        = Date.now()
   const rangeStart = localDayStartUtcMs(dayKeys[0])
 
-  // Intervalos MQTT — último segmento termina em `now` só se conectado
+  // Intervalos MQTT — corrigido: inclui intervalos que TERMINAM dentro da janela
   interface MqttIv { start: number; end: number; ds: DetailState }
   const mqttIvs: MqttIv[] = []
   if (history.length > 0) {
@@ -194,142 +159,112 @@ function computeDailyDurations(
     for (let i = 0; i < sorted.length; i++) {
       const start = sorted[i].at
       const end   = i + 1 < sorted.length ? sorted[i + 1].at : lastEnd
-      if (end > start && start >= rangeStart) {
+      if (end > rangeStart && end > start) {
         mqttIvs.push({ start, end, ds: entryDetailState(sorted[i]) })
       }
     }
   }
 
-  const rows = new Map<string, DayRow>(dayKeys.map(k => [k, emptyRow(k)]))
-
-  for (const [dk, row] of rows) {
+  return dayKeys.map(dk => {
     const dayStart = localDayStartUtcMs(dk)
     const dayEnd   = dayStart + DAY_MS
+    const [, m, d] = dk.split('-')
+    const segments: DaySegment[] = []
+    let hasData = false
 
-    // Intervalos MQTT recortados para este dia
+    const pushSeg = (start: number, end: number, state: SegState) => {
+      const s = Math.max(start, dayStart)
+      const e = Math.min(end,   dayEnd)
+      if (e <= s) return
+      segments.push({
+        startFrac: (s - dayStart) / DAY_MS,
+        durFrac:   (e - s)        / DAY_MS,
+        state,
+        startMs: s,
+        endMs:   e,
+      })
+    }
+
+    const fillGap = (gapStart: number, gapEnd: number) => {
+      if (gapEnd <= gapStart) return
+      if (windows) {
+        // Calcula interseções das janelas de recepção com o gap, ordenadas
+        const wIvs: { start: number; end: number }[] = []
+        for (const w of windows) {
+          const wStart = dayStart + w.startMin * 60000
+          const wEnd   = dayStart + (w.startMin + w.durMin) * 60000
+          const s = Math.max(gapStart, wStart)
+          const e = Math.min(gapEnd,   wEnd)
+          if (e > s) wIvs.push({ start: s, end: e })
+        }
+        wIvs.sort((a, b) => a.start - b.start)
+        let cursor = gapStart
+        for (const wiv of wIvs) {
+          if (wiv.start > cursor) pushSeg(cursor, wiv.start, 'sleepingPred')
+          pushSeg(wiv.start, wiv.end, 'awakePred')
+          cursor = wiv.end
+        }
+        if (cursor < gapEnd) pushSeg(cursor, gapEnd, 'sleepingPred')
+      } else {
+        pushSeg(gapStart, gapEnd, 'noData')
+      }
+    }
+
     const dayMqtt = mqttIvs
       .map(iv => ({ ...iv, start: Math.max(iv.start, dayStart), end: Math.min(iv.end, dayEnd) }))
       .filter(iv => iv.end > iv.start)
       .sort((a, b) => a.start - b.start)
 
-    const fillGap = (gapStart: number, gapEnd: number) => {
-      if (gapEnd <= gapStart) return
-      if (windows) {
-        let awakeMs = 0
-        for (const w of windows) {
-          const wStart = dayStart + w.startMin * 60000
-          const wEnd   = dayStart + (w.startMin + w.durMin) * 60000
-          awakeMs += intersectMs(gapStart, gapEnd, wStart, wEnd)
-        }
-        const sleepMs = (gapEnd - gapStart) - awakeMs
-        row[awakeSubState]  = (row[awakeSubState]  as number) + awakeMs
-        row.sleepingPred   += sleepMs
-        row.hasPrediction = true
-      } else {
-        row.noData += gapEnd - gapStart
-      }
-    }
-
     let cursor = dayStart
     for (const iv of dayMqtt) {
       if (iv.start > cursor) fillGap(cursor, iv.start)
-      row[iv.ds] = (row[iv.ds] as number) + (iv.end - iv.start)
-      row.hasData = true
+      pushSeg(iv.start, iv.end, iv.ds)
+      hasData = true
       cursor = Math.max(cursor, iv.end)
     }
     if (cursor < dayEnd) fillGap(cursor, dayEnd)
-  }
 
-  // O fillGap acima escreveu os minutos de janela em row[awakeSubState] (que
-  // pode ser 'awake', 'awake_cpu80', etc.). Para o gráfico renderizar esses
-  // minutos com a COR ESCURA de "previsto", movemos para awakePred e zeramos
-  // o campo original — assim as cores vivas ficam exclusivas do MQTT observado.
-  for (const row of rows.values()) {
-    if (!row.hasPrediction) continue
-    row.awakePred += row[awakeSubState] as number
-    ;(row[awakeSubState] as any) = 0
-  }
+    return { dateKey: dk, day: `${d}/${m}`, segments, hasData }
+  })
+}
 
-  return [...rows.values()]
+// ──────────────────────────────────────────────────────────────
+// Utilitários de exibição
+// ──────────────────────────────────────────────────────────────
+function fmtTime(utcMs: number): string {
+  const local = new Date(utcMs + GMT3)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${pad(local.getUTCHours())}:${pad(local.getUTCMinutes())}`
 }
 
 function formatDuration(ms: number): string {
   if (ms <= 0) return '0min'
   const totalMin = Math.round(ms / 60000)
-  const h = Math.floor(totalMin / 60)
+  const h   = Math.floor(totalMin / 60)
   const min = totalMin % 60
   if (h === 0) return `${min}min`
   return `${h}h${min > 0 ? ` ${min}min` : ''}`
 }
 
-// ──────────────────────────────────────────────────────────────
-// Tooltip
-// ──────────────────────────────────────────────────────────────
-const OBSERVED_STATES: DetailState[] = [
+const ALL_DETAIL_STATES: DetailState[] = [
   'awake','awake_cpu80','awake_wifips','awake_nowifi',
   'listen_nowifi','listen_wifips','listening',
   'eco','sleeping',
 ]
 
-const CustomTooltip = ({ active, payload, label }: any) => {
-  if (!active || !payload?.length) return null
-  const row: DayRow = payload[0]?.payload
-  if (!row) return null
-
-  const obs = OBSERVED_STATES.filter(s => (row[s] as number) > 0)
-  const pred = (['awakePred','sleepingPred'] as const).filter(s => row[s] > 0)
-  const noDataMs = row.noData
-
-  return (
-    <div className="bg-surface border border-border rounded-md p-3 text-xs min-w-[210px]">
-      <p className="text-white font-medium mb-2">{label}</p>
-      {obs.length > 0 && (
-        <>
-          <p className="text-[10px] text-faint uppercase tracking-wide mb-1">Observado via MQTT</p>
-          {obs.map(s => (
-            <p key={s} style={{ color: COLORS[s] }}>
-              {LABELS[s]}: <span className="font-mono font-bold">{formatDuration(row[s] as number)}</span>
-            </p>
-          ))}
-        </>
-      )}
-      {pred.length > 0 && (
-        <>
-          {obs.length > 0 && <div className="border-t border-border my-1.5" />}
-          <p className="text-[10px] text-faint uppercase tracking-wide mb-1">Previsto (config firmware)</p>
-          {pred.map(s => (
-            <p key={s} style={{ color: COLORS[s] }}>
-              {LABELS[s]}: <span className="font-mono font-bold">{formatDuration(row[s])}</span>
-            </p>
-          ))}
-        </>
-      )}
-      {noDataMs > 0 && (
-        <p className="text-faint mt-1">Sem dados: {formatDuration(noDataMs)}</p>
-      )}
-    </div>
-  )
-}
-
 // ──────────────────────────────────────────────────────────────
-// Componente principal
+// Componente
 // ──────────────────────────────────────────────────────────────
-const ALL_DETAIL_STATES: DetailState[] = [
-  'sleeping','eco',
-  'listen_nowifi','listen_wifips','listening',
-  'awake_nowifi','awake_wifips','awake_cpu80','awake',
-]
-
 export default function PowerTimeline({ history, config, mqttConnected, onDeleteDay }: PowerTimelineProps) {
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
-  const rows = computeDailyDurations(history, DAYS, config, mqttConnected)
-  const hasConfig = !!(config && parseSleepWindows(config))
-  const hasSomeObserved = rows.some(r => r.hasData)
+  const [tooltip, setTooltip] = useState<{ seg: DaySegment; clientX: number; clientY: number } | null>(null)
 
-  const doDelete = (dayKey: string) => {
-    onDeleteDay(dayKey)
-    setConfirmDelete(null)
-  }
+  const timelines = computeDailyTimelines(history, DAYS, config, mqttConnected)
+  const hasConfig = !!(config && parseSleepWindows(config))
+  const hasSomeObserved = timelines.some(t => t.hasData)
+
+  // Marcas do eixo X (0h 6h 12h 18h 24h)
+  const xLabels = [0, 6, 12, 18, 24]
 
   return (
     <div className="panel p-5 mb-6">
@@ -340,79 +275,108 @@ export default function PowerTimeline({ history, config, mqttConnected, onDelete
       <p className="text-[11px] text-faint mb-4 flex items-start gap-1.5">
         <Info size={11} className="flex-shrink-0 mt-0.5" />
         {hasConfig
-          ? 'Cores vivas = observado via MQTT (quando o app estava aberto). Cores escuras = estimativa baseada nas janelas de recepção configuradas no firmware (inclui horas futuras de hoje).'
+          ? 'Cores vivas = observado via MQTT. Cores escuras = estimativa baseada nas janelas de recepção do firmware (inclui horas futuras de hoje).'
           : 'Registra períodos em que o app estava aberto com MQTT conectado. Carregue a configuração do receptor para estimar deep sleep nas lacunas.'}
       </p>
 
-      {/* Gráfico de barras — label do eixo Y com botão de apagar por dia */}
-      <div className="flex">
-        {/* Labels customizados com botão trash */}
-        <div className="flex flex-col justify-around pr-1" style={{ width: 68, paddingBottom: 20 }}>
-          {rows.map(row => (
-            <div key={row.dateKey} className="flex items-center justify-end gap-1" style={{ height: 32 }}>
-              {confirmDelete === row.dateKey ? (
-                <div className="flex items-center gap-1">
-                  <button
-                    onClick={() => doDelete(row.dateKey)}
-                    className="px-1.5 py-0.5 bg-red-600 text-[9px] text-white rounded"
-                  >ok</button>
-                  <button
-                    onClick={() => setConfirmDelete(null)}
-                    className="px-1.5 py-0.5 bg-surface border border-border text-[9px] text-gray-400 rounded"
-                  >×</button>
-                </div>
-              ) : (
-                <>
-                  <span className="text-[11px] mono" style={{ color: CHART.tick }}>{row.day}</span>
-                  <button
-                    onClick={() => setConfirmDelete(row.dateKey)}
-                    title="Apagar dados deste dia"
-                    className="text-gray-600 hover:text-red-400 transition-colors"
-                  >
-                    <Trash2 size={10} />
-                  </button>
-                </>
-              )}
-            </div>
+      {/* Eixo X (horas do dia) */}
+      <div className="flex ml-[68px] mb-1 relative">
+        <div className="flex-1 relative" style={{ height: 14 }}>
+          {xLabels.map(h => (
+            <span
+              key={h}
+              className="absolute text-[10px] text-faint -translate-x-1/2"
+              style={{ left: `${(h / 24) * 100}%` }}
+            >
+              {h}h
+            </span>
           ))}
-        </div>
-
-        {/* Gráfico sem o YAxis (labels acima) */}
-        <div className="flex-1 min-w-0">
-          <ResponsiveContainer width="100%" height={DAYS * 32 + 20}>
-            <BarChart data={rows} layout="vertical" barCategoryGap={6}>
-              <XAxis
-                type="number"
-                domain={[0, DAY_MS]}
-                tickFormatter={ms => `${Math.round(ms / 3600000)}h`}
-                tick={{ fill: CHART.tick, fontSize: 11 }}
-                axisLine={false}
-                tickLine={false}
-              />
-              <YAxis type="category" dataKey="day" hide />
-              <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(255,255,255,0.03)' }} />
-
-              {/* Previsto (escuro) — base */}
-              <Bar dataKey="sleepingPred" stackId="a" fill={COLORS.sleepingPred} />
-              <Bar dataKey="awakePred"    stackId="a" fill={COLORS.awakePred} />
-              {/* Sem info */}
-              <Bar dataKey="noData"       stackId="a" fill={COLORS.noData} />
-              {/* Observado (vivo) — sobre o previsto */}
-              <Bar dataKey="sleeping"      stackId="a" fill={COLORS.sleeping} />
-              <Bar dataKey="eco"           stackId="a" fill={COLORS.eco} />
-              <Bar dataKey="listen_nowifi" stackId="a" fill={COLORS.listen_nowifi} />
-              <Bar dataKey="listen_wifips" stackId="a" fill={COLORS.listen_wifips} />
-              <Bar dataKey="listening"     stackId="a" fill={COLORS.listening} />
-              <Bar dataKey="awake_nowifi"  stackId="a" fill={COLORS.awake_nowifi} />
-              <Bar dataKey="awake_wifips"  stackId="a" fill={COLORS.awake_wifips} />
-              <Bar dataKey="awake_cpu80"   stackId="a" fill={COLORS.awake_cpu80} />
-              <Bar dataKey="awake"         stackId="a" fill={COLORS.awake} radius={[0, 3, 3, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
         </div>
       </div>
 
-      {/* Legendas */}
+      {/* Linhas de cada dia */}
+      {timelines.map(tl => (
+        <div key={tl.dateKey} className="flex items-center gap-2 mb-1.5">
+          {/* Label + botão apagar */}
+          <div className="flex items-center justify-end gap-1 flex-shrink-0" style={{ width: 64 }}>
+            {confirmDelete === tl.dateKey ? (
+              <>
+                <button
+                  onClick={() => { onDeleteDay(tl.dateKey); setConfirmDelete(null) }}
+                  className="px-1.5 py-0.5 bg-red-600 text-[9px] text-white rounded"
+                >ok</button>
+                <button
+                  onClick={() => setConfirmDelete(null)}
+                  className="px-1.5 py-0.5 bg-surface border border-border text-[9px] text-gray-400 rounded"
+                >×</button>
+              </>
+            ) : (
+              <>
+                <span className="text-[11px] mono text-faint">{tl.day}</span>
+                <button
+                  onClick={() => setConfirmDelete(tl.dateKey)}
+                  title="Apagar dados deste dia"
+                  className="text-gray-600 hover:text-red-400 transition-colors"
+                >
+                  <Trash2 size={10} />
+                </button>
+              </>
+            )}
+          </div>
+
+          {/* Barra de timeline posicionada no tempo */}
+          <div
+            className="flex-1 relative rounded overflow-hidden"
+            style={{ height: 20, background: COLORS.noData }}
+          >
+            {tl.segments.map((seg, i) => (
+              <div
+                key={i}
+                style={{
+                  position: 'absolute',
+                  left:     `${seg.startFrac * 100}%`,
+                  width:    `${Math.max(seg.durFrac * 100, 0.15)}%`,
+                  height:   '100%',
+                  background: COLORS[seg.state],
+                }}
+                onMouseEnter={e => setTooltip({ seg, clientX: e.clientX, clientY: e.clientY })}
+                onMouseMove={e  => setTooltip(t => t ? { ...t, clientX: e.clientX, clientY: e.clientY } : null)}
+                onMouseLeave={() => setTooltip(null)}
+              />
+            ))}
+            {/* Linhas de grade de 6h */}
+            {[6, 12, 18].map(h => (
+              <div
+                key={h}
+                style={{
+                  position: 'absolute',
+                  left: `${(h / 24) * 100}%`,
+                  top: 0, bottom: 0, width: 1,
+                  background: 'rgba(0,0,0,0.25)',
+                }}
+              />
+            ))}
+          </div>
+        </div>
+      ))}
+
+      {/* Tooltip flutuante */}
+      {tooltip && (
+        <div
+          className="fixed z-50 pointer-events-none bg-surface border border-border rounded-md px-3 py-2 text-xs shadow-lg"
+          style={{ left: tooltip.clientX + 12, top: tooltip.clientY - 40 }}
+        >
+          <p style={{ color: COLORS[tooltip.seg.state] }} className="font-medium">
+            {LABELS[tooltip.seg.state]}
+          </p>
+          <p className="text-faint font-mono">
+            {fmtTime(tooltip.seg.startMs)} – {fmtTime(tooltip.seg.endMs)}
+            {' · '}{formatDuration(tooltip.seg.endMs - tooltip.seg.startMs)}
+          </p>
+        </div>
+      )}
+
+      {/* Legenda */}
       <div className="mt-3 space-y-2">
         {hasSomeObserved && (
           <div>

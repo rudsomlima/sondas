@@ -1,20 +1,31 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { RadioTower, LocateFixed, Save, CheckCircle2 } from 'lucide-react'
-import type { AppSettings } from '@/app/lib/settings'
+import { RadioTower, LocateFixed, Save, CheckCircle2, Pencil, Trash2 } from 'lucide-react'
+import type { AppSettings, KnownReceiver } from '@/app/lib/settings'
+import { receiverKey } from '@/app/lib/receiverKey'
 
 interface ReceiverSettingsPanelProps {
   config: AppSettings
   setConfig: (updater: (c: AppSettings) => AppSettings) => void
   onSave: () => void
   saved: boolean
+  rxPosition?: { lat: number; lon: number } | null
+  knownReceivers?: KnownReceiver[]
+  onRenameReceiver?: (prefix: string, name: string) => void
+  onForgetReceiver?: (prefix: string) => void
+  onSwitchReceiver?: (prefix: string) => void
 }
 
 // Bloco "Meu receptor" — movido de app/configuracoes/page.tsx pra esta
 // página dedicada (callsign/posição/raio de alerta/notificações + MQTT de
 // status), sem mudança de comportamento, só de localização.
-export default function ReceiverSettingsPanel({ config, setConfig, onSave, saved }: ReceiverSettingsPanelProps) {
+export default function ReceiverSettingsPanel({
+  config, setConfig, onSave, saved, rxPosition,
+  knownReceivers, onRenameReceiver, onForgetReceiver, onSwitchReceiver,
+}: ReceiverSettingsPanelProps) {
+  const [editingPrefix, setEditingPrefix] = useState<string | null>(null)
+  const [editName, setEditName] = useState('')
   // Lido só no efeito (não no useState inicial): Notification não existe no
   // servidor, então calcular isso direto na primeira renderização faz o HTML
   // do server ('unsupported') divergir do primeiro render do client (valor
@@ -109,6 +120,19 @@ export default function ReceiverSettingsPanel({ config, setConfig, onSave, saved
           <LocateFixed size={13} />
           {locating ? 'Localizando…' : 'Usar minha localização'}
         </button>
+        {rxPosition && (
+          <button
+            onClick={() => setConfig(c => ({
+              ...c,
+              homeLat: Number(rxPosition.lat.toFixed(5)),
+              homeLon: Number(rxPosition.lon.toFixed(5)),
+            }))}
+            className="flex items-center gap-1.5 px-3 py-2 bg-surface border border-border rounded-md text-xs text-gray-400 hover:text-white transition-all"
+            title={`${rxPosition.lat.toFixed(5)}, ${rxPosition.lon.toFixed(5)}`}
+          >
+            Usar posição do receptor
+          </button>
+        )}
       </div>
 
       <label className="block text-xs text-gray-400 mt-4 mb-1.5">Alertar sonda nova só até esta distância de casa</label>
@@ -235,6 +259,21 @@ export default function ReceiverSettingsPanel({ config, setConfig, onSave, saved
               Atenção: broker público é aberto — os dados são visíveis a qualquer um (telemetria de
               sonda já é pública no SondeHub).
             </p>
+
+            <label className="block text-xs text-gray-400 mt-4 mb-1.5">Prefixo de descoberta (múltiplos receptores)</label>
+            <input
+              type="text"
+              value={config.mqttDiscoveryBase}
+              onChange={e => setConfig(c => ({ ...c, mqttDiscoveryBase: e.target.value }))}
+              placeholder="ex.: home/ (assina home/+/uptime)"
+              className="w-64 bg-bg border border-border rounded-md text-sm text-white mono px-3 py-2 outline-none focus:border-blue-500"
+            />
+            <p className="text-[11px] text-faint mt-1.5">
+              Se você tem múltiplos receptores com prefixos como <span className="mono">home/rdz01/</span>,{' '}
+              <span className="mono">home/rdz02/</span> etc., configure <span className="mono">home/</span>{' '}
+              aqui. O app assina <span className="mono">home/+/uptime</span> e detecta novos receptores
+              automaticamente. Deixe vazio para desabilitar.
+            </p>
           </div>
         )}
 
@@ -248,6 +287,70 @@ export default function ReceiverSettingsPanel({ config, setConfig, onSave, saved
           </button>
         </div>
       </div>
+
+      {/* Lista de receptores conhecidos */}
+      {knownReceivers && knownReceivers.length > 0 && (
+        <div className="mt-5 pt-5 border-t border-border">
+          <h3 className="text-xs font-semibold text-white mb-2">Receptores cadastrados</h3>
+          <div className="space-y-1.5">
+            {knownReceivers.map(kr => {
+              const isActive = kr.prefix === config.mqttTopicPrefix
+              const rKey = receiverKey(kr.prefix)
+              return (
+                <div key={kr.prefix} className={`flex items-center gap-2 p-2 rounded border text-xs ${
+                  isActive ? 'border-blue-500/40 bg-blue-600/10' : 'border-border bg-bg'
+                }`}>
+                  {editingPrefix === kr.prefix ? (
+                    <>
+                      <input
+                        autoFocus
+                        value={editName}
+                        onChange={e => setEditName(e.target.value)}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter') { onRenameReceiver?.(kr.prefix, editName.trim() || kr.prefix); setEditingPrefix(null) }
+                          if (e.key === 'Escape') setEditingPrefix(null)
+                        }}
+                        className="flex-1 bg-surface border border-border rounded px-2 py-0.5 text-white text-xs outline-none focus:border-blue-500"
+                      />
+                      <button onClick={() => { onRenameReceiver?.(kr.prefix, editName.trim() || kr.prefix); setEditingPrefix(null) }}
+                        className="text-blue-400 hover:text-blue-300 text-[10px]">ok</button>
+                      <button onClick={() => setEditingPrefix(null)} className="text-gray-500 hover:text-white text-[10px]">×</button>
+                    </>
+                  ) : (
+                    <>
+                      <span className="flex-1 text-gray-300 truncate">
+                        {kr.displayName}
+                        <span className="text-faint font-mono text-[9px] ml-1.5">({rKey})</span>
+                        {isActive && <span className="text-blue-400 text-[9px] ml-1.5">ativo</span>}
+                      </span>
+                      <button onClick={() => { setEditingPrefix(kr.prefix); setEditName(kr.displayName) }}
+                        className="text-gray-600 hover:text-gray-300 transition-colors" title="Renomear">
+                        <Pencil size={11} />
+                      </button>
+                      {!isActive && onSwitchReceiver && (
+                        <button onClick={() => onSwitchReceiver(kr.prefix)}
+                          className="text-[10px] text-cyan-400 hover:text-cyan-300 transition-colors" title="Usar este receptor">
+                          usar
+                        </button>
+                      )}
+                      {onForgetReceiver && (
+                        <button onClick={() => onForgetReceiver(kr.prefix)}
+                          className="text-gray-600 hover:text-red-400 transition-colors" title="Remover da lista">
+                          <Trash2 size={11} />
+                        </button>
+                      )}
+                    </>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+          <p className="text-[10px] text-faint mt-1.5">
+            Remover da lista não apaga os dados do receptor no R2.
+            Gerencie o armazenamento em Configurações → Armazenamento no servidor.
+          </p>
+        </div>
+      )}
     </div>
   )
 }

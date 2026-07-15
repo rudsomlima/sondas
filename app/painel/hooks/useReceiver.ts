@@ -4,8 +4,12 @@ import { useMemo } from 'react'
 import { LIVE_STALE_MS, ReceiverStatus } from '@/app/lib/sondehub'
 import { MQTT_FRESH_MS, UPTIME_ONLINE_MS, RdzSleep } from '@/app/lib/mqtt'
 import { useReceiverStatus, MyReceiverSonde, FORGET_MS } from './useReceiverStatus'
-import { useReceiverMqtt } from './useReceiverMqtt'
+import { useReceiverMqtt, DiscoveredReceiver } from './useReceiverMqtt'
 import type { RdzPower } from '@/app/lib/mqtt'
+import { getSettings } from '@/app/lib/settings'
+import { receiverKey as toReceiverKey } from '@/app/lib/receiverKey'
+
+export type { DiscoveredReceiver }
 import { parseUtcDateStr } from '@/app/lib/launchUtils'
 import { usePowerStateHistory, PowerHistoryEntry } from './usePowerStateHistory'
 import { useBatteryHistory, BattVoltageEntry } from './useBatteryHistory'
@@ -69,6 +73,7 @@ export interface ReceiverState {
   deletePowerHistoryDay: (dayKey: string) => void
   batteryHistory: BattVoltageEntry[]
   deleteBatteryHistoryDay: (dayKey: string) => void
+  discoveredReceivers: Map<string, DiscoveredReceiver>
 }
 
 /**
@@ -85,15 +90,18 @@ export function useReceiver(): ReceiverState {
   const sondehub = useReceiverStatus()
   const mqtt = useReceiverMqtt()
 
-  // Fora do useMemo abaixo de propósito: usePowerStateHistory usa
-  // useState/useEffect por dentro, e hooks não podem ser chamados de dentro
-  // de uma factory de useMemo (regra dos hooks).
+  // Chave de armazenamento derivada do prefix ativo (imutável por sessão —
+  // troca de receptor exige reload da página).
+  const rKey = useMemo(() => toReceiverKey(getSettings().mqttTopicPrefix), [])
+
+  // Fora do useMemo abaixo de propósito: hooks não podem ser chamados de
+  // dentro de uma factory de useMemo (regra dos hooks).
   const { sleeping, waitingLate } = useMemo(
     () => deriveSleepState(mqtt.sleepState, Date.now()),
     [mqtt.sleepState]
   )
-  const { history: powerHistory, deleteDay: deletePowerHistoryDay } = usePowerStateHistory(sleeping, waitingLate, mqtt.powerState, mqtt.connected)
-  const { history: batteryHistory, deleteDay: deleteBatteryHistoryDay } = useBatteryHistory(mqtt.ttgoBattV, mqtt.connected)
+  const { history: powerHistory, deleteDay: deletePowerHistoryDay } = usePowerStateHistory(sleeping, waitingLate, mqtt.powerState, mqtt.connected, rKey)
+  const { history: batteryHistory, deleteDay: deleteBatteryHistoryDay } = useBatteryHistory(mqtt.ttgoBattV, mqtt.connected, rKey)
 
   return useMemo(() => {
     const now = Date.now()
@@ -179,6 +187,7 @@ export function useReceiver(): ReceiverState {
       deletePowerHistoryDay,
       batteryHistory,
       deleteBatteryHistoryDay,
+      discoveredReceivers: mqtt.discoveredReceivers,
     }
   }, [sondehub, mqtt, sleeping, waitingLate, powerHistory, deletePowerHistoryDay, batteryHistory, deleteBatteryHistoryDay])
 }

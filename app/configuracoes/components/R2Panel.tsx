@@ -1,14 +1,23 @@
 'use client'
 
-import { useCallback, useState } from 'react'
-import { ChevronDown, Trash2, Loader2, RefreshCw, AlertTriangle, Server, FileJson } from 'lucide-react'
+import { useCallback, useEffect, useState } from 'react'
+import { ChevronDown, Trash2, Loader2, RefreshCw, AlertTriangle, Server, FileJson, Radio } from 'lucide-react'
 import { formatBytes } from '@/app/lib/launchUtils'
+import { getSettings } from '@/app/lib/settings'
 
 interface R2HistFile {
   key: string
   station: string
   year: number
   sizeBytes: number
+  lastModified: string
+}
+
+interface R2ReceiverFile {
+  key:          string
+  receiverKey:  string
+  type:         'power' | 'batt'
+  sizeBytes:    number
   lastModified: string
 }
 
@@ -21,6 +30,7 @@ interface R2AnyFile {
 type DeleteTarget =
   | { type: 'history-year';    station: string; year: number }
   | { type: 'history-station'; station: string }
+  | { type: 'receiver';        receiverKey: string }
   | { type: 'file';            key: string }
   | { type: 'all' }
 
@@ -32,21 +42,39 @@ function fmtDate(iso: string): string {
   return iso ? new Date(iso).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : '—'
 }
 
-// Descrições amigáveis para arquivos conhecidos
 const FILE_DESCRIPTIONS: Record<string, string> = {
   'sondas/sync-status.json': 'Status do último cron de sincronização radiosondy',
 }
 
+const TYPE_LABELS: Record<'power' | 'batt', string> = {
+  power: 'Power/sleep history',
+  batt:  'Bateria history',
+}
+
 export default function R2Panel() {
-  const [files,       setFiles]       = useState<R2HistFile[]>([])
-  const [otherFiles,  setOtherFiles]  = useState<R2AnyFile[]>([])
-  const [totalBytes,  setTotalBytes]  = useState(0)
-  const [loading,     setLoading]     = useState(false)
-  const [loaded,      setLoaded]      = useState(false)
-  const [configured,  setConfigured]  = useState(true)
-  const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null)
-  const [deleting,    setDeleting]    = useState(false)
-  const [expandedSt,  setExpandedSt]  = useState<Set<string>>(new Set())
+  const [files,          setFiles]          = useState<R2HistFile[]>([])
+  const [receiverFiles,  setReceiverFiles]  = useState<R2ReceiverFile[]>([])
+  const [otherFiles,     setOtherFiles]     = useState<R2AnyFile[]>([])
+  const [totalBytes,     setTotalBytes]     = useState(0)
+  const [loading,        setLoading]        = useState(false)
+  const [loaded,         setLoaded]         = useState(false)
+  const [configured,     setConfigured]     = useState(true)
+  const [deleteTarget,   setDeleteTarget]   = useState<DeleteTarget | null>(null)
+  const [deleting,       setDeleting]       = useState(false)
+  const [expandedSt,     setExpandedSt]     = useState<Set<string>>(new Set())
+
+  // Nomes amigáveis dos receptores (de knownReceivers no settings)
+  const [receiverNames, setReceiverNames] = useState<Record<string, string>>({})
+  useEffect(() => {
+    const s = getSettings()
+    const names: Record<string, string> = {}
+    for (const kr of s.knownReceivers) {
+      // Importa a função de chave de forma inline para não criar dep circular
+      const k = kr.prefix.trim().replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_|_$/g, '') || 'default'
+      names[k] = kr.displayName
+    }
+    setReceiverNames(names)
+  }, [])
 
   const fetchFiles = useCallback(async () => {
     setLoading(true)
@@ -56,6 +84,7 @@ export default function R2Panel() {
         const json = await res.json()
         setConfigured(json.configured !== false)
         setFiles(json.files ?? [])
+        setReceiverFiles(json.receiverFiles ?? [])
         setOtherFiles(json.otherFiles ?? [])
         setTotalBytes(json.totalBytes ?? 0)
         setLoaded(true)
@@ -77,6 +106,8 @@ export default function R2Panel() {
         params.set('year', String(deleteTarget.year))
       } else if (deleteTarget.type === 'history-station') {
         params.set('station', deleteTarget.station)
+      } else if (deleteTarget.type === 'receiver') {
+        params.set('receiver', deleteTarget.receiverKey)
       } else if (deleteTarget.type === 'file') {
         params.set('key', deleteTarget.key)
       }
@@ -94,7 +125,13 @@ export default function R2Panel() {
     return next
   })
 
-  const totalFiles = files.length + otherFiles.length
+  // Agrupa arquivos de receptor por receiverKey
+  const receiverGroups = receiverFiles.reduce<Record<string, R2ReceiverFile[]>>((acc, f) => {
+    ;(acc[f.receiverKey] ??= []).push(f)
+    return acc
+  }, {})
+
+  const totalFiles = files.length + receiverFiles.length + otherFiles.length
 
   return (
     <div>
@@ -122,7 +159,6 @@ export default function R2Panel() {
 
       {totalFiles > 0 && (
         <>
-          {/* Resumo */}
           <div className="flex flex-wrap gap-4 mb-3 text-xs">
             <span><span className="text-gray-400">Uso total: </span><span className="text-white font-bold mono">{formatBytes(totalBytes)}</span></span>
             <span><span className="text-gray-400">Arquivos: </span><span className="text-white font-bold mono">{totalFiles}</span></span>
@@ -184,6 +220,45 @@ export default function R2Panel() {
             </div>
           )}
 
+          {/* ── Histórico de receptores ── */}
+          {Object.keys(receiverGroups).length > 0 && (
+            <div className="mb-4">
+              <p className="text-[10px] text-gray-500 uppercase tracking-wide mb-1.5">Histórico de receptores</p>
+              <div className="space-y-1">
+                {Object.entries(receiverGroups).map(([rKey, rFiles]) => {
+                  const displayName = receiverNames[rKey] || rKey
+                  const totalSize = rFiles.reduce((s, f) => s + f.sizeBytes, 0)
+                  const lastMod = rFiles.map(f => f.lastModified).sort().pop() ?? ''
+                  return (
+                    <div key={rKey} className="border border-border rounded bg-bg px-3 py-2 flex items-center gap-2">
+                      <Radio size={12} className="text-cyan-400 flex-shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs text-gray-300 font-medium">{displayName}</p>
+                        <div className="flex flex-wrap gap-3 mt-0.5">
+                          {rFiles.map(f => (
+                            <span key={f.type} className="text-[10px] text-gray-600">
+                              {TYPE_LABELS[f.type]}: {formatBytes(f.sizeBytes)}
+                            </span>
+                          ))}
+                        </div>
+                        <p className="text-[9px] text-gray-700 mono mt-0.5">{rKey}</p>
+                      </div>
+                      <span className="text-[10px] text-gray-600 flex-shrink-0">{formatBytes(totalSize)}</span>
+                      <span className="text-[10px] text-gray-600 flex-shrink-0 hidden sm:block">{fmtDate(lastMod)}</span>
+                      <button
+                        onClick={() => setDeleteTarget({ type: 'receiver', receiverKey: rKey })}
+                        className="text-red-400 hover:text-red-300 flex-shrink-0"
+                        title={`Apagar histórico de ${displayName}`}
+                      >
+                        <Trash2 size={11} />
+                      </button>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
           {/* ── Outros arquivos ── */}
           {otherFiles.length > 0 && (
             <div className="mb-4">
@@ -203,7 +278,6 @@ export default function R2Panel() {
                     <button
                       onClick={() => setDeleteTarget({ type: 'file', key: f.key })}
                       className="text-red-400 hover:text-red-300 flex-shrink-0"
-                      title={`Apagar ${f.key}`}
                     >
                       <Trash2 size={11} />
                     </button>
@@ -223,7 +297,6 @@ export default function R2Panel() {
         </>
       )}
 
-      {/* Confirmação de deleção */}
       {deleteTarget && (
         <div className="mt-3 p-3 border border-yellow-500/30 rounded bg-yellow-500/5 flex items-start gap-3">
           <AlertTriangle size={16} className="text-yellow-400 flex-shrink-0 mt-0.5" />
@@ -235,7 +308,9 @@ export default function R2Panel() {
                   ? `Apagar ${deleteTarget.year} da estação ${deleteTarget.station}?`
                   : deleteTarget.type === 'history-station'
                     ? `Apagar todos os anos de ${deleteTarget.station}?`
-                    : `Apagar ${fileBasename(deleteTarget.key)}?`}
+                    : deleteTarget.type === 'receiver'
+                      ? `Apagar todo o histórico de ${receiverNames[deleteTarget.receiverKey] || deleteTarget.receiverKey}?`
+                      : `Apagar ${fileBasename(deleteTarget.key)}?`}
             </p>
             <p className="text-[11px] text-gray-500 mt-1">Esta ação não pode ser desfeita.</p>
             <div className="flex gap-2 mt-2">

@@ -15,6 +15,12 @@ export interface MqttUptimeState {
   data: RdzUptime
 }
 
+export interface DiscoveredReceiver {
+  prefix: string
+  uptime: RdzUptime
+  seenAt: number
+}
+
 export interface ReceiverMqttState {
   connected: boolean
   lastLiveMessageAt: number | null // última mensagem NÃO-retained
@@ -30,6 +36,8 @@ export interface ReceiverMqttState {
   powerState: RdzPower | null
   packetsBySerial: Map<string, NearbySonde>
   mqttConfigured: boolean
+  // Receptores descobertos via wildcard (mqttDiscoveryBase). Chave = prefix.
+  discoveredReceivers: Map<string, DiscoveredReceiver>
 }
 
 /**
@@ -54,10 +62,12 @@ export function useReceiverMqtt(): ReceiverMqttState {
   const [powerState, setPowerState] = useState<RdzPower | null>(null)
   const [packetsBySerial, setPacketsBySerial] = useState<Map<string, NearbySonde>>(new Map())
   const [mqttConfigured, setMqttConfigured] = useState(false)
+  const [discoveredReceivers, setDiscoveredReceivers] = useState<Map<string, DiscoveredReceiver>>(new Map())
   // tick de 15s só pra reavaliar frescor na UI mesmo sem mensagem nova
   const [, setTick] = useState(0)
 
   const packetsRef = useRef<Map<string, NearbySonde>>(new Map())
+  const discoveredRef = useRef<Map<string, DiscoveredReceiver>>(new Map())
 
   useEffect(() => {
     const s = getSettings()
@@ -87,13 +97,16 @@ export function useReceiverMqtt(): ReceiverMqttState {
 
       c.on('connect', () => {
         setConnected(true)
-        c.subscribe([
+        const topics = [
           `${s.mqttTopicPrefix}packet`,
           `${s.mqttTopicPrefix}uptime`,
           `${s.mqttTopicPrefix}pmu`,
           `${s.mqttTopicPrefix}sleep`,
           `${s.mqttTopicPrefix}power`,
-        ], { qos: 1 })
+        ]
+        // Autodescoberta: assina wildcard para detectar outros receptores
+        if (s.mqttDiscoveryBase) topics.push(`${s.mqttDiscoveryBase}+/uptime`)
+        c.subscribe(topics, { qos: 1 })
       })
       c.on('close', () => setConnected(false))
       c.on('offline', () => setConnected(false))
@@ -148,6 +161,20 @@ export function useReceiverMqtt(): ReceiverMqttState {
           packetsRef.current.set(sonde.serial, sonde)
           setPacketsBySerial(new Map(packetsRef.current))
           if (!retained) setLastLiveMessageAt(now)
+          return
+        }
+
+        // Autodescoberta: mensagem de uptime de outro receptor (via wildcard)
+        if (s.mqttDiscoveryBase &&
+            topic.startsWith(s.mqttDiscoveryBase) &&
+            topic.endsWith('/uptime') &&
+            topic !== `${s.mqttTopicPrefix}uptime`) {
+          const prefix = topic.slice(0, -'uptime'.length) // "base/segmento/"
+          if (prefix === s.mqttTopicPrefix) return       // é o receptor principal
+          const data = parseRdzUptime(text)
+          if (!data) return
+          discoveredRef.current.set(prefix, { prefix, uptime: data, seenAt: now })
+          setDiscoveredReceivers(new Map(discoveredRef.current))
         }
       })
     })()
@@ -160,5 +187,5 @@ export function useReceiverMqtt(): ReceiverMqttState {
     }
   }, [])
 
-  return { connected, lastLiveMessageAt, uptime, ttgoBattV, sleepState, powerState, packetsBySerial, mqttConfigured }
+  return { connected, lastLiveMessageAt, uptime, ttgoBattV, sleepState, powerState, packetsBySerial, mqttConfigured, discoveredReceivers }
 }

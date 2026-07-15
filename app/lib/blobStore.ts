@@ -200,6 +200,99 @@ export async function readSyncStatus(): Promise<SyncStatus | null> {
   }
 }
 
+// ──────────────────────────────────────────────────────────────────────────────
+// Histórico de bateria e power por receptor
+// Caminho: sondas/receivers/{receiverKey}/{type}-history.json
+// ──────────────────────────────────────────────────────────────────────────────
+function receiverHistoryPath(key: string, type: 'power' | 'batt'): string {
+  return `sondas/receivers/${key}/${type}-history.json`
+}
+
+export async function readReceiverHistory<T>(key: string, type: 'power' | 'batt'): Promise<T[] | null> {
+  const client = getClient()
+  if (!client) return null
+  try {
+    const res = await client.send(new GetObjectCommand({ Bucket: bucket(), Key: receiverHistoryPath(key, type) }))
+    const body = await res.Body?.transformToString()
+    if (!body) return null
+    const arr = JSON.parse(body)
+    return Array.isArray(arr) ? arr : null
+  } catch (e: any) {
+    if (e?.name === 'NoSuchKey' || e?.$metadata?.httpStatusCode === 404) return null
+    console.error('[R2] readReceiverHistory falhou:', e)
+    return null
+  }
+}
+
+export async function writeReceiverHistory<T>(key: string, type: 'power' | 'batt', data: T[]): Promise<void> {
+  const client = getClient()
+  if (!client) return
+  try {
+    await client.send(new PutObjectCommand({
+      Bucket: bucket(),
+      Key: receiverHistoryPath(key, type),
+      Body: JSON.stringify(data),
+      ContentType: 'application/json',
+    }))
+  } catch (e) {
+    console.error('[R2] writeReceiverHistory falhou:', e)
+  }
+}
+
+export interface ReceiverHistoryFile {
+  key:          string   // receiverKey (ex.: "home_rdz01")
+  type:         'power' | 'batt'
+  r2Key:        string   // caminho completo no R2
+  sizeBytes:    number
+  lastModified: string
+}
+
+export async function listReceiverHistories(): Promise<ReceiverHistoryFile[]> {
+  const client = getClient()
+  if (!client) return []
+  try {
+    const result: ReceiverHistoryFile[] = []
+    let continuationToken: string | undefined
+    do {
+      const res = await client.send(new ListObjectsV2Command({
+        Bucket: bucket(),
+        Prefix: 'sondas/receivers/',
+        ContinuationToken: continuationToken,
+      }))
+      for (const obj of res.Contents ?? []) {
+        if (!obj.Key) continue
+        const m = obj.Key.match(/receivers\/([^/]+)\/(power|batt)-history\.json$/)
+        if (!m) continue
+        result.push({
+          key:          m[1],
+          type:         m[2] as 'power' | 'batt',
+          r2Key:        obj.Key,
+          sizeBytes:    obj.Size ?? 0,
+          lastModified: obj.LastModified?.toISOString() ?? '',
+        })
+      }
+      continuationToken = res.NextContinuationToken
+    } while (continuationToken)
+    return result
+  } catch (e) {
+    console.error('[R2] listReceiverHistories falhou:', e)
+    return []
+  }
+}
+
+export async function deleteReceiverHistory(key: string): Promise<void> {
+  const client = getClient()
+  if (!client) return
+  try {
+    await Promise.all([
+      client.send(new DeleteObjectCommand({ Bucket: bucket(), Key: receiverHistoryPath(key, 'power') })),
+      client.send(new DeleteObjectCommand({ Bucket: bucket(), Key: receiverHistoryPath(key, 'batt') })),
+    ])
+  } catch (e) {
+    console.error('[R2] deleteReceiverHistory falhou:', e)
+  }
+}
+
 export async function writeSyncStatus(status: SyncStatus): Promise<void> {
   const client = getClient()
   if (!client) return

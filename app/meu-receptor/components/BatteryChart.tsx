@@ -230,15 +230,9 @@ export default function BatteryChart({ history, config, onDeleteDay }: BatteryCh
           >
             <CartesianGrid strokeDasharray="3 3" stroke={CHART.grid} vertical={false} />
 
-            {/* Zonas de alerta */}
+            {/* Zona de alerta crítico (apenas abaixo de vpanic) */}
             {vpanic !== undefined && isFinite(vpanic) && (
               <ReferenceArea y1={yMin} y2={vpanic} fill="#450a0a" fillOpacity={0.5} />
-            )}
-            {vcrit  !== undefined && isFinite(vcrit)  && vlow !== undefined && (
-              <ReferenceArea y1={vpanic ?? yMin} y2={vcrit} fill="#7f1d1d" fillOpacity={0.35} />
-            )}
-            {vlow   !== undefined && isFinite(vlow)   && (
-              <ReferenceArea y1={vcrit ?? yMin} y2={vlow} fill="#78350f" fillOpacity={0.25} />
             )}
 
             {/* Seleção de zoom (arrastar) */}
