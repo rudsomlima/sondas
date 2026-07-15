@@ -34,3 +34,11 @@ export const TRAJECTORY = {
   descent: '#f59e0b',  // descida — âmbar
   burst: '#ef4444',    // estouro
 } as const
+
+// Linha do tempo de Deep Sleep / power management (app/meu-receptor).
+export const POWER_STATE = {
+  awake: '#34d399',     // acordado, potência plena
+  listening: '#f59e0b', // escuta estendida (aguardando lançamento atrasado)
+  sleeping: '#818cf8',  // deep sleep
+  eco: '#ef4444',       // economia agressiva por bateria crítica (sleep.vcrit)
+} as const

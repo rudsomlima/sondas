@@ -15,6 +15,8 @@
  * defensivo antes de entrar no app.
  */
 import type { NearbySonde } from './sondehub'
+import type { RdzConfig } from './rdzConfig'
+import { parseConfigJson } from './rdzConfig'
 
 // Campos do sonde2json (todos opcionais no wire; floats NaN são omitidos).
 export interface RdzPacket {
@@ -155,6 +157,25 @@ export function parseRdzPmu(payload: string): RdzPmu | null {
   return { vBatt }
 }
 
+// Tópico {prefix}power (retained, publicado só quando muda — não é
+// heartbeat): estado de energia do deep sleep v2 (RX_FSK/src/sleep.cpp).
+// {"eco": true, "cpu_mhz": 80, "wifi": "modem_sleep"}
+export interface RdzPower {
+  eco: boolean // modo economia por bateria crítica (sleep.vcrit) ativo
+  cpuMhz: number // 80 ou 240
+  wifi: 'on' | 'modem_sleep' | 'off'
+}
+
+export function parseRdzPower(payload: string): RdzPower | null {
+  let raw: Record<string, unknown>
+  try { raw = JSON.parse(payload) } catch { return null }
+  if (typeof raw !== 'object' || raw === null) return null
+  const cpuMhz = num(raw.cpu_mhz)
+  const wifi = raw.wifi
+  if (cpuMhz === undefined || (wifi !== 'on' && wifi !== 'modem_sleep' && wifi !== 'off')) return null
+  return { eco: raw.eco === true, cpuMhz, wifi }
+}
+
 export function parseRdzSleep(payload: string): RdzSleep | null {
   let raw: Record<string, unknown>
   try { raw = JSON.parse(payload) } catch { return null }
@@ -174,6 +195,70 @@ export function parseRdzSleep(payload: string): RdzSleep | null {
 // de verificação do plano) — se o valor cru já vier negativo, é dBm direto.
 export function rdzRssiToDbm(raw: number): number {
   return raw > 0 ? -raw / 2 : raw
+}
+
+// Tópicos de config completa (novos, ver docs/DEEP_SLEEP_V2_GUIDE.md e
+// conn-mqtt.cpp do firmware) — request/response, NÃO retidos de propósito:
+// um {prefix}config retido ficaria "fantasma" assim que alguém editasse a
+// config pelo canal HTTP local (que não passa por MQTT), sem nenhum sinal
+// visível de que o valor mostrado no app já não é o real. Cada requisição
+// carrega um `reqId` (correlaciona a resposta) gerado no momento do pedido —
+// nunca reusar um reqId entre requisições.
+export function cfgGetTopic(prefix: string): string { return `${prefix}cfg/get` }
+export function cfgGetRespTopic(prefix: string): string { return `${prefix}cfg/getresp` }
+export function cfgSetTopic(prefix: string): string { return `${prefix}cfg/set` }
+export function cfgSetRespTopic(prefix: string): string { return `${prefix}cfg/setresp` }
+
+export interface CfgGetResp {
+  reqId: string
+  config: RdzConfig | null
+  error?: string
+}
+
+export interface CfgSetResp {
+  reqId: string
+  ok: boolean
+  error?: string
+  rebooting?: boolean
+}
+
+export function parseCfgGetResp(payload: string): CfgGetResp | null {
+  let raw: Record<string, unknown>
+  try { raw = JSON.parse(payload) } catch { return null }
+  if (typeof raw !== 'object' || raw === null) return null
+  const reqId = typeof raw.reqId === 'string' ? raw.reqId : null
+  if (!reqId) return null
+  return {
+    reqId,
+    config: parseConfigJson(raw.config),
+    error: typeof raw.error === 'string' ? raw.error : undefined,
+  }
+}
+
+export function parseCfgSetResp(payload: string): CfgSetResp | null {
+  let raw: Record<string, unknown>
+  try { raw = JSON.parse(payload) } catch { return null }
+  if (typeof raw !== 'object' || raw === null) return null
+  const reqId = typeof raw.reqId === 'string' ? raw.reqId : null
+  if (!reqId || typeof raw.ok !== 'boolean') return null
+  return {
+    reqId,
+    ok: raw.ok,
+    error: typeof raw.error === 'string' ? raw.error : undefined,
+    rebooting: raw.rebooting === true,
+  }
+}
+
+// HMAC-SHA256(cfgsecret, reqId+"|"+JSON(changes)) truncado a 16 hex — prova
+// de posse do segredo configurado localmente no firmware (Config → mqtt via
+// HTTP na LAN) sem nunca colocar o segredo em si no wire do broker público.
+// Web Crypto (SubtleCrypto) só existe em contexto seguro (https/localhost),
+// o que já é verdade sempre que MQTT-over-WSS também está disponível.
+export async function computeCfgAuth(secret: string, reqId: string, changesJson: string): Promise<string> {
+  const enc = new TextEncoder()
+  const key = await crypto.subtle.importKey('raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'])
+  const sig = await crypto.subtle.sign('HMAC', key, enc.encode(`${reqId}|${changesJson}`))
+  return [...new Uint8Array(sig)].map(b => b.toString(16).padStart(2, '0')).join('').slice(0, 16)
 }
 
 // Converte um packet MQTT pro shape que o pipeline sticky/merge já consome.

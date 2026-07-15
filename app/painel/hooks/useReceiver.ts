@@ -2,10 +2,29 @@
 
 import { useMemo } from 'react'
 import { LIVE_STALE_MS, ReceiverStatus } from '@/app/lib/sondehub'
-import { MQTT_FRESH_MS, UPTIME_ONLINE_MS } from '@/app/lib/mqtt'
+import { MQTT_FRESH_MS, UPTIME_ONLINE_MS, RdzSleep } from '@/app/lib/mqtt'
 import { useReceiverStatus, MyReceiverSonde, FORGET_MS } from './useReceiverStatus'
 import { useReceiverMqtt } from './useReceiverMqtt'
+import type { RdzPower } from '@/app/lib/mqtt'
 import { parseUtcDateStr } from '@/app/lib/launchUtils'
+import { usePowerStateHistory, PowerHistoryEntry } from './usePowerStateHistory'
+import { useBatteryHistory, BattVoltageEntry } from './useBatteryHistory'
+
+export type { PowerHistoryEntry, BattVoltageEntry }
+
+// Retained de propósito: o aviso é publicado ANTES de dormir/economizar e
+// fica no broker; expira sozinho quando sleep_until passa (com 10 min de
+// tolerância para o drift do RTC do TTGO). As razões "listen_*" significam
+// "acordado, aguardando lançamento atrasado" — não é sleep de verdade. Função
+// pura (não hook) pra poder ser chamada tanto pro histórico (usePowerStateHistory,
+// hook de nível superior) quanto pro estado retornado (dentro do useMemo abaixo).
+function deriveSleepState(s: RdzSleep | null, now: number) {
+  const active = !!s && s.sleepUntil > 0 && now < s.sleepUntil * 1000 + 10 * 60_000
+  const isListen = active && (s!.reason?.startsWith('listen') ?? false)
+  const sleeping = active && !isListen ? { until: s!.sleepUntil * 1000, reason: s!.reason } : null
+  const waitingLate = active && isListen ? { until: s!.sleepUntil * 1000, reason: s!.reason } : null
+  return { sleeping, waitingLate }
+}
 
 export type ReceiverSource = 'mqtt' | 'sondehub'
 
@@ -40,6 +59,16 @@ export interface ReceiverState {
   // `time`, dev2), lido mesmo de mensagem retained — dá "visto pela última
   // vez" real ao abrir a aba já com o receptor dormindo, sem sonda no ar.
   mqttPublishedAt: number | null
+  // Estado de energia (CPU/WiFi/economia por bateria crítica) publicado pelo
+  // firmware — null se nunca recebido (ex. firmware antigo sem essa feature,
+  // ou nunca conectado via MQTT). Retained: vale mesmo com msg antiga.
+  power: RdzPower | null
+  // Histórico local (localStorage) de transições dormindo/acordado/escutando/
+  // economia, pra linha do tempo em app/meu-receptor — ver usePowerStateHistory.
+  powerHistory: PowerHistoryEntry[]
+  deletePowerHistoryDay: (dayKey: string) => void
+  batteryHistory: BattVoltageEntry[]
+  deleteBatteryHistoryDay: (dayKey: string) => void
 }
 
 /**
@@ -55,6 +84,16 @@ export interface ReceiverState {
 export function useReceiver(): ReceiverState {
   const sondehub = useReceiverStatus()
   const mqtt = useReceiverMqtt()
+
+  // Fora do useMemo abaixo de propósito: usePowerStateHistory usa
+  // useState/useEffect por dentro, e hooks não podem ser chamados de dentro
+  // de uma factory de useMemo (regra dos hooks).
+  const { sleeping, waitingLate } = useMemo(
+    () => deriveSleepState(mqtt.sleepState, Date.now()),
+    [mqtt.sleepState]
+  )
+  const { history: powerHistory, deleteDay: deletePowerHistoryDay } = usePowerStateHistory(sleeping, waitingLate, mqtt.powerState, mqtt.connected)
+  const { history: batteryHistory, deleteDay: deleteBatteryHistoryDay } = useBatteryHistory(mqtt.ttgoBattV, mqtt.connected)
 
   return useMemo(() => {
     const now = Date.now()
@@ -118,20 +157,6 @@ export function useReceiver(): ReceiverState {
     // receptor já dormindo, sem depender de outra sonda ter aparecido agora.
     const mqttPublishedAt = lastKnown?.publishedUtc ? parseUtcDateStr(lastKnown.publishedUtc).getTime() : null
 
-    // Retained de propósito: o aviso é publicado ANTES de dormir/economizar e
-    // fica no broker; expira sozinho quando sleep_until passa (com 10 min de
-    // tolerância para o drift do RTC do TTGO). As razões "listen_*" significam
-    // "acordado, aguardando lançamento atrasado" — não é sleep de verdade.
-    const s = mqtt.sleepState
-    const active = !!s && s.sleepUntil > 0 && now < s.sleepUntil * 1000 + 10 * 60_000
-    const isListen = active && (s!.reason?.startsWith('listen') ?? false)
-    const sleeping = active && !isListen
-      ? { until: s!.sleepUntil * 1000, reason: s!.reason }
-      : null
-    const waitingLate = active && isListen
-      ? { until: s!.sleepUntil * 1000, reason: s!.reason }
-      : null
-
     return {
       mySondes,
       status,
@@ -149,6 +174,11 @@ export function useReceiver(): ReceiverState {
       receiverIp,
       mqttLastMessageAt: mqtt.lastLiveMessageAt,
       mqttPublishedAt,
+      power: mqtt.powerState,
+      powerHistory,
+      deletePowerHistoryDay,
+      batteryHistory,
+      deleteBatteryHistoryDay,
     }
-  }, [sondehub, mqtt])
+  }, [sondehub, mqtt, sleeping, waitingLate, powerHistory, deletePowerHistoryDay, batteryHistory, deleteBatteryHistoryDay])
 }

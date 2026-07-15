@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import {
   History, Settings, Menu, X, LayoutDashboard, BarChart3,
-  Wind, ChevronRight, Satellite
+  Wind, ChevronRight, Satellite, Antenna
 } from 'lucide-react'
 import { getSelectedStation, DEFAULT_STATION, Station } from '@/app/lib/stations'
 
@@ -27,6 +27,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
     { href: '/painel', icon: LayoutDashboard, label: 'Painel', desc: 'Mission control' },
     { href: '/historico', icon: History, label: 'Histórico Anual', desc: 'Lançamentos por ano' },
     { href: '/analytics', icon: BarChart3, label: 'Análises', desc: 'Métricas e mapas' },
+    { href: '/meu-receptor', icon: Antenna, label: 'Meu Receptor', desc: 'Config. e energia do rdzsonde' },
     { href: '/configuracoes', icon: Settings, label: 'Configurações', desc: 'Estação e dados' },
   ]
 

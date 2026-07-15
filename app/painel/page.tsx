@@ -124,6 +124,7 @@ export default function PainelPage() {
             receiverIp={receiver.receiverIp}
             mqttLastMessageAt={receiver.mqttLastMessageAt}
             mqttPublishedAt={receiver.mqttPublishedAt}
+            power={receiver.power}
             selected={selected}
             onSelect={setSelected}
           />
@@ -145,6 +146,7 @@ export default function PainelPage() {
             selected={selected}
             chasePos={geo.pos ? { lat: geo.pos.lat, lon: geo.pos.lon } : null}
             receiverPos={receiver.rxPosition}
+            receiverName={callsign}
           />
         </div>
 

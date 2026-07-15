@@ -23,6 +23,12 @@ export interface AppSettings {
   mqttEnabled: boolean
   mqttBrokerUrl: string // endpoint WebSocket do broker (ws:// ou wss://)
   mqttTopicPrefix: string // deve bater EXATAMENTE com mqtt.prefix do firmware; '' = inoperante
+  // Config completa do firmware (app/meu-receptor) — canal escolhido pelo
+  // usuário pra ler/gravar; null = ainda não escolheu. rdzConfigSecret deve
+  // bater com mqtt.cfgsecret configurado no firmware (só necessário pro
+  // canal MQTT gravar; leitura MQTT e o canal HTTP não exigem segredo).
+  rdzConfigChannel: 'http' | 'mqtt' | null
+  rdzConfigSecret: string
 }
 
 const SETTINGS_KEY = 'sondas_settings'
@@ -36,6 +42,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   mqttEnabled: false,
   mqttBrokerUrl: 'wss://broker.emqx.io:8084/mqtt',
   mqttTopicPrefix: '',
+  rdzConfigChannel: null,
+  rdzConfigSecret: '',
 }
 
 export function getSettings(): AppSettings {
@@ -62,6 +70,8 @@ export function getSettings(): AppSettings {
         ? parsed.mqttBrokerUrl.trim()
         : DEFAULT_SETTINGS.mqttBrokerUrl,
       mqttTopicPrefix: typeof parsed.mqttTopicPrefix === 'string' ? parsed.mqttTopicPrefix.trim() : DEFAULT_SETTINGS.mqttTopicPrefix,
+      rdzConfigChannel: parsed.rdzConfigChannel === 'http' || parsed.rdzConfigChannel === 'mqtt' ? parsed.rdzConfigChannel : null,
+      rdzConfigSecret: typeof parsed.rdzConfigSecret === 'string' ? parsed.rdzConfigSecret : DEFAULT_SETTINGS.rdzConfigSecret,
     }
   } catch {
     return DEFAULT_SETTINGS

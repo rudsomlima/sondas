@@ -4,8 +4,8 @@ import { useEffect, useRef, useState } from 'react'
 import type { MqttClient } from 'mqtt'
 import { LIVE_STALE_MS, NearbySonde } from '@/app/lib/sondehub'
 import {
-  parseRdzPacket, parseRdzUptime, parseRdzPmu, parseRdzSleep,
-  rdzPacketToSonde, RdzUptime, RdzSleep,
+  parseRdzPacket, parseRdzUptime, parseRdzPmu, parseRdzSleep, parseRdzPower,
+  rdzPacketToSonde, RdzUptime, RdzSleep, RdzPower,
 } from '@/app/lib/mqtt'
 import { getSettings } from '@/app/lib/settings'
 
@@ -25,6 +25,9 @@ export interface ReceiverMqttState {
   // Estado de deep sleep (tópico {prefix}sleep, retained de propósito —
   // é assim que se sabe que ele está dormindo com a aba recém-aberta).
   sleepState: RdzSleep | null
+  // Estado de energia (tópico {prefix}power, retained): CPU/WiFi/economia
+  // por bateria crítica — ver docs/DEEP_SLEEP_V2_GUIDE.md no firmware.
+  powerState: RdzPower | null
   packetsBySerial: Map<string, NearbySonde>
   mqttConfigured: boolean
 }
@@ -48,6 +51,7 @@ export function useReceiverMqtt(): ReceiverMqttState {
   const [uptime, setUptime] = useState<MqttUptimeState | null>(null)
   const [ttgoBattV, setTtgoBattV] = useState<number | null>(null)
   const [sleepState, setSleepState] = useState<RdzSleep | null>(null)
+  const [powerState, setPowerState] = useState<RdzPower | null>(null)
   const [packetsBySerial, setPacketsBySerial] = useState<Map<string, NearbySonde>>(new Map())
   const [mqttConfigured, setMqttConfigured] = useState(false)
   // tick de 15s só pra reavaliar frescor na UI mesmo sem mensagem nova
@@ -88,6 +92,7 @@ export function useReceiverMqtt(): ReceiverMqttState {
           `${s.mqttTopicPrefix}uptime`,
           `${s.mqttTopicPrefix}pmu`,
           `${s.mqttTopicPrefix}sleep`,
+          `${s.mqttTopicPrefix}power`,
         ], { qos: 1 })
       })
       c.on('close', () => setConnected(false))
@@ -125,6 +130,14 @@ export function useReceiverMqtt(): ReceiverMqttState {
           return
         }
 
+        if (topic === `${s.mqttTopicPrefix}power`) {
+          const data = parseRdzPower(text)
+          if (!data) return
+          setPowerState(data)
+          if (!retained) setLastLiveMessageAt(now)
+          return
+        }
+
         if (topic === `${s.mqttTopicPrefix}packet`) {
           const p = parseRdzPacket(text)
           if (!p) return
@@ -147,5 +160,5 @@ export function useReceiverMqtt(): ReceiverMqttState {
     }
   }, [])
 
-  return { connected, lastLiveMessageAt, uptime, ttgoBattV, sleepState, packetsBySerial, mqttConfigured }
+  return { connected, lastLiveMessageAt, uptime, ttgoBattV, sleepState, powerState, packetsBySerial, mqttConfigured }
 }

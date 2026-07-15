@@ -136,6 +136,52 @@ export async function getYearStoreSize(station: string, year: number): Promise<n
   }
 }
 
+// Lista TODOS os objetos no bucket (não só histórico) — para o painel de gestão.
+export interface R2AnyObject {
+  key: string
+  sizeBytes: number
+  lastModified: string
+}
+
+export async function listAllR2Objects(): Promise<R2AnyObject[]> {
+  const client = getClient()
+  if (!client) return []
+  try {
+    const result: R2AnyObject[] = []
+    let continuationToken: string | undefined
+    do {
+      const res = await client.send(new ListObjectsV2Command({
+        Bucket: bucket(),
+        Prefix: 'sondas/',
+        ContinuationToken: continuationToken,
+      }))
+      for (const obj of res.Contents ?? []) {
+        if (!obj.Key) continue
+        result.push({
+          key: obj.Key,
+          sizeBytes: obj.Size ?? 0,
+          lastModified: obj.LastModified?.toISOString() ?? '',
+        })
+      }
+      continuationToken = res.NextContinuationToken
+    } while (continuationToken)
+    return result.sort((a, b) => a.key.localeCompare(b.key))
+  } catch (e) {
+    console.error('[R2] listAllR2Objects falhou:', e)
+    return []
+  }
+}
+
+export async function deleteR2Object(key: string): Promise<void> {
+  const client = getClient()
+  if (!client) return
+  try {
+    await client.send(new DeleteObjectCommand({ Bucket: bucket(), Key: key }))
+  } catch (e) {
+    console.error('[R2] deleteR2Object falhou:', e)
+  }
+}
+
 const SYNC_STATUS_KEY = 'sondas/sync-status.json'
 
 // Status da última execução do cron radiosondy-sync — dá visibilidade dos

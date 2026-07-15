@@ -2,9 +2,10 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { Antenna, Loader2, BatteryMedium, Moon, Network, Radio, Clock } from 'lucide-react'
+import { Antenna, Loader2, BatteryMedium, Moon, Network, Radio, Clock, Cpu, Wifi, WifiOff } from 'lucide-react'
 import { formatGmt3 } from '@/app/lib/launchUtils'
 import type { ReceiverStatus } from '@/app/lib/sondehub'
+import type { RdzPower } from '@/app/lib/mqtt'
 import type { MyReceiverSonde } from '../hooks/useReceiverStatus'
 import type { ReceiverSource } from '../hooks/useReceiver'
 import type { SelectedTarget } from '../selection'
@@ -25,6 +26,7 @@ interface ReceiverPanelProps {
   receiverIp: string | null
   mqttLastMessageAt: number | null // epoch (ms) da última msg MQTT não-retida
   mqttPublishedAt: number | null // epoch (ms) da última msg uptime publicada pelo firmware (mesmo retained)
+  power: RdzPower | null // CPU/WiFi/modo economia — tópico {prefix}power, ver DEEP_SLEEP_V2_GUIDE.md
   selected: SelectedTarget | null
   onSelect: (t: SelectedTarget | null) => void
 }
@@ -64,7 +66,7 @@ function formatUptime(ms: number): string {
 export default function ReceiverPanel({
   status, mySondes, checked, enabled, callsign,
   source, mqttConfigured, mqttConnected, uptimeMs, ttgoBattV, sleeping, waitingLate,
-  receiverIp, mqttLastMessageAt, mqttPublishedAt,
+  receiverIp, mqttLastMessageAt, mqttPublishedAt, power,
   selected, onSelect,
 }: ReceiverPanelProps) {
   // Ticker próprio de 1s — não depende de re-renders de outras partes do
@@ -172,6 +174,46 @@ export default function ReceiverPanel({
             </div>
           )}
           {uptimeMs == null && ttgoBattV == null && <div className="mb-2" />}
+
+          {/* Estado de energia (CPU/WiFi/economia): descreve exatamente o que o
+              receptor está fazendo agora pra economizar bateria, e por quê. */}
+          {power && (
+            <div className="mb-3 rounded border border-border bg-bg p-2 space-y-1.5">
+              <p className="text-[10px] text-dim font-semibold">Energia agora</p>
+              <div className="flex items-center gap-3 text-[10px] mono flex-wrap">
+                <span
+                  className={`flex items-center gap-1 ${power.cpuMhz < 240 ? 'text-amber-400' : 'text-dim'}`}
+                  title={power.cpuMhz < 240 ? 'CPU reduzida para economizar bateria' : 'CPU em velocidade normal'}
+                >
+                  <Cpu size={11} /> CPU {power.cpuMhz} MHz{power.cpuMhz < 240 ? ' (reduzida)' : ''}
+                </span>
+                <span
+                  className={`flex items-center gap-1 ${power.wifi !== 'on' ? 'text-amber-400' : 'text-dim'}`}
+                  title={
+                    power.wifi === 'on' ? 'WiFi ligado normalmente'
+                    : power.wifi === 'modem_sleep' ? 'WiFi em modo de economia (modem sleep) — continua conectado, só mais devagar'
+                    : 'WiFi desligado para economizar bateria — religa sozinho ao decodificar uma sonda'
+                  }
+                >
+                  {power.wifi === 'off' ? <WifiOff size={11} /> : <Wifi size={11} />}
+                  {' '}WiFi {power.wifi === 'on' ? 'normal' : power.wifi === 'modem_sleep' ? 'economizado' : 'desligado'}
+                </span>
+              </div>
+              {power.eco && (
+                <p className="text-[10px] text-red-400">
+                  ⚠ Modo economia por bateria crítica: CPU reduzida, uploads mais espaçados e
+                  display desligado — a decodificação de sondas continua funcionando normalmente.
+                </p>
+              )}
+              {!sleeping && !waitingLate && (
+                <p className="text-[10px] text-dim">
+                  {power.wifi === 'on' && power.cpuMhz === 240 && !power.eco
+                    ? 'Funcionamento normal, sem economias ativas.'
+                    : 'Receptor ligado e escutando — nenhuma janela de dormir prevista agora.'}
+                </p>
+              )}
+            </div>
+          )}
 
           {receiverIp && (
             <div className="flex items-center gap-3 mb-3 text-[10px] text-dim mono flex-wrap">
