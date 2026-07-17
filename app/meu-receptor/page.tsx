@@ -5,7 +5,7 @@ import { Antenna, Loader2, Plus, Radio, RotateCw, XCircle } from 'lucide-react'
 import { AppSettings, DEFAULT_SETTINGS, KnownReceiver, getSettings, setSettings } from '@/app/lib/settings'
 import { receiverKey } from '@/app/lib/receiverKey'
 import { useReceiver } from '../painel/hooks/useReceiver'
-import { useFirmwareConfig, RdzConfigChannel } from './hooks/useFirmwareConfig'
+import { useFirmwareConfig } from './hooks/useFirmwareConfig'
 import ReceiverSettingsPanel from './components/ReceiverSettingsPanel'
 import ChannelPicker from './components/ChannelPicker'
 import FullConfigEditor from './components/FullConfigEditor'
@@ -30,7 +30,7 @@ export default function MeuReceptorPage() {
   }
 
   const receiver = useReceiver()
-  const firmwareConfig = useFirmwareConfig(receiver.receiverIp)
+  const firmwareConfig = useFirmwareConfig()
 
   // Auto-preenche callsign e posição de casa a partir da config do firmware
   const autoFillDone = useRef(false)
@@ -101,15 +101,6 @@ export default function MeuReceptorPage() {
       return next
     })
   }, [config.mqttTopicPrefix, config.knownReceivers, config.uploaderCallsign])
-
-  const handlePickChannel = (channel: RdzConfigChannel) => {
-    setConfigState(c => {
-      const next = { ...c, rdzConfigChannel: channel }
-      setSettings(next)
-      return next
-    })
-    firmwareConfig.load(channel)
-  }
 
   // Troca o receptor ativo: atualiza mqttTopicPrefix → salva → recarrega
   const switchReceiver = (prefix: string) => {
@@ -224,14 +215,7 @@ export default function MeuReceptorPage() {
         onSwitchReceiver={switchReceiver}
       />
 
-      <ChannelPicker
-        config={config}
-        setConfig={setConfig}
-        httpBlocked={firmwareConfig.httpBlocked}
-        receiverIp={receiver.receiverIp}
-        channel={firmwareConfig.channel}
-        onPick={handlePickChannel}
-      />
+      <ChannelPicker config={config} setConfig={setConfig} />
 
       {firmwareConfig.loading && (
         <div className="panel p-5 mb-6 flex items-center gap-2 text-sm text-gray-400">
@@ -244,14 +228,12 @@ export default function MeuReceptorPage() {
           <p className="text-sm text-red-400 flex items-center gap-2">
             <XCircle size={14} /> {firmwareConfig.error}
           </p>
-          {firmwareConfig.channel && (
-            <button
-              onClick={() => firmwareConfig.load(firmwareConfig.channel!)}
-              className="mt-3 flex items-center gap-2 px-3 py-2 bg-surface border border-border rounded-md text-xs text-gray-400 hover:text-white transition-all"
-            >
-              <RotateCw size={12} /> Tentar de novo
-            </button>
-          )}
+          <button
+            onClick={() => firmwareConfig.load()}
+            className="mt-3 flex items-center gap-2 px-3 py-2 bg-surface border border-border rounded-md text-xs text-gray-400 hover:text-white transition-all"
+          >
+            <RotateCw size={12} /> Tentar de novo
+          </button>
         </div>
       )}
 

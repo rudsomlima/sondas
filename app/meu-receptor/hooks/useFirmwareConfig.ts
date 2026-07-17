@@ -2,13 +2,16 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { getSettings } from '@/app/lib/settings'
-import { RdzConfig, parseConfigTxt, configTxtFromChanges } from '@/app/lib/rdzConfig'
+import { RdzConfig } from '@/app/lib/rdzConfig'
 import {
   cfgGetTopic, cfgGetRespTopic, cfgSetTopic, cfgSetRespTopic,
   parseCfgGetResp, parseCfgSetResp, computeCfgAuth,
 } from '@/app/lib/mqtt'
 
-export type RdzConfigChannel = 'http' | 'mqtt'
+// Único canal: MQTT (funciona de qualquer lugar, inclusive pelo site
+// publicado em https://). O canal HTTP local foi removido — só funcionava
+// com o app aberto em http:// na mesma rede do receptor.
+export type RdzConfigChannel = 'mqtt'
 
 export interface ApplyResult {
   ok: boolean
@@ -21,55 +24,17 @@ export interface FirmwareConfigState {
   loading: boolean
   error: string | null
   channel: RdzConfigChannel | null
-  httpBlocked: boolean
-  load: (channel?: RdzConfigChannel) => void
+  load: () => void
   applying: boolean
   applyError: string | null
   applyResult: ApplyResult | null
   apply: (changes: Record<string, string>, mode: 'live' | 'reboot') => void
 }
 
-const HTTP_TIMEOUT_MS = 5000
 const MQTT_TIMEOUT_MS = 8000
 
 function randomReqId(): string {
   return Math.random().toString(16).slice(2, 10).padEnd(8, '0')
-}
-
-async function fetchHttpConfig(receiverIp: string): Promise<RdzConfig> {
-  const controller = new AbortController()
-  const t = setTimeout(() => controller.abort(), HTTP_TIMEOUT_MS)
-  try {
-    const res = await fetch(`http://${receiverIp}/dlconfig`, { signal: controller.signal })
-    if (!res.ok) throw new Error(`HTTP ${res.status} ao ler /dlconfig`)
-    return parseConfigTxt(await res.text())
-  } finally {
-    clearTimeout(t)
-  }
-}
-
-// Reenvia o config.txt inteiro (base + diff) via /ulconfig (upload de
-// arquivo) — não /config.html (form), que exigiria replicar peculiaridades
-// de nome de campo do form do firmware (ex.: sufixo "#" de touch pin).
-async function writeHttpConfig(receiverIp: string, base: RdzConfig, changes: Record<string, string>, reboot: boolean) {
-  const body = new FormData()
-  const text = configTxtFromChanges(base, changes)
-  body.append('cfg', new Blob([text], { type: 'text/plain' }), 'config.txt')
-  const controller = new AbortController()
-  const t = setTimeout(() => controller.abort(), HTTP_TIMEOUT_MS)
-  try {
-    const res = await fetch(`http://${receiverIp}/ulconfig`, { method: 'POST', body, signal: controller.signal })
-    if (!res.ok) throw new Error(`HTTP ${res.status} ao gravar /ulconfig`)
-  } finally {
-    clearTimeout(t)
-  }
-  if (reboot) {
-    const rebootBody = new URLSearchParams({ reboot: '1' })
-    await fetch(`http://${receiverIp}/control.html`, { method: 'POST', body: rebootBody }).catch(() => {
-      // Se o receptor já começou a reiniciar, a resposta pode nunca chegar —
-      // não é erro real, o objetivo (reiniciar) já foi disparado.
-    })
-  }
 }
 
 // Canal MQTT: conexão curta e própria (não a always-on de useReceiverMqtt,
@@ -167,7 +132,7 @@ async function writeMqttConfig(
   }))
 }
 
-export function useFirmwareConfig(receiverIp: string | null): FirmwareConfigState {
+export function useFirmwareConfig(): FirmwareConfigState {
   const [config, setConfig] = useState<RdzConfig | null>(null)
   const [loadedAt, setLoadedAt] = useState<number | null>(null)
   const [loading, setLoading] = useState(false)
@@ -180,77 +145,49 @@ export function useFirmwareConfig(receiverIp: string | null): FirmwareConfigStat
   const configRef = useRef<RdzConfig | null>(null)
   configRef.current = config
 
-  // Calculado só depois de montar (não na primeira renderização) — o
-  // servidor não tem window.location, então avaliar isso direto no corpo do
-  // componente produzia HTML diferente do server pro client (React error
-  // #418, hydration mismatch) nesta mesma tela.
-  const [httpBlocked, setHttpBlocked] = useState(false)
-  useEffect(() => {
-    setHttpBlocked(window.location.protocol === 'https:')
-  }, [])
-
-  const load = useCallback((requestedChannel?: RdzConfigChannel) => {
+  const load = useCallback(() => {
     const s = getSettings()
-    const ch = requestedChannel ?? s.rdzConfigChannel
-    if (!ch) return
-    if (ch === 'http' && (httpBlocked || !receiverIp)) {
-      setChannel(ch)
-      setError(httpBlocked
-        ? 'O app está em https:// — o navegador bloqueia leitura direta do receptor (http local). Abra pelo IP do receptor ou rode o app localmente (npm run dev).'
-        : 'IP do receptor ainda desconhecido (precisa de pelo menos uma mensagem MQTT retida com uptime).')
-      return
-    }
-    if (ch === 'mqtt' && (!s.mqttEnabled || !s.mqttTopicPrefix)) {
-      setChannel(ch)
-      setError('Configure e ative o MQTT em Meu Receptor antes de usar este canal.')
+    if (!s.mqttEnabled || !s.mqttTopicPrefix) {
+      setChannel('mqtt')
+      setError('Configure e ative o MQTT em Meu Receptor antes de carregar a configuração.')
       return
     }
 
-    setChannel(ch)
+    setChannel('mqtt')
     setLoading(true)
     setError(null)
-    const promise = ch === 'http'
-      ? fetchHttpConfig(receiverIp!)
-      : fetchMqttConfig(s.mqttBrokerUrl, s.mqttTopicPrefix)
-    promise
+    fetchMqttConfig(s.mqttBrokerUrl, s.mqttTopicPrefix)
       .then(cfg => { setConfig(cfg); setLoadedAt(Date.now()) })
       .catch((e: Error) => setError(e.message || 'Falha ao carregar a configuração'))
       .finally(() => setLoading(false))
-  }, [receiverIp, httpBlocked])
+  }, [])
 
-  // Fetch único por sessão — dispara sozinho só se já houver canal salvo E
-  // (pro canal HTTP) o IP do receptor já for conhecido (chega via a msg
-  // retida de uptime do MQTT status, pode levar um instante após o mount).
-  // hasLoadedRef garante que isto roda no máximo uma vez, mesmo com o efeito
-  // reexecutando por causa do double-invoke do StrictMode em dev ou de
-  // `receiverIp` mudando de null pro valor real.
+  // Carrega sozinho uma vez por sessão, assim que MQTT estiver configurado —
+  // hasLoadedRef garante no máximo uma chamada mesmo com o double-invoke do
+  // StrictMode em dev.
   useEffect(() => {
     if (hasLoadedRef.current) return
     const s = getSettings()
-    if (!s.rdzConfigChannel) return
-    if (s.rdzConfigChannel === 'http' && receiverIp == null) return
+    if (!s.mqttEnabled || !s.mqttTopicPrefix) return
     hasLoadedRef.current = true
     load()
-  }, [receiverIp, load])
+  }, [load])
 
   const apply = useCallback((changes: Record<string, string>, mode: 'live' | 'reboot') => {
     const s = getSettings()
     const base = configRef.current
-    if (!channel || !base) return
+    if (!base) return
     setApplying(true)
     setApplyError(null)
     setApplyResult(null)
-    const promise = channel === 'http'
-      ? writeHttpConfig(receiverIp!, base, changes, mode === 'reboot').then(() => ({ ok: true, rebooting: mode === 'reboot' }))
-      : writeMqttConfig(s.mqttBrokerUrl, s.mqttTopicPrefix, s.rdzConfigSecret, changes, mode)
-    promise
+    writeMqttConfig(s.mqttBrokerUrl, s.mqttTopicPrefix, s.rdzConfigSecret, changes, mode)
       .then(result => {
         setApplyResult(result)
         setConfig(prev => prev ? { ...prev, ...changes } : prev)
       })
       .catch((e: Error) => setApplyError(e.message || 'Falha ao aplicar a configuração'))
       .finally(() => setApplying(false))
-  }, [channel, receiverIp])
+  }, [])
 
-  return { config, loadedAt, loading, error, channel, httpBlocked, load, applying, applyError, applyResult, apply }
+  return { config, loadedAt, loading, error, channel, load, applying, applyError, applyResult, apply }
 }
