@@ -235,7 +235,14 @@ export function useFirmwareConfig(receiverIp: string | null): FirmwareConfigStat
   const configRef = useRef<RdzConfig | null>(null)
   configRef.current = config
 
-  const httpBlocked = typeof window !== 'undefined' && window.location.protocol === 'https:'
+  // Calculado só depois de montar (não na primeira renderização) — o
+  // servidor não tem window.location, então avaliar isso direto no corpo do
+  // componente produzia HTML diferente do server pro client (React error
+  // #418, hydration mismatch) nesta mesma tela.
+  const [httpBlocked, setHttpBlocked] = useState(false)
+  useEffect(() => {
+    setHttpBlocked(window.location.protocol === 'https:')
+  }, [])
 
   const load = useCallback((requestedChannel?: RdzConfigChannel) => {
     const s = getSettings()
