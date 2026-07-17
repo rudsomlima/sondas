@@ -176,8 +176,26 @@ export default function ReceiverPanel({
           {uptimeMs == null && ttgoBattV == null && <div className="mb-2" />}
 
           {/* Estado de energia (CPU/WiFi/economia): descreve exatamente o que o
-              receptor está fazendo agora pra economizar bateria, e por quê. */}
-          {power && (
+              receptor está fazendo agora pra economizar bateria, e por quê.
+              Durante deep sleep de verdade o TTGO está desligado e não pode
+              publicar nada — o tópico power retido ainda guarda a última
+              leitura de ANTES de dormir, então mostrá-la como "agora" contradiz
+              o selo "dormindo" acima. Aqui priorizamos o estado real (sleeping)
+              e rotulamos a leitura antiga como histórico, não como atual. */}
+          {sleeping ? (
+            <div className="mb-3 rounded border border-border bg-bg p-2 space-y-1.5">
+              <p className="text-[10px] text-dim font-semibold">Energia agora</p>
+              <p className="text-[10px] mono text-indigo-300 flex items-center gap-1">
+                <Moon size={11} /> Deep sleep — CPU e rádio desligados
+              </p>
+              {power && (
+                <p className="text-[10px] text-faint">
+                  Última leitura antes de dormir: CPU {power.cpuMhz} MHz, WiFi{' '}
+                  {power.wifi === 'on' ? 'normal' : power.wifi === 'modem_sleep' ? 'economizado' : 'desligado'}
+                </p>
+              )}
+            </div>
+          ) : power && (
             <div className="mb-3 rounded border border-border bg-bg p-2 space-y-1.5">
               <p className="text-[10px] text-dim font-semibold">Energia agora</p>
               <div className="flex items-center gap-3 text-[10px] mono flex-wrap">

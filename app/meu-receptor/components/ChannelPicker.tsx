@@ -26,7 +26,7 @@ export default function ChannelPicker({ config, setConfig, httpBlocked, receiver
         Escolha como o app conversa com o rdzTTGOsonde pra ler e gravar a configuração completa.
       </p>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <button
           onClick={() => !httpBlocked && onPick('http')}
           disabled={httpBlocked}
@@ -38,6 +38,19 @@ export default function ChannelPicker({ config, setConfig, httpBlocked, receiver
           <div className="text-[11px] text-faint">
             Zero mudança no firmware. Só funciona com o app aberto em http:// (ex.: npm run dev
             local) e na mesma rede do receptor.
+          </div>
+        </button>
+        <button
+          onClick={() => onPick('firebase')}
+          className={`text-left p-3 rounded-md border transition-all ${
+            channel === 'firebase' ? 'border-blue-500/60 bg-blue-500/10' : 'border-border hover:border-border-strong'
+          }`}
+        >
+          <div className="text-sm text-white font-medium mb-1">Firebase (tempo real)</div>
+          <div className="text-[11px] text-faint">
+            Recomendado pelo site publicado. Usa MQTT por baixo pra falar com o receptor (mesmos
+            requisitos), mas espelha o resultado num banco em tempo real — outras abas/dispositivos
+            veem a config instantaneamente, sem manter a própria conexão MQTT nem recarregar.
           </div>
         </button>
         <button
@@ -74,10 +87,10 @@ export default function ChannelPicker({ config, setConfig, httpBlocked, receiver
         </p>
       )}
 
-      {channel === 'mqtt' && (
+      {(channel === 'mqtt' || channel === 'firebase') && (
         <div className="mt-4 pt-4 border-t border-border">
           <label className="block text-xs text-gray-400 mb-1.5">
-            Segredo de gravação (mqtt.cfgsecret) — só necessário pra aplicar mudanças via MQTT
+            Segredo de gravação (mqtt.cfgsecret) — só necessário pra aplicar mudanças via {channel === 'mqtt' ? 'MQTT' : 'Firebase'}
           </label>
           <input
             type="password"

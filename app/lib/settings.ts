@@ -36,7 +36,7 @@ export interface AppSettings {
   // usuário pra ler/gravar; null = ainda não escolheu. rdzConfigSecret deve
   // bater com mqtt.cfgsecret configurado no firmware (só necessário pro
   // canal MQTT gravar; leitura MQTT e o canal HTTP não exigem segredo).
-  rdzConfigChannel: 'http' | 'mqtt' | null
+  rdzConfigChannel: 'http' | 'mqtt' | 'firebase' | null
   rdzConfigSecret: string
   mqttDiscoveryBase: string // prefixo-raiz para wildcard de descoberta; '' = desabilitado
 }
@@ -85,7 +85,7 @@ export function getSettings(): AppSettings {
         ? parsed.knownReceivers.filter((r: any) => r && typeof r.prefix === 'string' && r.prefix)
         : DEFAULT_SETTINGS.knownReceivers,
       mqttTopicPrefix: typeof parsed.mqttTopicPrefix === 'string' ? parsed.mqttTopicPrefix.trim() : DEFAULT_SETTINGS.mqttTopicPrefix,
-      rdzConfigChannel: parsed.rdzConfigChannel === 'http' || parsed.rdzConfigChannel === 'mqtt' ? parsed.rdzConfigChannel : null,
+      rdzConfigChannel: parsed.rdzConfigChannel === 'http' || parsed.rdzConfigChannel === 'mqtt' || parsed.rdzConfigChannel === 'firebase' ? parsed.rdzConfigChannel : null,
       rdzConfigSecret: typeof parsed.rdzConfigSecret === 'string' ? parsed.rdzConfigSecret : DEFAULT_SETTINGS.rdzConfigSecret,
       mqttDiscoveryBase: typeof parsed.mqttDiscoveryBase === 'string' ? parsed.mqttDiscoveryBase.trim() : DEFAULT_SETTINGS.mqttDiscoveryBase,
     }

@@ -3,8 +3,15 @@
 import { useState } from 'react'
 import { Battery, Info, Trash2 } from 'lucide-react'
 import { GMT3 } from '@/app/lib/types'
-import type { PowerHistoryEntry, PowerHistoryState } from '@/app/painel/hooks/usePowerStateHistory'
+import { HEARTBEAT_MS, type PowerHistoryEntry, type PowerHistoryState } from '@/app/painel/hooks/usePowerStateHistory'
 import type { RdzConfig } from '@/app/lib/rdzConfig'
+
+// Um estado só é "assumido" contínuo até aqui além de sua última observação
+// (heartbeat ou transição). Além disso, tratamos como lacuna sem dado (ver
+// fillGap) em vez de esticar a última cor conhecida — é o que evita, por
+// exemplo, pintar um dia inteiro de "acordado" só porque a aba ficou fechada
+// durante um ciclo de deep sleep e reabriu ainda com esse valor no histórico.
+const MAX_ASSUME_MS = 3 * HEARTBEAT_MS
 
 interface PowerTimelineProps {
   history: PowerHistoryEntry[]
@@ -150,7 +157,10 @@ function computeDailyTimelines(
   const now        = Date.now()
   const rangeStart = localDayStartUtcMs(dayKeys[0])
 
-  // Intervalos MQTT — corrigido: inclui intervalos que TERMINAM dentro da janela
+  // Intervalos MQTT — corrigido: inclui intervalos que TERMINAM dentro da
+  // janela. Cada intervalo só é esticado até MAX_ASSUME_MS além do início;
+  // o restante fica sem cobertura (tratado como lacuna por fillGap) em vez
+  // de assumir que o estado persistiu por um período não observado.
   interface MqttIv { start: number; end: number; ds: DetailState }
   const mqttIvs: MqttIv[] = []
   if (history.length > 0) {
@@ -158,7 +168,8 @@ function computeDailyTimelines(
     const lastEnd = mqttConnected ? now : sorted[sorted.length - 1].at
     for (let i = 0; i < sorted.length; i++) {
       const start = sorted[i].at
-      const end   = i + 1 < sorted.length ? sorted[i + 1].at : lastEnd
+      const naturalEnd = i + 1 < sorted.length ? sorted[i + 1].at : lastEnd
+      const end = Math.min(naturalEnd, start + MAX_ASSUME_MS)
       if (end > rangeStart && end > start) {
         mqttIvs.push({ start, end, ds: entryDetailState(sorted[i]) })
       }

@@ -24,6 +24,13 @@ const MAX_ENTRIES = 2000
 const MAX_AGE_MS  = 14 * 24 * 60 * 60 * 1000
 const R2_DEBOUNCE = 20_000
 
+// Marca de presença enquanto a aba fica aberta com MQTT conectado, mesmo sem
+// mudança de estado — sem isso, o timeline (PowerTimeline.tsx) não tinha como
+// distinguir "estado observado continuamente" de "app fechado por horas e o
+// último valor observado (ex. 'awake') foi apenas assumido até agora". Ver
+// MAX_ASSUME_MS em PowerTimeline.tsx, que deve ficar > este intervalo.
+export const HEARTBEAT_MS = 4 * 60 * 1000
+
 function storageKey(receiverKey: string): string {
   return `sondas_power_${receiverKey}`
 }
@@ -122,6 +129,28 @@ export function usePowerStateHistory(
       return next
     })
   }, [sleeping, waitingLate, power, mqttConnected, receiverKey])
+
+  // Heartbeat: refs sempre atualizadas pra não recriar o setInterval a cada
+  // mudança de props (o que reiniciaria a cadência).
+  const liveRef = useRef({ sleeping, waitingLate, power })
+  useEffect(() => { liveRef.current = { sleeping, waitingLate, power } })
+
+  useEffect(() => {
+    if (!mqttConnected) return
+    const id = setInterval(() => {
+      const { sleeping, waitingLate, power } = liveRef.current
+      const state: PowerHistoryState = sleeping ? 'sleeping' : waitingLate ? 'listening' : power?.eco ? 'eco' : 'awake'
+      const reason = sleeping?.reason ?? waitingLate?.reason
+      setHistory(prev => {
+        const next = pruneHistory([...prev, { at: Date.now(), state, reason, cpuMhz: power?.cpuMhz, wifi: power?.wifi }])
+        writeLocalHistory(receiverKey, next)
+        if (r2Timer.current) clearTimeout(r2Timer.current)
+        r2Timer.current = setTimeout(() => syncToR2(receiverRef.current, next), R2_DEBOUNCE)
+        return next
+      })
+    }, HEARTBEAT_MS)
+    return () => clearInterval(id)
+  }, [mqttConnected, receiverKey])
 
   const deleteDay = useCallback((dayKey: string) => {
     setHistory(prev => {
