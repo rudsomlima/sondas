@@ -2,14 +2,13 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { getSettings } from '@/app/lib/settings'
-import { RdzConfig, parseConfigTxt, configTxtFromChanges, parseConfigJson } from '@/app/lib/rdzConfig'
+import { RdzConfig, parseConfigTxt, configTxtFromChanges } from '@/app/lib/rdzConfig'
 import {
   cfgGetTopic, cfgGetRespTopic, cfgSetTopic, cfgSetRespTopic,
   parseCfgGetResp, parseCfgSetResp, computeCfgAuth,
 } from '@/app/lib/mqtt'
-import { receiverKey } from '@/app/lib/receiverKey'
 
-export type RdzConfigChannel = 'http' | 'mqtt' | 'firebase'
+export type RdzConfigChannel = 'http' | 'mqtt'
 
 export interface ApplyResult {
   ok: boolean
@@ -168,60 +167,6 @@ async function writeMqttConfig(
   }))
 }
 
-// Canal Firebase: NÃO é falado pelo firmware (o build atual do toolchain
-// ESP32 usado neste fork não tem cliente TLS disponível — ver histórico da
-// tentativa "firmware fala Firebase direto" descartada por isso). Em vez
-// disso, o Realtime Database funciona como um espelho: qualquer navegador
-// com uma sessão MQTT (a mesma usada pelo canal 'mqtt' — ver fetchMqttConfig/
-// writeMqttConfig acima) espelha o resultado em /receivers/{deviceId}/config
-// depois de cada leitura/gravação bem-sucedida. Outras abas/dispositivos que
-// escolherem o canal Firebase leem esse espelho instantaneamente (listener
-// nativo do SDK, tempo real de verdade) sem precisar da própria conexão
-// MQTT — e a gravação de fato ainda sai por MQTT (única coisa que o firmware
-// entende), só que o resultado também é espelhado pra quem estiver olhando
-// via Firebase. Config vai como string JSON (não objeto aninhado) porque
-// chaves do RdzConfig usam "." (ex. "sleep.vcrit"), proibido em nome de
-// chave do Realtime Database.
-async function mirrorConfigToFirebase(deviceId: string, cfg: RdzConfig): Promise<void> {
-  try {
-    const { getFirebaseDb } = await import('@/app/lib/firebaseClient')
-    const { ref, set } = await import('firebase/database')
-    const db = getFirebaseDb()
-    await set(ref(db, `receivers/${deviceId}/config`), JSON.stringify(cfg))
-  } catch {
-    // Espelhamento é um extra (best-effort) — falha aqui não deve derrubar
-    // a leitura/gravação real, que já aconteceu via MQTT.
-  }
-}
-
-async function fetchFirebaseConfig(deviceId: string, brokerUrl: string, prefix: string): Promise<RdzConfig> {
-  const { getFirebaseDb } = await import('@/app/lib/firebaseClient')
-  const { ref, get } = await import('firebase/database')
-  const db = getFirebaseDb()
-  const snap = await get(ref(db, `receivers/${deviceId}/config`))
-  const raw = snap.val()
-  if (typeof raw === 'string') {
-    try {
-      const cfg = parseConfigJson(JSON.parse(raw))
-      if (cfg) return cfg
-    } catch { /* espelho corrompido — cai pro fetch MQTT abaixo */ }
-  }
-  // Nada espelhado ainda (primeira vez pra este receptor) — busca via MQTT
-  // uma vez e semeia o espelho pra próximas leituras (desta ou de outras abas).
-  const cfg = await fetchMqttConfig(brokerUrl, prefix)
-  mirrorConfigToFirebase(deviceId, cfg)
-  return cfg
-}
-
-async function writeFirebaseConfig(
-  deviceId: string, brokerUrl: string, prefix: string, secret: string,
-  base: RdzConfig, changes: Record<string, string>, apply: 'live' | 'reboot'
-): Promise<ApplyResult> {
-  const result = await writeMqttConfig(brokerUrl, prefix, secret, changes, apply)
-  mirrorConfigToFirebase(deviceId, { ...base, ...changes })
-  return result
-}
-
 export function useFirmwareConfig(receiverIp: string | null): FirmwareConfigState {
   const [config, setConfig] = useState<RdzConfig | null>(null)
   const [loadedAt, setLoadedAt] = useState<number | null>(null)
@@ -255,55 +200,23 @@ export function useFirmwareConfig(receiverIp: string | null): FirmwareConfigStat
         : 'IP do receptor ainda desconhecido (precisa de pelo menos uma mensagem MQTT retida com uptime).')
       return
     }
-    if ((ch === 'mqtt' || ch === 'firebase') && (!s.mqttEnabled || !s.mqttTopicPrefix)) {
+    if (ch === 'mqtt' && (!s.mqttEnabled || !s.mqttTopicPrefix)) {
       setChannel(ch)
-      setError('Configure e ative o MQTT em Meu Receptor antes de usar este canal (o deviceId vem do mqtt.prefix).')
+      setError('Configure e ative o MQTT em Meu Receptor antes de usar este canal.')
       return
     }
 
     setChannel(ch)
     setLoading(true)
     setError(null)
-    const promise = ch === 'http' ? fetchHttpConfig(receiverIp!)
-      : ch === 'mqtt' ? fetchMqttConfig(s.mqttBrokerUrl, s.mqttTopicPrefix)
-      : fetchFirebaseConfig(receiverKey(s.mqttTopicPrefix), s.mqttBrokerUrl, s.mqttTopicPrefix)
+    const promise = ch === 'http'
+      ? fetchHttpConfig(receiverIp!)
+      : fetchMqttConfig(s.mqttBrokerUrl, s.mqttTopicPrefix)
     promise
       .then(cfg => { setConfig(cfg); setLoadedAt(Date.now()) })
       .catch((e: Error) => setError(e.message || 'Falha ao carregar a configuração'))
       .finally(() => setLoading(false))
   }, [receiverIp, httpBlocked])
-
-  // Canal Firebase: depois da 1ª carga, mantém um listener ao vivo (nativo
-  // do SDK, sem polling) — a config exibida acompanha o espelho em tempo
-  // real (ver mirrorConfigToFirebase acima), sem precisar clicar
-  // "recarregar" de novo, mesmo quando outra aba/dispositivo é quem
-  // atualizou o espelho.
-  useEffect(() => {
-    if (channel !== 'firebase') return
-    const s = getSettings()
-    if (!s.mqttTopicPrefix) return
-    const deviceId = receiverKey(s.mqttTopicPrefix)
-    let unsub: (() => void) | null = null
-    let cancelled = false
-    import('@/app/lib/firebaseClient').then(({ getFirebaseDb }) =>
-      import('firebase/database').then(({ ref, onValue, off }) => {
-        if (cancelled) return
-        const db = getFirebaseDb()
-        const cfgRef = ref(db, `receivers/${deviceId}/config`)
-        const onChange = (snap: import('firebase/database').DataSnapshot) => {
-          const raw = snap.val()
-          if (typeof raw !== 'string') return
-          try {
-            const cfg = parseConfigJson(JSON.parse(raw))
-            if (cfg) { setConfig(cfg); setLoadedAt(Date.now()) }
-          } catch { /* payload transitório inválido — ignora, próximo evento corrige */ }
-        }
-        onValue(cfgRef, onChange)
-        unsub = () => off(cfgRef, 'value', onChange)
-      })
-    ).catch(() => {})
-    return () => { cancelled = true; unsub?.() }
-  }, [channel])
 
   // Fetch único por sessão — dispara sozinho só se já houver canal salvo E
   // (pro canal HTTP) o IP do receptor já for conhecido (chega via a msg
@@ -329,9 +242,7 @@ export function useFirmwareConfig(receiverIp: string | null): FirmwareConfigStat
     setApplyResult(null)
     const promise = channel === 'http'
       ? writeHttpConfig(receiverIp!, base, changes, mode === 'reboot').then(() => ({ ok: true, rebooting: mode === 'reboot' }))
-      : channel === 'mqtt'
-      ? writeMqttConfig(s.mqttBrokerUrl, s.mqttTopicPrefix, s.rdzConfigSecret, changes, mode)
-      : writeFirebaseConfig(receiverKey(s.mqttTopicPrefix), s.mqttBrokerUrl, s.mqttTopicPrefix, s.rdzConfigSecret, base, changes, mode)
+      : writeMqttConfig(s.mqttBrokerUrl, s.mqttTopicPrefix, s.rdzConfigSecret, changes, mode)
     promise
       .then(result => {
         setApplyResult(result)
