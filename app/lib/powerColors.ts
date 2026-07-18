@@ -15,6 +15,7 @@ export const POWER_COLORS = {
   awake_cpu80:   '#a3e635', // lime-400
   awake:         '#34d399', // emerald-400
   awakePred:     '#065f46', // emerald-900
+  listeningPred: '#78350f', // amber-900 — escuta extra (sleep.extend) prevista, após o fim da janela
   sleepingPred:  '#312e81', // indigo-900
   noData:        '#161b22', // quase a cor do painel (--surface #12161d) — recua visualmente em vez de competir com os dados reais
 } as const

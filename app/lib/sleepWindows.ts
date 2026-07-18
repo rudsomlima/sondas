@@ -6,7 +6,10 @@
  */
 import type { RdzConfig } from './rdzConfig'
 
-export interface SleepWindow { startMin: number; durMin: number }
+// durMin é só a janela "core" (sleep.w{n}dur) — a escuta extra
+// (sleep.extend) vem à parte em extendMin, pra quem for desenhar poder
+// mostrá-la como um segmento diferente em vez de escondida dentro da janela.
+export interface SleepWindow { startMin: number; durMin: number; extendMin: number }
 
 export function parseSleepWindows(config: RdzConfig): SleepWindow[] | null {
   if (parseInt(String(config['sleep.mode'] ?? '0'), 10) !== 1) return null
@@ -16,8 +19,8 @@ export function parseSleepWindows(config: RdzConfig): SleepWindow[] | null {
   const w2d = parseInt(String(config['sleep.w2dur']   ?? '0'), 10)
   const ext = parseInt(String(config['sleep.extend']  ?? '0'), 10)
   const ws: SleepWindow[] = []
-  if (w1d > 0) ws.push({ startMin: w1s, durMin: w1d + ext })
-  if (w2d > 0) ws.push({ startMin: w2s, durMin: w2d + ext })
+  if (w1d > 0) ws.push({ startMin: w1s, durMin: w1d, extendMin: ext })
+  if (w2d > 0) ws.push({ startMin: w2s, durMin: w2d, extendMin: ext })
   return ws.length > 0 ? ws : null
 }
 

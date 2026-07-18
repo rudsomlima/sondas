@@ -54,9 +54,9 @@ function entryDetailState(e: PowerHistoryEntry): DetailState {
   return 'awake'
 }
 
-const COLORS: Record<DetailState | 'awakePred' | 'sleepingPred' | 'noData', string> = POWER_COLORS
+const COLORS: Record<DetailState | 'awakePred' | 'listeningPred' | 'sleepingPred' | 'noData', string> = POWER_COLORS
 
-const LABELS: Record<DetailState | 'awakePred' | 'sleepingPred' | 'noData', string> = {
+const LABELS: Record<DetailState | 'awakePred' | 'listeningPred' | 'sleepingPred' | 'noData', string> = {
   sleeping:      'Deep sleep',
   eco:           'Economia (bat. crítica)',
   listening:     'Escuta estendida',
@@ -67,6 +67,7 @@ const LABELS: Record<DetailState | 'awakePred' | 'sleepingPred' | 'noData', stri
   awake_cpu80:   'Acordado CPU 80 MHz',
   awake:         'Acordado (potência total)',
   awakePred:     'Acordado (previsto config)',
+  listeningPred: 'Escuta extra (previsto config)',
   sleepingPred:  'Dormindo (previsto config)',
   noData:        'Sem dados',
 }
@@ -100,7 +101,7 @@ function lastNDayKeys(n: number): string[] {
 // ──────────────────────────────────────────────────────────────
 // Segmentos posicionados no tempo (nova estrutura)
 // ──────────────────────────────────────────────────────────────
-type SegState = DetailState | 'awakePred' | 'sleepingPred' | 'noData'
+type SegState = DetailState | 'awakePred' | 'listeningPred' | 'sleepingPred' | 'noData'
 
 interface DaySegment {
   startFrac: number  // 0.0–1.0 da meia-noite local
@@ -171,19 +172,28 @@ function computeDailyTimelines(
       if (gapEnd <= gapStart) return
       if (windows) {
         // Calcula interseções das janelas de recepção com o gap, ordenadas
-        const wIvs: { start: number; end: number }[] = []
+        // Cada janela vira até 2 intervalos: a janela "core" (awakePred) e,
+        // se sleep.extend > 0, a escuta extra logo em seguida (listeningPred)
+        // — separados pra ficar visível, não escondida dentro do bloco todo.
+        const wIvs: { start: number; end: number; kind: 'awakePred' | 'listeningPred' }[] = []
         for (const w of windows) {
-          const wStart = dayStart + w.startMin * 60000
-          const wEnd   = dayStart + (w.startMin + w.durMin) * 60000
-          const s = Math.max(gapStart, wStart)
-          const e = Math.min(gapEnd,   wEnd)
-          if (e > s) wIvs.push({ start: s, end: e })
+          const wStart  = dayStart + w.startMin * 60000
+          const coreEnd = wStart + w.durMin * 60000
+          const extEnd  = coreEnd + w.extendMin * 60000
+          const cs = Math.max(gapStart, wStart)
+          const ce = Math.min(gapEnd, coreEnd)
+          if (ce > cs) wIvs.push({ start: cs, end: ce, kind: 'awakePred' })
+          if (w.extendMin > 0) {
+            const es = Math.max(gapStart, coreEnd)
+            const ee = Math.min(gapEnd, extEnd)
+            if (ee > es) wIvs.push({ start: es, end: ee, kind: 'listeningPred' })
+          }
         }
         wIvs.sort((a, b) => a.start - b.start)
         let cursor = gapStart
         for (const wiv of wIvs) {
           if (wiv.start > cursor) pushSeg(cursor, wiv.start, 'sleepingPred')
-          pushSeg(wiv.start, wiv.end, 'awakePred')
+          pushSeg(wiv.start, wiv.end, wiv.kind)
           cursor = wiv.end
         }
         if (cursor < gapEnd) pushSeg(cursor, gapEnd, 'sleepingPred')
@@ -538,7 +548,7 @@ export default function PowerTimeline({ history, config, mqttConnected, onDelete
           <div>
             <p className="text-[10px] text-faint uppercase tracking-wide mb-1">Previsto / estimado</p>
             <div className="flex flex-wrap gap-x-3 gap-y-1">
-              {(['awakePred','sleepingPred'] as const).map(s => (
+              {(['awakePred','listeningPred','sleepingPred'] as const).map(s => (
                 <div key={s} className="flex items-center gap-1.5 text-[10px] text-gray-300">
                   <span className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ background: COLORS[s] }} />
                   {LABELS[s]}
