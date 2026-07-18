@@ -8,7 +8,7 @@ import {
 } from 'recharts'
 import { CHART } from '@/app/lib/tokens'
 import { GMT3 } from '@/app/lib/types'
-import { type BattVoltageEntry, localBattDayKey } from '@/app/painel/hooks/useBatteryHistory'
+import { type BattVoltageEntry, localBattDayKey, MAX_SILENT_MS } from '@/app/painel/hooks/useBatteryHistory'
 import type { RdzConfig } from '@/app/lib/rdzConfig'
 
 interface BatteryChartProps {
@@ -18,6 +18,30 @@ interface BatteryChartProps {
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000
+
+// Enquanto conectado, o histórico grava no máximo a cada MAX_SILENT_MS
+// (heartbeat) — um intervalo maior que isso entre duas leituras reais só
+// acontece quando não houve dado de verdade (app fechado, sem MQTT, receptor
+// dormindo sem reportar pmu). Um ponto nulo é inserido nesses casos pra
+// quebrar a linha em vez de desenhar uma reta interpolando por cima da
+// lacuna — a mesma lógica já aplicada no gráfico "Deep Sleep / Power".
+const GAP_BREAK_MS = 3 * MAX_SILENT_MS
+
+interface ChartPoint { at: number; v: number | null }
+
+function withGapBreaks(data: BattVoltageEntry[]): ChartPoint[] {
+  if (data.length === 0) return []
+  const out: ChartPoint[] = [data[0]]
+  for (let i = 1; i < data.length; i++) {
+    const prev = data[i - 1]
+    const curr = data[i]
+    if (curr.at - prev.at > GAP_BREAK_MS) {
+      out.push({ at: (prev.at + curr.at) / 2, v: null })
+    }
+    out.push(curr)
+  }
+  return out
+}
 
 function pad(n: number) { return String(n).padStart(2, '0') }
 
@@ -96,6 +120,7 @@ export default function BatteryChart({ history, config, onDeleteDay }: BatteryCh
     () => activeDayKey ? history.filter(e => localBattDayKey(e.at) === activeDayKey) : [],
     [history, activeDayKey]
   )
+  const chartData = useMemo(() => withGapBreaks(dayData), [dayData])
 
   // Resetar zoom ao trocar de dia
   useEffect(() => {
@@ -220,7 +245,7 @@ export default function BatteryChart({ history, config, onDeleteDay }: BatteryCh
       ) : (
         <ResponsiveContainer width="100%" height={200}>
           <LineChart
-            data={dayData}
+            data={chartData}
             margin={{ top: 4, right: 56, bottom: 4, left: 0 }}
             onMouseDown={handleMouseDown}
             onMouseMove={handleMouseMove}

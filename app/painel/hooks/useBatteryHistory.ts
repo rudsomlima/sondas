@@ -11,7 +11,11 @@ export interface BattVoltageEntry {
 const MAX_ENTRIES   = 5000
 const MAX_AGE_MS    = 7 * 24 * 60 * 60 * 1000
 const MIN_DELTA_V   = 0.01
-const MAX_SILENT_MS = 5 * 60 * 1000
+// Espaçamento máximo garantido entre leituras enquanto o MQTT fica conectado
+// (heartbeat) — exportado pro gráfico (BatteryChart) usar como referência
+// de "isso é maior que qualquer intervalo normal, então é uma lacuna de
+// verdade" ao decidir onde quebrar a linha em vez de interpolar.
+export const MAX_SILENT_MS = 5 * 60 * 1000
 const R2_DEBOUNCE   = 20_000 // 20s após última escrita → sync R2
 
 export function localBattDayKey(utcMs: number): string {
