@@ -5,11 +5,14 @@ import { AlertTriangle, Save, RotateCw, Loader2, CheckCircle2, XCircle, Download
 import type { RdzConfig } from '@/app/lib/rdzConfig'
 import { isSensitiveKey, parseConfigTxt, configTxtFromChanges } from '@/app/lib/rdzConfig'
 import { RDZ_CONFIG_SECTIONS } from '@/app/lib/rdzConfigSections'
+import SleepConfigEditor from './SleepConfigEditor'
+
+const SLEEP_SECTION_LABEL = 'Deep Sleep / Energia'
 
 const SLEEP_KEYS = new Set([
   'sleep.mode','sleep.w1start','sleep.w1dur','sleep.w2start','sleep.w2dur',
   'sleep.extend','sleep.cpu80','sleep.wifips','sleep.gmtoff',
-  'sleep.holdoff','sleep.wakemargin','sleep.vlow','sleep.vcrit','sleep.vpanic',
+  'sleep.holdoff','sleep.wakemargin','sleep.driftpct','sleep.vlow','sleep.vcrit','sleep.vpanic',
   'sleep.extendmode','sleep.extendsleep','sleep.extendsniff','sleep.crituploadmult',
 ])
 
@@ -140,6 +143,19 @@ export default function FullConfigEditor({ config, loadedAt, applying, applyErro
       {RDZ_CONFIG_SECTIONS.map(section => {
         const present = section.fields.filter(f => f.key in config)
         if (present.length === 0) return null
+        if (section.label === SLEEP_SECTION_LABEL) {
+          return (
+            <details key={section.label} open className="mb-2 group">
+              <summary className="cursor-pointer select-none text-xs font-medium text-white py-2 px-1 hover:text-blue-400 transition-colors">
+                {section.label}
+                <span className="text-faint font-normal"> · {present.length} campo(s)</span>
+              </summary>
+              <div className="pl-1 pb-2">
+                <SleepConfigEditor config={config} changes={changes} setField={setField} />
+              </div>
+            </details>
+          )
+        }
         return (
           <details key={section.label} className="mb-2 group">
             <summary className="cursor-pointer select-none text-xs font-medium text-white py-2 px-1 hover:text-blue-400 transition-colors">

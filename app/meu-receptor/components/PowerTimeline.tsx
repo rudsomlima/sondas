@@ -5,6 +5,7 @@ import { Battery, Info, Trash2, ZoomIn, ZoomOut, RotateCcw } from 'lucide-react'
 import { GMT3 } from '@/app/lib/types'
 import { HEARTBEAT_MS, type PowerHistoryEntry, type PowerHistoryState } from '@/app/painel/hooks/usePowerStateHistory'
 import type { RdzConfig } from '@/app/lib/rdzConfig'
+import { parseSleepWindows } from '@/app/lib/sleepWindows'
 
 // Um estado só é "assumido" contínuo até aqui além de sua última observação
 // (heartbeat ou transição). Além disso, tratamos como lacuna sem dado (ver
@@ -106,24 +107,6 @@ function lastNDayKeys(n: number): string[] {
     keys.push(`${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`)
   }
   return keys
-}
-
-// ──────────────────────────────────────────────────────────────
-// Janelas de recepção (previsão)
-// ──────────────────────────────────────────────────────────────
-interface SleepWindow { startMin: number; durMin: number }
-
-function parseSleepWindows(config: RdzConfig): SleepWindow[] | null {
-  if (parseInt(String(config['sleep.mode'] ?? '0'), 10) !== 1) return null
-  const w1s = parseInt(String(config['sleep.w1start'] ?? '0'), 10)
-  const w1d = parseInt(String(config['sleep.w1dur']   ?? '0'), 10)
-  const w2s = parseInt(String(config['sleep.w2start'] ?? '0'), 10)
-  const w2d = parseInt(String(config['sleep.w2dur']   ?? '0'), 10)
-  const ext = parseInt(String(config['sleep.extend']  ?? '0'), 10)
-  const ws: SleepWindow[] = []
-  if (w1d > 0) ws.push({ startMin: w1s, durMin: w1d + ext })
-  if (w2d > 0) ws.push({ startMin: w2s, durMin: w2d + ext })
-  return ws.length > 0 ? ws : null
 }
 
 // ──────────────────────────────────────────────────────────────
