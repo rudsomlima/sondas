@@ -2,8 +2,9 @@
 
 import type { ReactNode } from 'react'
 import type { RdzConfig } from '@/app/lib/rdzConfig'
-import { parseSleepWindows, minutesToHHMM, hhmmToMinutes, type SleepWindow } from '@/app/lib/sleepWindows'
+import { parseSleepWindows, minutesToHHMM, hhmmToMinutes } from '@/app/lib/sleepWindows'
 import { nowGMT3 } from '@/app/lib/types'
+import { POWER_COLORS } from '@/app/lib/powerColors'
 
 interface SleepConfigEditorProps {
   config: RdzConfig
@@ -70,32 +71,68 @@ function NumberField({ label, hint, value, onChange, step, suffix }: {
 }
 
 // ──────────────────────────────────────────────────────────────
-// Prévia visual simples (2 estados) de como as janelas caem no dia de hoje
+// Prévia visual de como cada janela se comporta no dia de hoje — inclui a
+// folga de "acordar antes" (wakemargin, desloca o início pra trás), a
+// escuta extra depois do fim (extend) e a possível extensão por sinal
+// (holdoff: só acontece se ainda estiver captando algo perto do fim, por
+// isso entra com opacidade reduzida em vez de uma cor sólida).
 // ──────────────────────────────────────────────────────────────
-function buildPreviewSegments(windows: SleepWindow[]): { startPct: number; widthPct: number; awake: boolean }[] {
-  const awakeIvs: [number, number][] = []
-  for (const w of windows) {
-    const s = ((w.startMin % 1440) + 1440) % 1440
-    const e = s + w.durMin
-    if (e <= 1440) awakeIvs.push([s, e])
-    else { awakeIvs.push([s, 1440]); awakeIvs.push([0, e - 1440]) }
+type PreviewKind = 'awake' | 'extend' | 'holdoff'
+interface PreviewSeg { startMin: number; endMin: number; kind: PreviewKind }
+
+function windowPreviewSegs(start: number, dur: number, extendMin: number, wakemargin: number, holdoff: number): PreviewSeg[] {
+  if (dur <= 0) return []
+  const awakeStart = start - Math.max(0, wakemargin)
+  const awakeEnd = start + dur
+  const segs: PreviewSeg[] = [{ startMin: awakeStart, endMin: awakeEnd, kind: 'awake' }]
+  let cursor = awakeEnd
+  if (extendMin > 0) {
+    segs.push({ startMin: cursor, endMin: cursor + extendMin, kind: 'extend' })
+    cursor += extendMin
   }
-  awakeIvs.sort((a, b) => a[0] - b[0])
-  const merged: [number, number][] = []
-  for (const iv of awakeIvs) {
-    const last = merged[merged.length - 1]
-    if (last && iv[0] <= last[1]) last[1] = Math.max(last[1], iv[1])
-    else merged.push([...iv])
+  if (holdoff > 0) {
+    segs.push({ startMin: cursor, endMin: cursor + holdoff, kind: 'holdoff' })
   }
-  const segs: { startPct: number; widthPct: number; awake: boolean }[] = []
-  let cursor = 0
-  for (const [s, e] of merged) {
-    if (s > cursor) segs.push({ startPct: (cursor / 1440) * 100, widthPct: ((s - cursor) / 1440) * 100, awake: false })
-    segs.push({ startPct: (s / 1440) * 100, widthPct: ((e - s) / 1440) * 100, awake: true })
-    cursor = e
-  }
-  if (cursor < 1440) segs.push({ startPct: (cursor / 1440) * 100, widthPct: ((1440 - cursor) / 1440) * 100, awake: false })
   return segs
+}
+
+// Recorta um intervalo [s,e) em 1 ou 2 pedaços dentro de 0–1440 (dia local),
+// partindo em dois quando cruza a meia-noite.
+function splitDay(s: number, e: number): [number, number][] {
+  const ns = ((s % 1440) + 1440) % 1440
+  const ne = ns + (e - s)
+  if (ne <= 1440) return [[ns, ne]]
+  return [[ns, 1440], [0, ne - 1440]]
+}
+
+function buildPreviewSegments(rawSegs: PreviewSeg[]): { startPct: number; widthPct: number; kind: PreviewKind | 'sleeping' }[] {
+  const pieces: { start: number; end: number; kind: PreviewKind }[] = []
+  for (const seg of rawSegs) {
+    for (const [s, e] of splitDay(seg.startMin, seg.endMin)) {
+      if (e > s) pieces.push({ start: s, end: e, kind: seg.kind })
+    }
+  }
+  pieces.sort((a, b) => a.start - b.start)
+
+  const out: { startPct: number; widthPct: number; kind: PreviewKind | 'sleeping' }[] = []
+  let cursor = 0
+  for (const p of pieces) {
+    if (p.start > cursor) out.push({ startPct: (cursor / 1440) * 100, widthPct: ((p.start - cursor) / 1440) * 100, kind: 'sleeping' })
+    out.push({ startPct: (p.start / 1440) * 100, widthPct: ((p.end - p.start) / 1440) * 100, kind: p.kind })
+    cursor = Math.max(cursor, p.end)
+  }
+  if (cursor < 1440) out.push({ startPct: (cursor / 1440) * 100, widthPct: ((1440 - cursor) / 1440) * 100, kind: 'sleeping' })
+  return out
+}
+
+const PREVIEW_COLOR: Record<PreviewKind | 'sleeping', string> = {
+  awake:   POWER_COLORS.awake,
+  extend:  POWER_COLORS.listening,
+  holdoff: POWER_COLORS.listening,
+  sleeping: POWER_COLORS.sleeping,
+}
+const PREVIEW_OPACITY: Record<PreviewKind | 'sleeping', number> = {
+  awake: 1, extend: 1, holdoff: 0.45, sleeping: 1,
 }
 
 const EXTEND_MODE_LABELS = ['WiFi economizado (ao vivo)', 'WiFi desligado', 'Checagem periódica (dorme entre checagens)']
@@ -117,9 +154,17 @@ export default function SleepConfigEditor({ config, changes, setField }: SleepCo
   const extendMode = valInt('sleep.extendmode', 0)
   const cpu80on   = valInt('sleep.cpu80', 0) === 1
   const wifipsOn  = valInt('sleep.wifips', 0) === 1
+  const wakemargin = valInt('sleep.wakemargin', 0)
+  const holdoff    = valInt('sleep.holdoff', 0)
 
   const draft: RdzConfig = { ...config, ...changes }
   const windows = sleepOn ? parseSleepWindows(draft) : null
+  const previewSegs = windows
+    ? buildPreviewSegments([
+        ...windowPreviewSegs(w1start, w1dur, extendMin, wakemargin, holdoff),
+        ...windowPreviewSegs(w2start, w2dur, extendMin, wakemargin, holdoff),
+      ])
+    : []
   const nowMin = (() => { const d = nowGMT3(); return d.getUTCHours() * 60 + d.getUTCMinutes() })()
 
   const windowCard = (n: 1 | 2, start: number, dur: number) => {
@@ -174,12 +219,12 @@ export default function SleepConfigEditor({ config, changes, setField }: SleepCo
         ) : (
           <>
             <div className="relative rounded overflow-hidden" style={{ height: 18 }}>
-              {buildPreviewSegments(windows).map((s, i) => (
+              {previewSegs.map((s, i) => (
                 <div
                   key={i}
                   style={{
                     position: 'absolute', left: `${s.startPct}%`, width: `${Math.max(s.widthPct, 0.1)}%`,
-                    height: '100%', background: s.awake ? '#34d399' : '#818cf8',
+                    height: '100%', background: PREVIEW_COLOR[s.kind], opacity: PREVIEW_OPACITY[s.kind],
                   }}
                 />
               ))}
@@ -194,9 +239,15 @@ export default function SleepConfigEditor({ config, changes, setField }: SleepCo
             <div className="flex justify-between text-[10px] text-faint mt-1">
               <span>0h</span><span>6h</span><span>12h</span><span>18h</span><span>24h</span>
             </div>
-            <div className="flex items-center gap-3 mt-2 text-[11px] text-gray-300">
-              <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm inline-block" style={{ background: '#34d399' }} /> Acordado</span>
-              <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm inline-block" style={{ background: '#818cf8' }} /> Dormindo</span>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-2 text-[11px] text-gray-300">
+              <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm inline-block" style={{ background: PREVIEW_COLOR.awake }} /> Acordado (com folga)</span>
+              {extendOn && (
+                <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm inline-block" style={{ background: PREVIEW_COLOR.extend }} /> Escuta extra</span>
+              )}
+              {holdoff > 0 && (
+                <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm inline-block" style={{ background: PREVIEW_COLOR.holdoff, opacity: PREVIEW_OPACITY.holdoff }} /> Possível extensão (se houver sinal)</span>
+              )}
+              <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm inline-block" style={{ background: PREVIEW_COLOR.sleeping }} /> Dormindo</span>
               <span className="flex items-center gap-1"><span className="w-0.5 h-2.5 inline-block bg-white" /> Agora</span>
             </div>
           </>

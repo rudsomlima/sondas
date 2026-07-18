@@ -6,6 +6,7 @@ import { GMT3 } from '@/app/lib/types'
 import { HEARTBEAT_MS, type PowerHistoryEntry, type PowerHistoryState } from '@/app/painel/hooks/usePowerStateHistory'
 import type { RdzConfig } from '@/app/lib/rdzConfig'
 import { parseSleepWindows } from '@/app/lib/sleepWindows'
+import { POWER_COLORS } from '@/app/lib/powerColors'
 
 // Um estado só é "assumido" contínuo até aqui além de sua última observação
 // (heartbeat ou transição). Além disso, tratamos como lacuna sem dado (ver
@@ -53,20 +54,7 @@ function entryDetailState(e: PowerHistoryEntry): DetailState {
   return 'awake'
 }
 
-const COLORS: Record<DetailState | 'awakePred' | 'sleepingPred' | 'noData', string> = {
-  sleeping:      '#818cf8', // indigo-400
-  eco:           '#ef4444', // red-500
-  listening:     '#fbbf24', // amber-400
-  listen_wifips: '#a78bfa', // violet-400
-  listen_nowifi: '#fb7185', // rose-400
-  awake_nowifi:  '#f97316', // orange-500
-  awake_wifips:  '#22d3ee', // cyan-400
-  awake_cpu80:   '#a3e635', // lime-400
-  awake:         '#34d399', // emerald-400
-  awakePred:     '#065f46', // emerald-900
-  sleepingPred:  '#312e81', // indigo-900
-  noData:        '#161b22', // quase a cor do painel (--surface #12161d) — recua visualmente em vez de competir com os dados reais
-}
+const COLORS: Record<DetailState | 'awakePred' | 'sleepingPred' | 'noData', string> = POWER_COLORS
 
 const LABELS: Record<DetailState | 'awakePred' | 'sleepingPred' | 'noData', string> = {
   sleeping:      'Deep sleep',
