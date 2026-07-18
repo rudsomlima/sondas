@@ -89,6 +89,14 @@ export default function ReceiverPanel({
   const candidates = [lastHeardMs, mqttLastMessageAt, mqttPublishedAt].filter((v): v is number => v != null)
   const lastSeenMs = candidates.length > 0 ? Math.max(...candidates) : null
 
+  // Timeout de verdade: MQTT é a fonte esperada, mas nem o socket está
+  // conectado nem chegou msg fresca (source caiu pro fallback SondeHub) — e
+  // não é porque o firmware avisou que está dormindo/esperando (esses casos
+  // já têm explicação própria via sleeping/waitingLate). Mostra os últimos
+  // dados conhecidos (uptime/bateria/power já ficam no estado, não somem),
+  // só deixando claro que não são "agora".
+  const mqttOffline = mqttConfigured && !sleeping && !waitingLate && source !== 'mqtt'
+
   return (
     <div className="panel p-4">
       <p className="panel-title mb-3 flex items-center gap-1.5">
@@ -112,7 +120,8 @@ export default function ReceiverPanel({
         <>
           <div className="flex items-center gap-2 mb-1 flex-wrap">
             <span className={`w-2 h-2 rounded-full ${
-              sleeping ? 'bg-indigo-400' : waitingLate ? 'bg-amber-400 pulse-soft' : status?.online ? 'bg-green-400 pulse-soft' : 'bg-gray-600'
+              sleeping ? 'bg-indigo-400' : waitingLate ? 'bg-amber-400 pulse-soft'
+              : mqttOffline ? 'bg-gray-600' : status?.online ? 'bg-green-400 pulse-soft' : 'bg-gray-600'
             }`} />
             <span className="mono text-xs text-white">{callsign}</span>
             {sleeping ? (
@@ -153,6 +162,16 @@ export default function ReceiverPanel({
                 : status?.online ? 'ligado, sem sonda no ar' : 'sem frames recentes'}
             </span>
           </div>
+          {/* Timeout de verdade (não é sleep/escuta anunciado pelo firmware):
+              deixa claro que os dados abaixo são os ÚLTIMOS conhecidos, não o
+              estado atual — e explica a causa mais provável em linguagem
+              simples, sem jargão de MQTT. */}
+          {mqttOffline && (
+            <p className="text-[10px] text-red-400 mb-2">
+              Sem resposta do receptor via MQTT (timeout) — ele precisa estar ligado e acordado.
+              {lastSeenMs != null && ' Mostrando os últimos dados recebidos.'}
+            </p>
+          )}
           {/* Motivo da economia de energia — antes só aparecia escondido no
               title (tooltip), invisível em toque/mobile. Fica registrado aqui
               junto do resto das informações do receptor, não como notificação. */}
@@ -197,7 +216,9 @@ export default function ReceiverPanel({
             </div>
           ) : power && (
             <div className="mb-3 rounded border border-border bg-bg p-2 space-y-1.5">
-              <p className="text-[10px] text-dim font-semibold">Energia agora</p>
+              <p className="text-[10px] text-dim font-semibold">
+                {mqttOffline ? 'Última leitura conhecida' : 'Energia agora'}
+              </p>
               <div className="flex items-center gap-3 text-[10px] mono flex-wrap">
                 <span
                   className={`flex items-center gap-1 ${power.cpuMhz < 240 ? 'text-amber-400' : 'text-dim'}`}
