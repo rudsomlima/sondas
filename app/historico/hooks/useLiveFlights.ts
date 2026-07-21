@@ -5,6 +5,26 @@ import { fetchTodayFlights, TodayFlight } from '@/app/lib/radiosondy'
 import { fetchSondeHubFlights } from '@/app/lib/sondehub'
 import { getRadiosondyStartplace, Station } from '@/app/lib/stations'
 
+// Snapshot mais antigo que isso é tratado como "sem cache" — o cron externo
+// roda a cada poucos minutos (ver app/api/poll), então algo bem mais velho
+// que isso quer dizer que o cron parou, não que o dado ainda é bom.
+const CACHE_MAX_AGE_MS = 10 * 60 * 1000
+
+// Lê o snapshot pronto no servidor (ver app/lib/liveFlightsCache.ts,
+// atualizado pelo cron /api/poll) — evita todo usuário que abre a página
+// reprocessar o feed global do SondeHub/radiosondy.info sozinho. `null` se
+// ainda não existir cache pra essa estação ou estiver velho demais.
+async function fetchFromCache(stationId: string): Promise<TodayFlight[] | null> {
+  try {
+    const res = await fetch(`/api/live-flights?station=${encodeURIComponent(stationId)}`, { cache: 'no-store' })
+    if (!res.ok) return null
+    const snapshot = await res.json()
+    if (!snapshot || !Array.isArray(snapshot.flights)) return null
+    if (Date.now() - snapshot.updatedAt > CACHE_MAX_AGE_MS) return null
+    return snapshot.flights
+  } catch { return null }
+}
+
 // Voo dura só ~2h, então o polling do feed ao vivo é bem mais frequente (20s)
 // que o de "houve lançamento hoje". Usa radiosondy.info (quando a estação tem
 // startplace) e sondehub.org (por geografia, qualquer estação) em paralelo.
@@ -14,6 +34,16 @@ export function useLiveFlights(station: Station, todayStr: string | undefined, p
   const [liveFlightChecked, setLiveFlightChecked] = useState(false)
 
   const fetchLiveFlight = useCallback(async () => {
+    // Cache do servidor primeiro — instantâneo, sem reprocessar o feed
+    // global. Só cai pro fetch direto (mesmo caminho de sempre) se ainda
+    // não houver snapshot pronto pra essa estação.
+    const cached = await fetchFromCache(station.id)
+    if (cached) {
+      setTodayFlights(cached)
+      setLiveFlightChecked(true)
+      return
+    }
+
     const startplace = getRadiosondyStartplace(station.id)
     const d = new Date()
     const pad = (n: number) => String(n).padStart(2, '0')

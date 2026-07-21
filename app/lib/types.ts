@@ -107,3 +107,35 @@ export interface SyncStatus {
   year: number
   stations: Record<string, SyncStationStatus>
 }
+
+// Registro de receptores conhecidos pelo servidor — populado automaticamente
+// pelo navegador (POST /api/register-receiver) sempre que MQTT está
+// ativado/configurado, pra o cron do servidor (app/api/poll) saber quais
+// prefixos consultar. Sem isso, mqttTopicPrefix só existe no localStorage de
+// cada usuário (ver app/lib/settings.ts) e o servidor não tem como saber
+// quais receptores existem.
+export interface ReceiverRegistryEntry {
+  prefix:      string
+  brokerUrl:   string
+  addedAt:     number
+  lastSeenAt:  number
+}
+
+export interface PollStationStatus {
+  radiosondy: number // quantos voos encontrados
+  sondehub:   number
+}
+
+export interface PollStatus {
+  lastRunAt:   number
+  durationMs:  number
+  receivers: {
+    total:   number
+    updated: number
+    errors:  number
+  }
+  liveFlights: {
+    stations: Record<string, PollStationStatus>
+    errors:   number
+  }
+}

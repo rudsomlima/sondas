@@ -12,7 +12,8 @@
  * Sem essas variáveis (ex.: dev local sem .env.local), as funções são no-op.
  */
 import { S3Client, GetObjectCommand, PutObjectCommand, ListObjectsV2Command, DeleteObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3'
-import type { YearStore, SyncStatus } from './types'
+import type { YearStore, SyncStatus, ReceiverRegistryEntry, PollStatus } from './types'
+import type { TodayFlight } from './radiosondy'
 
 export type { YearStore }
 
@@ -305,5 +306,134 @@ export async function writeSyncStatus(status: SyncStatus): Promise<void> {
     }))
   } catch (e) {
     console.error('[R2] writeSyncStatus falhou:', e)
+  }
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Registro de receptores (ver ReceiverRegistryEntry em types.ts) — um arquivo
+// só, com todos os receptores conhecidos. Populado por POST /api/register-receiver
+// e consumido pelo cron do servidor (app/api/poll) pra saber quais prefixos
+// MQTT consultar.
+// ──────────────────────────────────────────────────────────────────────────────
+const RECEIVER_REGISTRY_KEY = 'sondas/receivers-registry.json'
+
+export async function readReceiverRegistry(): Promise<ReceiverRegistryEntry[]> {
+  const client = getClient()
+  if (!client) return []
+  try {
+    const res = await client.send(new GetObjectCommand({ Bucket: bucket(), Key: RECEIVER_REGISTRY_KEY }))
+    const body = await res.Body?.transformToString()
+    if (!body) return []
+    const arr = JSON.parse(body)
+    return Array.isArray(arr) ? arr : []
+  } catch (e: any) {
+    if (e?.name === 'NoSuchKey' || e?.$metadata?.httpStatusCode === 404) return []
+    console.error('[R2] readReceiverRegistry falhou:', e)
+    return []
+  }
+}
+
+export async function writeReceiverRegistry(entries: ReceiverRegistryEntry[]): Promise<void> {
+  const client = getClient()
+  if (!client) return
+  try {
+    await client.send(new PutObjectCommand({
+      Bucket: bucket(),
+      Key: RECEIVER_REGISTRY_KEY,
+      Body: JSON.stringify(entries),
+      ContentType: 'application/json',
+    }))
+  } catch (e) {
+    console.error('[R2] writeReceiverRegistry falhou:', e)
+  }
+}
+
+// Upsert de um único receptor no registro — usado pelo endpoint de registro
+// (POST /api/register-receiver), que só conhece o próprio receptor, não a
+// lista inteira.
+export async function upsertReceiverRegistry(prefix: string, brokerUrl: string): Promise<void> {
+  const entries = await readReceiverRegistry()
+  const now = Date.now()
+  const existing = entries.find(e => e.prefix === prefix)
+  if (existing) {
+    existing.brokerUrl = brokerUrl
+    existing.lastSeenAt = now
+  } else {
+    entries.push({ prefix, brokerUrl, addedAt: now, lastSeenAt: now })
+  }
+  await writeReceiverRegistry(entries)
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Cache de voos ao vivo por estação (SondeHub + radiosondy.info), pra não
+// todo mundo que abrir /historico reprocessar o feed global sozinho.
+// Caminho: sondas/live/{station}.json
+// ──────────────────────────────────────────────────────────────────────────────
+export interface LiveFlightsSnapshot {
+  updatedAt: number
+  flights:   TodayFlight[]
+}
+
+function liveFlightsPath(station: string): string {
+  return `sondas/live/${station}.json`
+}
+
+export async function readLiveFlights(station: string): Promise<LiveFlightsSnapshot | null> {
+  const client = getClient()
+  if (!client) return null
+  try {
+    const res = await client.send(new GetObjectCommand({ Bucket: bucket(), Key: liveFlightsPath(station) }))
+    const body = await res.Body?.transformToString()
+    return body ? JSON.parse(body) : null
+  } catch (e: any) {
+    if (e?.name === 'NoSuchKey' || e?.$metadata?.httpStatusCode === 404) return null
+    console.error('[R2] readLiveFlights falhou:', e)
+    return null
+  }
+}
+
+export async function writeLiveFlights(station: string, snapshot: LiveFlightsSnapshot): Promise<void> {
+  const client = getClient()
+  if (!client) return
+  try {
+    await client.send(new PutObjectCommand({
+      Bucket: bucket(),
+      Key: liveFlightsPath(station),
+      Body: JSON.stringify(snapshot),
+      ContentType: 'application/json',
+    }))
+  } catch (e) {
+    console.error('[R2] writeLiveFlights falhou:', e)
+  }
+}
+
+const POLL_STATUS_KEY = 'sondas/poll-status.json'
+
+export async function readPollStatus(): Promise<PollStatus | null> {
+  const client = getClient()
+  if (!client) return null
+  try {
+    const res = await client.send(new GetObjectCommand({ Bucket: bucket(), Key: POLL_STATUS_KEY }))
+    const body = await res.Body?.transformToString()
+    return body ? JSON.parse(body) : null
+  } catch (e: any) {
+    if (e?.name === 'NoSuchKey' || e?.$metadata?.httpStatusCode === 404) return null
+    console.error('[R2] readPollStatus falhou:', e)
+    return null
+  }
+}
+
+export async function writePollStatus(status: PollStatus): Promise<void> {
+  const client = getClient()
+  if (!client) return
+  try {
+    await client.send(new PutObjectCommand({
+      Bucket: bucket(),
+      Key: POLL_STATUS_KEY,
+      Body: JSON.stringify(status),
+      ContentType: 'application/json',
+    }))
+  } catch (e) {
+    console.error('[R2] writePollStatus falhou:', e)
   }
 }

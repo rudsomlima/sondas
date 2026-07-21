@@ -1,8 +1,8 @@
 'use client'
 
-import { useMemo } from 'react'
+import { useEffect, useMemo } from 'react'
 import { LIVE_STALE_MS, ReceiverStatus } from '@/app/lib/sondehub'
-import { MQTT_FRESH_MS, UPTIME_ONLINE_MS, RdzSleep } from '@/app/lib/mqtt'
+import { MQTT_FRESH_MS, UPTIME_ONLINE_MS } from '@/app/lib/mqtt'
 import { useReceiverStatus, MyReceiverSonde, FORGET_MS } from './useReceiverStatus'
 import { useReceiverMqtt, DiscoveredReceiver } from './useReceiverMqtt'
 import type { RdzPower } from '@/app/lib/mqtt'
@@ -13,22 +13,9 @@ export type { DiscoveredReceiver }
 import { parseUtcDateStr } from '@/app/lib/launchUtils'
 import { usePowerStateHistory, PowerHistoryEntry } from './usePowerStateHistory'
 import { useBatteryHistory, BattVoltageEntry } from './useBatteryHistory'
+import { deriveSleepState } from '@/app/lib/powerState'
 
 export type { PowerHistoryEntry, BattVoltageEntry }
-
-// Retained de propósito: o aviso é publicado ANTES de dormir/economizar e
-// fica no broker; expira sozinho quando sleep_until passa (com 10 min de
-// tolerância para o drift do RTC do TTGO). As razões "listen_*" significam
-// "acordado, aguardando lançamento atrasado" — não é sleep de verdade. Função
-// pura (não hook) pra poder ser chamada tanto pro histórico (usePowerStateHistory,
-// hook de nível superior) quanto pro estado retornado (dentro do useMemo abaixo).
-function deriveSleepState(s: RdzSleep | null, now: number) {
-  const active = !!s && s.sleepUntil > 0 && now < s.sleepUntil * 1000 + 10 * 60_000
-  const isListen = active && (s!.reason?.startsWith('listen') ?? false)
-  const sleeping = active && !isListen ? { until: s!.sleepUntil * 1000, reason: s!.reason } : null
-  const waitingLate = active && isListen ? { until: s!.sleepUntil * 1000, reason: s!.reason } : null
-  return { sleeping, waitingLate }
-}
 
 export type ReceiverSource = 'mqtt' | 'sondehub'
 
@@ -93,6 +80,20 @@ export function useReceiver(): ReceiverState {
   // Chave de armazenamento derivada do prefix ativo (imutável por sessão —
   // troca de receptor exige reload da página).
   const rKey = useMemo(() => toReceiverKey(getSettings().mqttTopicPrefix), [])
+
+  // Registra o receptor ativo no servidor (uma vez por sessão) pra o cron
+  // de telemetria (app/api/poll → mqttServerPoll.ts) saber que ele existe e
+  // continuar coletando energia/bateria mesmo sem ninguém com o site aberto
+  // — sem isso, mqttTopicPrefix só vive no localStorage deste navegador.
+  useEffect(() => {
+    const s = getSettings()
+    if (!s.mqttEnabled || !s.mqttTopicPrefix || !/^wss?:\/\//.test(s.mqttBrokerUrl)) return
+    fetch('/api/register-receiver', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prefix: s.mqttTopicPrefix, brokerUrl: s.mqttBrokerUrl }),
+    }).catch(() => { /* best-effort — o próximo carregamento tenta de novo */ })
+  }, [])
 
   // Fora do useMemo abaixo de propósito: hooks não podem ser chamados de
   // dentro de uma factory de useMemo (regra dos hooks).

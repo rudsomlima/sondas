@@ -2,27 +2,19 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { GMT3 } from '@/app/lib/types'
-
-export interface BattVoltageEntry {
-  at: number // epoch ms
-  v:  number // tensão (V)
-}
-
-const MAX_ENTRIES   = 5000
-const MAX_AGE_MS    = 7 * 24 * 60 * 60 * 1000
-const MIN_DELTA_V   = 0.01
-// Espaçamento máximo garantido entre leituras enquanto o MQTT fica conectado
-// (heartbeat) — exportado pro gráfico (BatteryChart) usar como referência
-// de "isso é maior que qualquer intervalo normal, então é uma lacuna de
-// verdade" ao decidir onde quebrar a linha em vez de interpolar.
-export const MAX_SILENT_MS = 5 * 60 * 1000
-const R2_DEBOUNCE   = 20_000 // 20s após última escrita → sync R2
+import { MAX_SILENT_MS, shouldRecordBattReading, type BattVoltageEntry } from '@/app/lib/powerState'
 
 export function localBattDayKey(utcMs: number): string {
   const local = new Date(utcMs + GMT3)
   const pad = (n: number) => String(n).padStart(2, '0')
   return `${local.getUTCFullYear()}-${pad(local.getUTCMonth() + 1)}-${pad(local.getUTCDate())}`
 }
+
+export { MAX_SILENT_MS }
+export type { BattVoltageEntry }
+
+const MAX_ENTRIES   = 5000
+const MAX_AGE_MS    = 7 * 24 * 60 * 60 * 1000
 
 function storageKey(receiverKey: string): string {
   return `sondas_batt_${receiverKey}`
@@ -49,6 +41,9 @@ function pruneHistory(entries: BattVoltageEntry[]): BattVoltageEntry[] {
   return pruned.length > MAX_ENTRIES ? pruned.slice(pruned.length - MAX_ENTRIES) : pruned
 }
 
+// Só usada pela exclusão explícita de um dia — a escrita passiva de novas
+// leituras não vai mais pro R2 daqui, é responsabilidade exclusiva do
+// poller do servidor (ver mesmo comentário em usePowerStateHistory.ts).
 async function syncToR2(receiverKey: string, data: BattVoltageEntry[]) {
   try {
     await fetch(
@@ -82,7 +77,6 @@ export function useBatteryHistory(
   // O useEffect abaixo carrega do localStorage / R2 logo após o mount.
   const [history, setHistory] = useState<BattVoltageEntry[]>([])
   const lastRef     = useRef<{ at: number; v: number } | null>(null)
-  const r2Timer     = useRef<ReturnType<typeof setTimeout> | null>(null)
   const receiverRef = useRef(receiverKey)
 
   // Carrega histórico inicial do localStorage; se vazio, tenta R2
@@ -98,22 +92,16 @@ export function useBatteryHistory(
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []) // só no mount — receiverKey não muda sem reload de página
 
-  // Gravação de nova leitura
+  // Gravação de nova leitura (cache local — o R2 é escrito pelo poller do servidor)
   useEffect(() => {
     if (!mqttConnected || ttgoBattV === null) return
     const now  = Date.now()
     const last = lastRef.current
-    const shouldRecord = !last
-      || Math.abs(ttgoBattV - last.v) >= MIN_DELTA_V
-      || now - last.at >= MAX_SILENT_MS
-    if (!shouldRecord) return
+    if (!shouldRecordBattReading(last, ttgoBattV, now)) return
     lastRef.current = { at: now, v: ttgoBattV }
     setHistory(prev => {
       const next = pruneHistory([...prev, { at: now, v: ttgoBattV }])
       writeLocalHistory(receiverKey, next)
-      // Debounce sync para R2
-      if (r2Timer.current) clearTimeout(r2Timer.current)
-      r2Timer.current = setTimeout(() => syncToR2(receiverRef.current, next), R2_DEBOUNCE)
       return next
     })
   }, [ttgoBattV, mqttConnected, receiverKey])
@@ -122,8 +110,7 @@ export function useBatteryHistory(
     setHistory(prev => {
       const next = pruneHistory(prev.filter(e => localBattDayKey(e.at) !== dayKey))
       writeLocalHistory(receiverKey, next)
-      if (r2Timer.current) clearTimeout(r2Timer.current)
-      r2Timer.current = setTimeout(() => syncToR2(receiverRef.current, next), R2_DEBOUNCE)
+      syncToR2(receiverRef.current, next)
       return next
     })
   }, [receiverKey])

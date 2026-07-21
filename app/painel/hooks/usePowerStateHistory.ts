@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { RdzPower } from '@/app/lib/mqtt'
 import { GMT3 } from '@/app/lib/types'
+import { derivePowerHistoryState, powerHistoryKey, type PowerHistoryState, type PowerHistoryEntry } from '@/app/lib/powerState'
 
 function localDayKey(utcMs: number): string {
   const local = new Date(utcMs + GMT3)
@@ -10,19 +11,10 @@ function localDayKey(utcMs: number): string {
   return `${local.getUTCFullYear()}-${pad(local.getUTCMonth() + 1)}-${pad(local.getUTCDate())}`
 }
 
-export type PowerHistoryState = 'awake' | 'sleeping' | 'listening' | 'eco'
-
-export interface PowerHistoryEntry {
-  at: number // epoch ms de quando o app percebeu a transição
-  state: PowerHistoryState
-  reason?: string
-  cpuMhz?: number
-  wifi?: string
-}
+export type { PowerHistoryState, PowerHistoryEntry }
 
 const MAX_ENTRIES = 2000
 const MAX_AGE_MS  = 14 * 24 * 60 * 60 * 1000
-const R2_DEBOUNCE = 20_000
 
 // Marca de presença enquanto a aba fica aberta com MQTT conectado, mesmo sem
 // mudança de estado — sem isso, o timeline (PowerTimeline.tsx) não tinha como
@@ -57,6 +49,11 @@ function pruneHistory(entries: PowerHistoryEntry[]): PowerHistoryEntry[] {
   return pruned.length > MAX_ENTRIES ? pruned.slice(pruned.length - MAX_ENTRIES) : pruned
 }
 
+// Só usado pela exclusão explícita de um dia (ação do usuário) — a escrita
+// passiva de novas leituras não vai mais pro R2 daqui: isso agora é
+// responsabilidade exclusiva do poller do servidor (app/lib/mqttServerPoll.ts,
+// rodando via /api/poll), pra não ter dois escritores brigando pelo mesmo
+// arquivo. Este hook fica só como cache local rápido + leitura inicial do R2.
 async function syncToR2(receiverKey: string, data: PowerHistoryEntry[]) {
   try {
     await fetch(
@@ -84,8 +81,9 @@ export interface UsePowerStateHistoryResult {
 
 /**
  * Histórico de transições de power/deep-sleep, isolado por receptor
- * (`receiverKey`). Usa localStorage como cache rápido e sincroniza
- * periodicamente com o R2 para durabilidade entre dispositivos/sessões.
+ * (`receiverKey`). Usa localStorage como cache rápido pra exibição imediata
+ * enquanto a aba está aberta; a fonte de verdade durável no R2 é escrita
+ * pelo poller do servidor (não por este hook — ver comentário em syncToR2).
  */
 export function usePowerStateHistory(
   sleeping:      { reason?: string } | null,
@@ -96,7 +94,6 @@ export function usePowerStateHistory(
 ): UsePowerStateHistoryResult {
   // Inicializa sempre vazio — evita mismatch de hidratação (SSR ≠ cliente com localStorage).
   const [history, setHistory] = useState<PowerHistoryEntry[]>([])
-  const r2Timer     = useRef<ReturnType<typeof setTimeout> | null>(null)
   const receiverRef = useRef(receiverKey)
 
   // Carrega histórico inicial do localStorage; se vazio, tenta R2
@@ -114,18 +111,15 @@ export function usePowerStateHistory(
 
   useEffect(() => {
     if (!mqttConnected) return
-    const state: PowerHistoryState = sleeping ? 'sleeping' : waitingLate ? 'listening' : power?.eco ? 'eco' : 'awake'
-    const reason = sleeping?.reason ?? waitingLate?.reason
-    const key = `${state}|${reason ?? ''}`
+    const { state, reason } = derivePowerHistoryState(sleeping, waitingLate, power)
+    const key = powerHistoryKey(state, reason)
 
     setHistory(prev => {
       const last = prev[prev.length - 1]
-      const lastKey = last ? `${last.state}|${last.reason ?? ''}` : null
+      const lastKey = last ? powerHistoryKey(last.state, last.reason) : null
       if (lastKey === key) return prev
       const next = pruneHistory([...prev, { at: Date.now(), state, reason, cpuMhz: power?.cpuMhz, wifi: power?.wifi }])
       writeLocalHistory(receiverKey, next)
-      if (r2Timer.current) clearTimeout(r2Timer.current)
-      r2Timer.current = setTimeout(() => syncToR2(receiverRef.current, next), R2_DEBOUNCE)
       return next
     })
   }, [sleeping, waitingLate, power, mqttConnected, receiverKey])
@@ -139,13 +133,10 @@ export function usePowerStateHistory(
     if (!mqttConnected) return
     const id = setInterval(() => {
       const { sleeping, waitingLate, power } = liveRef.current
-      const state: PowerHistoryState = sleeping ? 'sleeping' : waitingLate ? 'listening' : power?.eco ? 'eco' : 'awake'
-      const reason = sleeping?.reason ?? waitingLate?.reason
+      const { state, reason } = derivePowerHistoryState(sleeping, waitingLate, power)
       setHistory(prev => {
         const next = pruneHistory([...prev, { at: Date.now(), state, reason, cpuMhz: power?.cpuMhz, wifi: power?.wifi }])
         writeLocalHistory(receiverKey, next)
-        if (r2Timer.current) clearTimeout(r2Timer.current)
-        r2Timer.current = setTimeout(() => syncToR2(receiverRef.current, next), R2_DEBOUNCE)
         return next
       })
     }, HEARTBEAT_MS)
@@ -156,8 +147,7 @@ export function usePowerStateHistory(
     setHistory(prev => {
       const next = pruneHistory(prev.filter(e => localDayKey(e.at) !== dayKey))
       writeLocalHistory(receiverKey, next)
-      if (r2Timer.current) clearTimeout(r2Timer.current)
-      r2Timer.current = setTimeout(() => syncToR2(receiverRef.current, next), R2_DEBOUNCE)
+      syncToR2(receiverRef.current, next)
       return next
     })
   }, [receiverKey])

@@ -30,45 +30,65 @@ export interface SondeHubFrame {
 // conceitual usado pro feed ao vivo do radiosondy.info (presença = em voo).
 export const LIVE_STALE_MS = 10 * 60 * 1000
 
-// Busca a telemetria das últimas 12h de toda sonda ativa no mundo e devolve
-// só as de hoje (GMT-3) que estiverem a até `radiusKm` da estação dada —
-// generaliza a bounding box fixa que antes só cobria Natal (RN_BOUNDS em
-// radiosondy.ts) pra qualquer uma das estações cadastradas em app/lib/stations.ts.
-export async function fetchSondeHubFlights(
-  stationLat: number, stationLon: number, todayStr: string, radiusKm = 300
-): Promise<TodayFlight[]> {
+// Só o último frame de cada sonda ativa no feed global — separado da busca
+// em si pra quem for consultar VÁRIAS estações (ex. o cron do servidor, ver
+// app/lib/liveFlightsCache.ts) poder buscar uma vez só e filtrar por estação
+// em memória, em vez de refazer o fetch de ~350KB por estação.
+export interface SondeHubLastFrame { lat: number; lon: number; alt: number; vel_v: number; reportDate: Date }
+
+export async function fetchSondeHubLastFrames(): Promise<Map<string, SondeHubLastFrame>> {
   const res = await fetch('https://api.v2.sondehub.org/sondes/telemetry?duration=12h', { cache: 'no-store' })
   if (!res.ok) throw new Error(`Erro ${res.status} ao consultar sondehub.org`)
   const data: Record<string, Record<string, SondeHubFrame>> = await res.json()
 
-  const out: TodayFlight[] = []
-  const now = Date.now()
-
+  const out = new Map<string, SondeHubLastFrame>()
   for (const [serial, frames] of Object.entries(data)) {
     const timestamps = Object.keys(frames).sort()
     const lastTs = timestamps[timestamps.length - 1]
     const last = frames[lastTs]
     if (!last || typeof last.lat !== 'number' || typeof last.lon !== 'number') continue
-
-    if (haversineKm(stationLat, stationLon, last.lat, last.lon) > radiusKm) continue
-
     const reportDate = new Date(last.datetime)
     if (isNaN(reportDate.getTime())) continue
-    if (gmt3DateStr(reportDate) !== todayStr) continue
+    out.set(serial, { lat: last.lat, lon: last.lon, alt: last.alt ?? 0, vel_v: last.vel_v ?? 0, reportDate })
+  }
+  return out
+}
 
+// Filtra os últimos frames (já buscados) pra uma estação — distância e data
+// (GMT-3) de hoje — generaliza a bounding box fixa que antes só cobria Natal
+// (RN_BOUNDS em radiosondy.ts) pra qualquer estação de app/lib/stations.ts.
+export function filterSondeHubFlights(
+  frames: Map<string, SondeHubLastFrame>, stationLat: number, stationLon: number, todayStr: string, radiusKm = 300
+): TodayFlight[] {
+  const out: TodayFlight[] = []
+  const now = Date.now()
+  for (const [serial, last] of frames) {
+    if (haversineKm(stationLat, stationLon, last.lat, last.lon) > radiusKm) continue
+    if (gmt3DateStr(last.reportDate) !== todayStr) continue
     out.push({
       sondeNumber: serial,
-      altitude: last.alt ?? 0,
-      climbing: last.vel_v ?? 0,
+      altitude: last.alt,
+      climbing: last.vel_v,
       lat: last.lat,
       lon: last.lon,
-      lastReportUtc: toReportStr(reportDate),
-      isLive: now - reportDate.getTime() < LIVE_STALE_MS,
+      lastReportUtc: toReportStr(last.reportDate),
+      isLive: now - last.reportDate.getTime() < LIVE_STALE_MS,
       source: 'sondehub',
     })
   }
-
   return out
+}
+
+// Busca a telemetria das últimas 12h de toda sonda ativa no mundo e devolve
+// só as de hoje (GMT-3) que estiverem a até `radiusKm` da estação dada —
+// mantido pros chamadores de uma estação só (ex. useLiveFlights.ts). Quem
+// for consultar várias estações deve usar fetchSondeHubLastFrames() +
+// filterSondeHubFlights() direto, pra não refazer o fetch global por estação.
+export async function fetchSondeHubFlights(
+  stationLat: number, stationLon: number, todayStr: string, radiusKm = 300
+): Promise<TodayFlight[]> {
+  const frames = await fetchSondeHubLastFrames()
+  return filterSondeHubFlights(frames, stationLat, stationLon, todayStr, radiusKm)
 }
 
 /**
