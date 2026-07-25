@@ -20,23 +20,21 @@ export interface AppSettings {
   uploaderCallsign: string // callsign como configurado no firmware/SondeHub; '' = desligado
   homeLat: number | null // posição de casa (centro da busca por sondas próximas)
   homeLon: number | null
-  // Lista de todos os receptores conhecidos (descobertos via MQTT ou adicionados manualmente).
-  // O receptor ativo é sempre aquele cujo prefix === mqttTopicPrefix.
+  // Lista de todos os receptores conhecidos (auto-descobertos via reporte
+  // HTTP ou adicionados manualmente). O receptor ativo é sempre aquele cujo
+  // prefix === mqttTopicPrefix.
   knownReceivers: KnownReceiver[]
   receiverAlertsEnabled: boolean // Notification API ao decodificar sonda nova
   alertRadiusKm: number // 0 = sem filtro de distância
-  // MQTT direto do firmware (opcional, desligado por padrão): o TTGO publica
-  // num broker público (TCP 1883, sem TLS — limitação do firmware) e o
-  // browser assina o mesmo broker via WSS. Fonte primária quando fresco;
-  // o polling SondeHub continua como fallback automático.
-  mqttEnabled: boolean
-  mqttBrokerUrl: string // endpoint WebSocket do broker (ws:// ou wss://)
-  mqttTopicPrefix: string // deve bater EXATAMENTE com mqtt.prefix do firmware; '' = inoperante
-  // Config completa do firmware (app/meu-receptor), lida/gravada via MQTT.
-  // rdzConfigSecret deve bater com mqtt.cfgsecret configurado no firmware
-  // (só necessário pra gravar; leitura não exige segredo).
+  // Identidade do receptor ativo — precisa bater EXATAMENTE com mqtt.prefix
+  // configurado no firmware; '' = nenhum receptor ativo. Usado como chave em
+  // toda URL/endpoint HTTP direto (report, OTA, config remota, live status).
+  mqttTopicPrefix: string
+  // Config completa do firmware (app/meu-receptor), lida/gravada via HTTP
+  // (ver conn-cfg.cpp no firmware). rdzConfigSecret deve bater com
+  // mqtt.cfgsecret configurado no firmware (só necessário pra gravar;
+  // leitura não exige segredo).
   rdzConfigSecret: string
-  mqttDiscoveryBase: string // prefixo-raiz para wildcard de descoberta; '' = desabilitado
 }
 
 const SETTINGS_KEY = 'sondas_settings'
@@ -48,11 +46,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   knownReceivers: [],
   receiverAlertsEnabled: false,
   alertRadiusKm: 0,
-  mqttEnabled: false,
-  mqttBrokerUrl: 'wss://broker.emqx.io:8084/mqtt',
   mqttTopicPrefix: '',
   rdzConfigSecret: '',
-  mqttDiscoveryBase: '',
 }
 
 export function getSettings(): AppSettings {
@@ -74,16 +69,11 @@ export function getSettings(): AppSettings {
       homeLon: parsed.homeLon != null && isFinite(homeLon) ? homeLon : null,
       receiverAlertsEnabled: parsed.receiverAlertsEnabled === true,
       alertRadiusKm: isFinite(radius) && radius >= 0 ? radius : DEFAULT_SETTINGS.alertRadiusKm,
-      mqttEnabled: parsed.mqttEnabled === true,
-      mqttBrokerUrl: typeof parsed.mqttBrokerUrl === 'string' && /^wss?:\/\//.test(parsed.mqttBrokerUrl.trim())
-        ? parsed.mqttBrokerUrl.trim()
-        : DEFAULT_SETTINGS.mqttBrokerUrl,
       knownReceivers: Array.isArray(parsed.knownReceivers)
         ? parsed.knownReceivers.filter((r: any) => r && typeof r.prefix === 'string' && r.prefix)
         : DEFAULT_SETTINGS.knownReceivers,
       mqttTopicPrefix: typeof parsed.mqttTopicPrefix === 'string' ? parsed.mqttTopicPrefix.trim() : DEFAULT_SETTINGS.mqttTopicPrefix,
       rdzConfigSecret: typeof parsed.rdzConfigSecret === 'string' ? parsed.rdzConfigSecret : DEFAULT_SETTINGS.rdzConfigSecret,
-      mqttDiscoveryBase: typeof parsed.mqttDiscoveryBase === 'string' ? parsed.mqttDiscoveryBase.trim() : DEFAULT_SETTINGS.mqttDiscoveryBase,
     }
   } catch {
     return DEFAULT_SETTINGS

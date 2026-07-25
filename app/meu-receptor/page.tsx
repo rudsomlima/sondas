@@ -1,16 +1,16 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { Antenna, Loader2, Plus, Radio, RotateCw, XCircle } from 'lucide-react'
+import { Antenna, Loader2, RotateCw, XCircle } from 'lucide-react'
 import { AppSettings, DEFAULT_SETTINGS, KnownReceiver, getSettings, setSettings } from '@/app/lib/settings'
 import { receiverKey } from '@/app/lib/receiverKey'
 import { useReceiver } from '../painel/hooks/useReceiver'
 import { useFirmwareConfig } from './hooks/useFirmwareConfig'
 import ReceiverSettingsPanel from './components/ReceiverSettingsPanel'
-import ChannelPicker from './components/ChannelPicker'
 import FullConfigEditor from './components/FullConfigEditor'
 import PowerTimeline from './components/PowerTimeline'
 import BatteryChart from './components/BatteryChart'
+import FirmwareOtaPanel from './components/FirmwareOtaPanel'
 import type { RdzConfig } from '@/app/lib/rdzConfig'
 
 export default function MeuReceptorPage() {
@@ -23,14 +23,33 @@ export default function MeuReceptorPage() {
 
   const setConfig = (updater: (c: AppSettings) => AppSettings) => setConfigState(updater)
 
+  // Garante que o receptor ativo (mqttTopicPrefix) também está na lista de
+  // conhecidos — só ao salvar explicitamente, não a cada tecla digitada no
+  // campo de prefixo (um useEffect ligado a config.mqttTopicPrefix rodava a
+  // cada onChange do input controlado, cadastrando cada valor PARCIAL
+  // digitado — "p", "pu", "pu7"… — como um receptor separado, poluindo a
+  // lista em vez de só adicionar o valor final).
   const handleSave = () => {
-    setSettings(config)
+    const prefix = config.mqttTopicPrefix
+    const next = prefix && !config.knownReceivers.some(r => r.prefix === prefix)
+      ? { ...config, knownReceivers: [...config.knownReceivers, {
+          prefix, displayName: config.uploaderCallsign || prefix, addedAt: Date.now(),
+        }] }
+      : config
+    if (next !== config) setConfigState(next)
+    setSettings(next)
     setSaved(true)
     setTimeout(() => setSaved(false), 2500)
   }
 
-  const receiver = useReceiver()
   const firmwareConfig = useFirmwareConfig()
+  // Cadência real do receptor (mqtt.report_interval, ms) — quando a config já
+  // carregou, usa ela pro polling de live status em vez do default fixo (não
+  // faz sentido checar mais rápido do que ele de fato reporta).
+  const reportIntervalMs = firmwareConfig.config?.['mqtt.report_interval']
+    ? Number(firmwareConfig.config['mqtt.report_interval'])
+    : undefined
+  const receiver = useReceiver(reportIntervalMs && isFinite(reportIntervalMs) ? reportIntervalMs : undefined)
 
   // Auto-preenche callsign e posição de casa a partir da config do firmware
   const autoFillDone = useRef(false)
@@ -61,46 +80,30 @@ export default function MeuReceptorPage() {
     })
   }, [firmwareConfig.config])
 
-  // Auto-adiciona receptores descobertos via MQTT à lista de conhecidos
+  // Auto-descoberta via reporte HTTP direto (/api/receiver-report) — QUALQUER
+  // receptor que já tenha mqtt.siteurl configurado (necessário pro
+  // auto-OTA/persistência, ver conn-report.cpp) aparece aqui sozinho assim
+  // que reporta algo, sem precisar de MQTT nem de cadastro manual. Roda uma
+  // vez ao abrir a página; server-side é barato (1 GET pequeno do R2).
   useEffect(() => {
-    if (receiver.discoveredReceivers.size === 0) return
-    setConfigState(prev => {
-      const existing = new Set(prev.knownReceivers.map(r => r.prefix))
-      const toAdd: KnownReceiver[] = []
-      for (const dr of receiver.discoveredReceivers.values()) {
-        if (!existing.has(dr.prefix)) {
-          toAdd.push({
-            prefix:      dr.prefix,
-            displayName: dr.uptime.user || dr.prefix,
-            addedAt:     Date.now(),
-          })
-        }
-      }
-      if (toAdd.length === 0) return prev
-      const next = { ...prev, knownReceivers: [...prev.knownReceivers, ...toAdd] }
-      setSettings(next)
-      return next
-    })
-  }, [receiver.discoveredReceivers])
-
-  // Garante que o receptor ativo também está na lista de conhecidos
-  useEffect(() => {
-    if (!config.mqttTopicPrefix) return
-    const prefix = config.mqttTopicPrefix
-    if (config.knownReceivers.some(r => r.prefix === prefix)) return
-    setConfigState(prev => {
-      const next = {
-        ...prev,
-        knownReceivers: [...prev.knownReceivers, {
-          prefix,
-          displayName: prev.uploaderCallsign || prefix,
-          addedAt: Date.now(),
-        }],
-      }
-      setSettings(next)
-      return next
-    })
-  }, [config.mqttTopicPrefix, config.knownReceivers, config.uploaderCallsign])
+    fetch('/api/known-receivers')
+      .then(r => r.json())
+      .then((d: { entries?: { prefix: string }[] }) => {
+        const found = d.entries ?? []
+        if (found.length === 0) return
+        setConfigState(prev => {
+          const existing = new Set(prev.knownReceivers.map(r => r.prefix))
+          const toAdd: KnownReceiver[] = found
+            .filter(e => !existing.has(e.prefix))
+            .map(e => ({ prefix: e.prefix, displayName: e.prefix, addedAt: Date.now() }))
+          if (toAdd.length === 0) return prev
+          const next = { ...prev, knownReceivers: [...prev.knownReceivers, ...toAdd] }
+          setSettings(next)
+          return next
+        })
+      })
+      .catch(() => {})
+  }, [])
 
   // Troca o receptor ativo: atualiza mqttTopicPrefix → salva → recarrega
   const switchReceiver = (prefix: string) => {
@@ -143,11 +146,6 @@ export default function MeuReceptorPage() {
   const activePrefix = config.mqttTopicPrefix
   const knownReceivers = config.knownReceivers
 
-  // Receptores descobertos mas ainda não confirmados como "conhecidos"
-  const newlyDiscovered = [...receiver.discoveredReceivers.values()].filter(
-    dr => !knownReceivers.some(kr => kr.prefix === dr.prefix)
-  )
-
   return (
     <div className="p-6 max-w-3xl mx-auto">
       <div className="mb-6">
@@ -167,7 +165,6 @@ export default function MeuReceptorPage() {
           <div className="flex flex-wrap gap-2">
             {knownReceivers.map(kr => {
               const isActive = kr.prefix === activePrefix
-              const discovered = receiver.discoveredReceivers.get(kr.prefix)
               return (
                 <button
                   key={kr.prefix}
@@ -179,9 +176,6 @@ export default function MeuReceptorPage() {
                   }`}
                   title={`prefix: ${kr.prefix}\nkey: ${receiverKey(kr.prefix)}`}
                 >
-                  {discovered && (
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 flex-shrink-0" title="Online agora" />
-                  )}
                   {kr.displayName}
                   {isActive && <span className="text-[9px] text-blue-400 ml-0.5">ativo</span>}
                 </button>
@@ -208,14 +202,11 @@ export default function MeuReceptorPage() {
         setConfig={setConfig}
         onSave={handleSave}
         saved={saved}
-        rxPosition={receiver.rxPosition}
         knownReceivers={knownReceivers}
         onRenameReceiver={renameReceiver}
         onForgetReceiver={forgetReceiver}
         onSwitchReceiver={switchReceiver}
       />
-
-      <ChannelPicker config={config} setConfig={setConfig} />
 
       {firmwareConfig.loading && (
         <div className="panel p-5 mb-6 flex items-center gap-2 text-sm text-gray-400">
@@ -249,6 +240,8 @@ export default function MeuReceptorPage() {
         />
       )}
 
+      <FirmwareOtaPanel receiverKey={receiverKey(activePrefix)} pollMs={reportIntervalMs} />
+
       <BatteryChart
         history={receiver.batteryHistory}
         config={effectiveConfig}
@@ -258,72 +251,9 @@ export default function MeuReceptorPage() {
       <PowerTimeline
         history={receiver.powerHistory}
         config={effectiveConfig}
-        mqttConnected={receiver.mqttConnected}
+        mqttConnected={receiver.liveConnected}
         onDeleteDay={receiver.deletePowerHistoryDay}
       />
-
-      {/* Receptores descobertos na rede mas ainda não na lista */}
-      {(newlyDiscovered.length > 0 || receiver.discoveredReceivers.size > 0) && (
-        <div className="panel p-5 mb-6">
-          <h2 className="text-sm font-semibold text-white flex items-center gap-2 mb-3">
-            <Radio size={14} className="text-cyan-400" />
-            Outros receptores na rede
-            <span className="ml-1 px-1.5 py-0.5 bg-cyan-900/40 text-cyan-300 rounded text-[10px]">
-              {receiver.discoveredReceivers.size}
-            </span>
-          </h2>
-          <div className="space-y-2">
-            {[...receiver.discoveredReceivers.values()].map(dr => {
-              const isKnown = knownReceivers.some(kr => kr.prefix === dr.prefix)
-              return (
-                <div key={dr.prefix} className="flex flex-wrap items-center gap-3 border border-border rounded-md px-3 py-2.5 bg-bg text-xs">
-                  <div className="flex-1 min-w-0">
-                    <p className="text-white mono font-medium truncate">{dr.uptime.user || dr.prefix}</p>
-                    <p className="text-faint mt-0.5 font-mono text-[10px]">
-                      prefixo: <span className="text-gray-400">{dr.prefix}</span>
-                      {dr.uptime.ip && <> · IP: <span className="text-gray-400">{dr.uptime.ip}</span></>}
-                      {dr.uptime.rxlat !== undefined && (
-                        <> · {dr.uptime.rxlat.toFixed(4)}, {dr.uptime.rxlon?.toFixed(4)}</>
-                      )}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-1.5 flex-shrink-0">
-                    {!isKnown && (
-                      <button
-                        onClick={() => {
-                          setConfigState(prev => {
-                            const next = {
-                              ...prev,
-                              knownReceivers: [...prev.knownReceivers, {
-                                prefix:      dr.prefix,
-                                displayName: dr.uptime.user || dr.prefix,
-                                addedAt:     Date.now(),
-                              }],
-                            }
-                            setSettings(next)
-                            return next
-                          })
-                        }}
-                        className="px-2.5 py-1 bg-surface border border-border text-gray-400 rounded text-[10px] hover:text-white transition-colors"
-                        title="Adicionar à lista sem trocar o receptor ativo"
-                      >
-                        <Plus size={11} className="inline mr-1" />
-                        Adicionar
-                      </button>
-                    )}
-                    <button
-                      onClick={() => switchReceiver(dr.prefix)}
-                      className="px-2.5 py-1 bg-cyan-600/20 border border-cyan-500/40 text-cyan-300 rounded text-[10px] hover:bg-cyan-600/30 transition-colors"
-                    >
-                      Usar este receptor
-                    </button>
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        </div>
-      )}
     </div>
   )
 }

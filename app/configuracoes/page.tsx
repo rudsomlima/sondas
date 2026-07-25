@@ -119,7 +119,7 @@ export default function ConfiguracoesPage() {
           <div>
             <h2 className="text-sm font-semibold text-white">Meu receptor</h2>
             <p className="text-[11px] text-faint mt-0.5">
-              Callsign, posição, MQTT, config completa do firmware e histórico de energia
+              Callsign, posição, config completa do firmware e histórico de energia
               agora ficam em <span className="text-blue-400">Meu Receptor</span>.
             </p>
           </div>

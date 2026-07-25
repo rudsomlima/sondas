@@ -21,7 +21,7 @@ interface FullConfigEditorProps {
   loadedAt: number | null
   applying: boolean
   applyError: string | null
-  applyResult: { ok: boolean; rebooting?: boolean } | null
+  applyResult: { ok: boolean; rebooting?: boolean; pending?: boolean } | null
   onApply: (changes: Record<string, string>, mode: 'live' | 'reboot') => void
   onSleepChanges?: (sleepDraft: Record<string, string>) => void
 }
@@ -221,7 +221,12 @@ export default function FullConfigEditor({ config, loadedAt, applying, applyErro
           <XCircle size={11} /> {applyError}
         </p>
       )}
-      {applyResult?.ok && !applyError && (
+      {applyResult?.ok && applyResult.pending && !applyError && (
+        <p className="text-[11px] text-amber-400 mt-2 flex items-center gap-1">
+          <Loader2 size={11} className="animate-spin" /> Enfileirado — será aplicado assim que o receptor buscar (no boot ou em até {'~'}1min se já estiver acordado).
+        </p>
+      )}
+      {applyResult?.ok && !applyResult.pending && !applyError && (
         <p className="text-[11px] text-emerald-400 mt-2 flex items-center gap-1">
           <CheckCircle2 size={11} /> Aplicado{applyResult.rebooting ? ' — o receptor está reiniciando' : ''}.
         </p>

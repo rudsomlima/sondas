@@ -190,7 +190,7 @@ export default function SleepConfigEditor({ config, changes, setField }: SleepCo
                 className="bg-bg border border-border rounded-md text-white mono px-2 py-1.5 outline-none focus:border-blue-500"
               />
             </div>
-            <div className="flex items-center gap-3 text-xs">
+            <div className="flex flex-wrap items-center gap-3 text-xs">
               <label className="text-gray-400 w-52 flex-shrink-0">Duração (minutos)</label>
               <input
                 type="number"
@@ -199,7 +199,7 @@ export default function SleepConfigEditor({ config, changes, setField }: SleepCo
                 onChange={e => setField(durKey, e.target.value)}
                 className="w-24 bg-bg border border-border rounded-md text-white mono px-2 py-1.5 outline-none focus:border-blue-500"
               />
-              <span className="text-faint">→ termina às {minutesToHHMM(endMin)}</span>
+              <span className="text-faint whitespace-nowrap">→ termina às {minutesToHHMM(endMin)}</span>
             </div>
           </>
         )}

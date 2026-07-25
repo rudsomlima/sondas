@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { Antenna, Loader2, BatteryMedium, Moon, Network, Radio, Clock, Cpu, Wifi, WifiOff } from 'lucide-react'
+import { Antenna, Loader2, BatteryMedium, Moon, Radio, Clock, Cpu, Wifi, WifiOff } from 'lucide-react'
 import { formatGmt3 } from '@/app/lib/launchUtils'
 import type { ReceiverStatus } from '@/app/lib/sondehub'
 import type { RdzPower } from '@/app/lib/mqtt'
@@ -17,16 +17,13 @@ interface ReceiverPanelProps {
   enabled: boolean
   callsign: string
   source: ReceiverSource
-  mqttConfigured: boolean
-  mqttConnected: boolean
-  uptimeMs: number | null
+  liveConfigured: boolean
+  liveConnected: boolean
   ttgoBattV: number | null
   sleeping: { until: number; reason?: string } | null
   waitingLate: { until: number; reason?: string } | null
-  receiverIp: string | null
-  mqttLastMessageAt: number | null // epoch (ms) da última msg MQTT não-retida
-  mqttPublishedAt: number | null // epoch (ms) da última msg uptime publicada pelo firmware (mesmo retained)
-  power: RdzPower | null // CPU/WiFi/modo economia — tópico {prefix}power, ver DEEP_SLEEP_V2_GUIDE.md
+  liveLastMessageAt: number | null // epoch (ms) do último report HTTP conhecido (pmu/sleep/power)
+  power: RdzPower | null // CPU/WiFi/modo economia — reporte HTTP direto, ver DEEP_SLEEP_V2_GUIDE.md
   selected: SelectedTarget | null
   onSelect: (t: SelectedTarget | null) => void
 }
@@ -50,23 +47,14 @@ const LISTEN_REASONS: Record<string, string> = {
   listen_check: 'verificando sonda periodicamente (economia máxima)',
 }
 
-// "ligado há 2h 14min" a partir do uptime (millis) publicado pelo firmware.
-function formatUptime(ms: number): string {
-  const min = Math.floor(ms / 60000)
-  if (min < 60) return `${min}min`
-  const h = Math.floor(min / 60)
-  if (h < 48) return `${h}h ${min % 60}min`
-  return `${Math.floor(h / 24)}d ${h % 24}h`
-}
-
 // Card "Meu receptor": estado do receptor local do usuário (rdzTTGOsonde/
 // auto_rx) visto através dos frames dele no SondeHub, e as sondas que ele
 // está/esteve decodificando nesta janela. Clicar numa sonda foca mapa e
 // telemetria, como no LivePanel.
 export default function ReceiverPanel({
   status, mySondes, checked, enabled, callsign,
-  source, mqttConfigured, mqttConnected, uptimeMs, ttgoBattV, sleeping, waitingLate,
-  receiverIp, mqttLastMessageAt, mqttPublishedAt, power,
+  source, liveConfigured, liveConnected, ttgoBattV, sleeping, waitingLate,
+  liveLastMessageAt, power,
   selected, onSelect,
 }: ReceiverPanelProps) {
   // Ticker próprio de 1s — não depende de re-renders de outras partes do
@@ -77,25 +65,25 @@ export default function ReceiverPanel({
     const id = setInterval(() => setNowTick(Date.now()), 1000)
     return () => clearInterval(id)
   }, [])
-  const mqttAgoS = mqttLastMessageAt != null ? Math.max(0, Math.round((nowTick - mqttLastMessageAt) / 1000)) : null
+  const liveAgoS = liveLastMessageAt != null ? Math.max(0, Math.round((nowTick - liveLastMessageAt) / 1000)) : null
 
   // "Visto pela última vez": combina a fonte SondeHub (status.lastHeardUtc,
-  // só existe quando alguma sonda foi decodificada) com a MQTT (qualquer
-  // tópico não-retido — uptime/pmu chegam a cada ~60s mesmo sem sonda no ar,
+  // só existe quando alguma sonda foi decodificada) com o report HTTP direto
+  // (pmu/sleep/power chegam a cada ciclo de wake, mesmo sem sonda no ar,
   // então continuam marcando presença do receptor mesmo dormindo/sem voo).
   // Sem isso, o card ficava mudo ("sem frames recentes") sempre que não havia
-  // sonda nesta sessão, mesmo com o TTGO respondendo via MQTT segundos atrás.
+  // sonda nesta sessão, mesmo com o TTGO respondendo segundos atrás.
   const lastHeardMs = status?.lastHeardUtc ? new Date(status.lastHeardUtc).getTime() : null
-  const candidates = [lastHeardMs, mqttLastMessageAt, mqttPublishedAt].filter((v): v is number => v != null)
+  const candidates = [lastHeardMs, liveLastMessageAt].filter((v): v is number => v != null)
   const lastSeenMs = candidates.length > 0 ? Math.max(...candidates) : null
 
-  // Timeout de verdade: MQTT é a fonte esperada, mas nem o socket está
-  // conectado nem chegou msg fresca (source caiu pro fallback SondeHub) — e
-  // não é porque o firmware avisou que está dormindo/esperando (esses casos
-  // já têm explicação própria via sleeping/waitingLate). Mostra os últimos
-  // dados conhecidos (uptime/bateria/power já ficam no estado, não somem),
-  // só deixando claro que não são "agora".
-  const mqttOffline = mqttConfigured && !sleeping && !waitingLate && source !== 'mqtt'
+  // Timeout de verdade: o report HTTP é a fonte esperada, mas não chegou
+  // nada fresco (source caiu pro fallback SondeHub) — e não é porque o
+  // firmware avisou que está dormindo/esperando (esses casos já têm
+  // explicação própria via sleeping/waitingLate). Mostra os últimos dados
+  // conhecidos (bateria/power já ficam no estado, não somem), só deixando
+  // claro que não são "agora".
+  const liveOffline = liveConfigured && !sleeping && !waitingLate && source !== 'live'
 
   return (
     <div className="panel p-4">
@@ -121,7 +109,7 @@ export default function ReceiverPanel({
           <div className="flex items-center gap-2 mb-1 flex-wrap">
             <span className={`w-2 h-2 rounded-full ${
               sleeping ? 'bg-indigo-400' : waitingLate ? 'bg-amber-400 pulse-soft'
-              : mqttOffline ? 'bg-gray-600' : status?.online ? 'bg-green-400 pulse-soft' : 'bg-gray-600'
+              : liveOffline ? 'bg-gray-600' : status?.online ? 'bg-green-400 pulse-soft' : 'bg-gray-600'
             }`} />
             <span className="mono text-xs text-white">{callsign}</span>
             {sleeping ? (
@@ -138,20 +126,20 @@ export default function ReceiverPanel({
               >
                 <Clock size={9} /> aguardando lançamento até {formatGmt3(new Date(waitingLate.until).toISOString()).slice(11, 16)}
               </span>
-            ) : source === 'mqtt' ? (
+            ) : source === 'live' ? (
               <span
                 className="badge badge-success text-[9px] px-1.5 py-0"
-                title="Tópicos packet/uptime/pmu/sleep assinados via WebSocket; o TTGO publica uptime/pmu a cada ~60s e packet a cada frame de sonda (~1s)"
+                title="Reporte HTTP direto do firmware (bateria/sleep/power) a cada ciclo de wake"
               >
-                <Radio size={9} /> MQTT
-                {mqttAgoS != null && ` · última msg há ${mqttAgoS}s`}
+                <Radio size={9} /> Direto
+                {liveAgoS != null && ` · última msg há ${liveAgoS}s`}
               </span>
-            ) : mqttConfigured && !mqttConnected ? (
+            ) : liveConfigured && !liveConnected ? (
               <span
                 className="badge badge-warning text-[9px] px-1.5 py-0"
-                title="MQTT habilitado mas sem conexão com o broker — usando o fallback SondeHub"
+                title="Sem resposta do servidor — usando o fallback SondeHub"
               >
-                MQTT off
+                Offline
               </span>
             ) : (
               <span className="badge text-[9px] px-1.5 py-0 text-dim border border-border">SondeHub ~20s</span>
@@ -166,9 +154,9 @@ export default function ReceiverPanel({
               deixa claro que os dados abaixo são os ÚLTIMOS conhecidos, não o
               estado atual — e explica a causa mais provável em linguagem
               simples, sem jargão de MQTT. */}
-          {mqttOffline && (
+          {liveOffline && (
             <p className="text-[10px] text-red-400 mb-2">
-              Sem resposta do receptor via MQTT (timeout) — ele precisa estar ligado e acordado.
+              Sem resposta do receptor (timeout) — ele precisa estar ligado e acordado.
               {lastSeenMs != null && ' Mostrando os últimos dados recebidos.'}
             </p>
           )}
@@ -182,17 +170,15 @@ export default function ReceiverPanel({
                 : LISTEN_REASONS[waitingLate!.reason!] ?? waitingLate!.reason}
             </p>
           )}
-          {(uptimeMs != null || ttgoBattV != null) && (
+          {ttgoBattV != null ? (
             <div className="flex items-center gap-3 mb-3 text-[10px] text-dim mono">
-              {uptimeMs != null && <span>ligado há {formatUptime(uptimeMs)}</span>}
-              {ttgoBattV != null && (
-                <span className="flex items-center gap-1 text-red-400 font-semibold text-sm">
-                  <BatteryMedium size={15} /> {ttgoBattV.toFixed(2)} V
-                </span>
-              )}
+              <span className="flex items-center gap-1 text-red-400 font-semibold text-sm">
+                <BatteryMedium size={15} /> {ttgoBattV.toFixed(2)} V
+              </span>
             </div>
+          ) : (
+            <div className="mb-2" />
           )}
-          {uptimeMs == null && ttgoBattV == null && <div className="mb-2" />}
 
           {/* Estado de energia (CPU/WiFi/economia): descreve exatamente o que o
               receptor está fazendo agora pra economizar bateria, e por quê.
@@ -217,7 +203,7 @@ export default function ReceiverPanel({
           ) : power && (
             <div className="mb-3 rounded border border-border bg-bg p-2 space-y-1.5">
               <p className="text-[10px] text-dim font-semibold">
-                {mqttOffline ? 'Última leitura conhecida' : 'Energia agora'}
+                {liveOffline ? 'Última leitura conhecida' : 'Energia agora'}
               </p>
               <div className="flex items-center gap-3 text-[10px] mono flex-wrap">
                 <span
@@ -250,22 +236,6 @@ export default function ReceiverPanel({
                     ? 'Funcionamento normal, sem economias ativas.'
                     : 'Receptor ligado e escutando — nenhuma janela de dormir prevista agora.'}
                 </p>
-              )}
-            </div>
-          )}
-
-          {receiverIp && (
-            <div className="flex items-center gap-3 mb-3 text-[10px] text-dim mono flex-wrap">
-              {receiverIp && (
-                <a
-                  href={`http://${receiverIp}/`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-1 hover:text-white transition-colors"
-                  title="Web UI do TTGO — só abre se você estiver na mesma rede local"
-                >
-                  <Network size={11} /> {receiverIp}
-                </a>
               )}
             </div>
           )}

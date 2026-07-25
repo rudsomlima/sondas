@@ -2,20 +2,21 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { getSettings } from '@/app/lib/settings'
-import { RdzConfig } from '@/app/lib/rdzConfig'
-import {
-  cfgGetTopic, cfgGetRespTopic, cfgSetTopic, cfgSetRespTopic,
-  parseCfgGetResp, parseCfgSetResp, computeCfgAuth,
-} from '@/app/lib/mqtt'
+import { RdzConfig, parseConfigJson } from '@/app/lib/rdzConfig'
+import { computeCfgAuth, randomReqId } from '@/app/lib/cfgAuth'
 
-// Único canal: MQTT (funciona de qualquer lugar, inclusive pelo site
-// publicado em https://). O canal HTTP local foi removido — só funcionava
-// com o app aberto em http:// na mesma rede do receptor.
-export type RdzConfigChannel = 'mqtt'
+// Único canal: HTTP direto (funciona de qualquer lugar, inclusive pelo site
+// publicado em https://) — ver conn-cfg.cpp/cfgchannel.cpp no firmware.
+// Leitura = último snapshot que o receptor reportou (não instantâneo, mas
+// config raramente muda sozinha). Gravação = fila de pendência: o pedido
+// fica em /api/receiver-config/request até o receptor buscar (no boot ou
+// periodicamente enquanto acordado) e aplicar.
+export type RdzConfigChannel = 'http'
 
 export interface ApplyResult {
   ok: boolean
   rebooting?: boolean
+  pending?: boolean // enfileirado, aguardando o receptor aplicar e confirmar
 }
 
 export interface FirmwareConfigState {
@@ -31,106 +32,15 @@ export interface FirmwareConfigState {
   apply: (changes: Record<string, string>, mode: 'live' | 'reboot') => void
 }
 
-const MQTT_TIMEOUT_MS = 8000
+const RESULT_POLL_MS = 15_000
+// Depois disso, para de aguardar ativamente — o pedido continua válido no
+// servidor (o receptor aplica assim que buscar), só paramos de fazer
+// polling pra não deixar um timer preso indefinidamente numa aba esquecida.
+const RESULT_POLL_TIMEOUT_MS = 20 * 60_000
 
-function randomReqId(): string {
-  return Math.random().toString(16).slice(2, 10).padEnd(8, '0')
-}
-
-// Canal MQTT: conexão curta e própria (não a always-on de useReceiverMqtt,
-// que não sabe publicar) — só existe enquanto a página /meu-receptor precisa
-// de um round-trip de request/response, depois desconecta.
-async function withShortMqttConnection<T>(
-  brokerUrl: string,
-  fn: (client: import('mqtt').MqttClient) => Promise<T>
-): Promise<T> {
-  const mod: any = await import('mqtt')
-  const mqttConnect = mod.connect ?? mod.default?.connect
-  if (!mqttConnect) throw new Error('mqtt: connect() indisponível no módulo importado')
-  const client = mqttConnect(brokerUrl, {
-    reconnectPeriod: 0,
-    connectTimeout: 10000,
-    clientId: `sondas-cfg-${Math.random().toString(16).slice(2, 10)}`,
-    clean: true,
-  })
-  try {
-    await new Promise<void>((resolve, reject) => {
-      client.once('connect', () => resolve())
-      client.once('error', (e: Error) => reject(e))
-    })
-    return await fn(client)
-  } finally {
-    client.end(true)
-  }
-}
-
-async function fetchMqttConfig(brokerUrl: string, prefix: string): Promise<RdzConfig> {
-  return withShortMqttConnection(brokerUrl, client => new Promise<RdzConfig>((resolve, reject) => {
-    const reqId = randomReqId()
-    const respTopic = cfgGetRespTopic(prefix)
-    const timeout = setTimeout(() => {
-      cleanup()
-      reject(new Error('Sem resposta do receptor via MQTT (timeout) — ele precisa estar ligado e acordado.'))
-    }, MQTT_TIMEOUT_MS)
-
-    function cleanup() {
-      clearTimeout(timeout)
-      client.removeListener('message', onMessage)
-    }
-    function onMessage(topic: string, payload: Buffer) {
-      if (topic !== respTopic) return
-      const parsed = parseCfgGetResp(payload.toString('utf8'))
-      if (!parsed || parsed.reqId !== reqId) return
-      cleanup()
-      if (parsed.error) reject(new Error(parsed.error))
-      else if (!parsed.config) reject(new Error('Resposta de config vazia ou inválida'))
-      else resolve(parsed.config)
-    }
-
-    client.on('message', onMessage)
-    client.subscribe(respTopic, { qos: 1 }, err => {
-      if (err) { cleanup(); reject(err); return }
-      client.publish(cfgGetTopic(prefix), JSON.stringify({ reqId }), { qos: 1 })
-    })
-  }))
-}
-
-async function writeMqttConfig(
-  brokerUrl: string, prefix: string, secret: string, changes: Record<string, string>, apply: 'live' | 'reboot'
-): Promise<ApplyResult> {
-  if (!secret.trim()) {
-    throw new Error('Defina o segredo de gravação (mqtt.cfgsecret) em Meu Receptor antes de aplicar via MQTT.')
-  }
-  return withShortMqttConnection(brokerUrl, client => new Promise<ApplyResult>((resolve, reject) => {
-    const reqId = randomReqId()
-    const respTopic = cfgSetRespTopic(prefix)
-    const timeout = setTimeout(() => {
-      cleanup()
-      reject(new Error('Sem resposta do receptor via MQTT (timeout) — ele precisa estar ligado e acordado.'))
-    }, MQTT_TIMEOUT_MS)
-
-    function cleanup() {
-      clearTimeout(timeout)
-      client.removeListener('message', onMessage)
-    }
-    function onMessage(topic: string, payload: Buffer) {
-      if (topic !== respTopic) return
-      const parsed = parseCfgSetResp(payload.toString('utf8'))
-      if (!parsed || parsed.reqId !== reqId) return
-      cleanup()
-      if (!parsed.ok) reject(new Error(parsed.error ?? 'O receptor recusou a gravação'))
-      else resolve({ ok: true, rebooting: parsed.rebooting })
-    }
-
-    client.on('message', onMessage)
-    client.subscribe(respTopic, { qos: 1 }, async err => {
-      if (err) { cleanup(); reject(err); return }
-      const changesJson = JSON.stringify(changes)
-      const auth = await computeCfgAuth(secret, reqId, changesJson)
-      client.publish(cfgSetTopic(prefix), JSON.stringify({ reqId, auth, apply, changes }), { qos: 1 })
-    })
-  }))
-}
+const DEFAULT_SNAPSHOT_POLL_MS = 20_000
+const MIN_SNAPSHOT_POLL_MS = 5_000
+const MAX_SNAPSHOT_POLL_MS = 60_000
 
 export function useFirmwareConfig(): FirmwareConfigState {
   const [config, setConfig] = useState<RdzConfig | null>(null)
@@ -144,50 +54,137 @@ export function useFirmwareConfig(): FirmwareConfigState {
   const hasLoadedRef = useRef(false)
   const configRef = useRef<RdzConfig | null>(null)
   configRef.current = config
+  const pollRef = useRef<{ id: ReturnType<typeof setInterval> | null; timeout: ReturnType<typeof setTimeout> | null }>({ id: null, timeout: null })
 
-  const load = useCallback(() => {
+  const stopPolling = useCallback(() => {
+    if (pollRef.current.id) clearInterval(pollRef.current.id)
+    if (pollRef.current.timeout) clearTimeout(pollRef.current.timeout)
+    pollRef.current = { id: null, timeout: null }
+  }, [])
+  useEffect(() => stopPolling, [stopPolling])
+
+  // silent=true (polling em segundo plano): não mexe em loading/error, e só
+  // troca a referência de `config` se o conteúdo realmente mudou — FullConfigEditor
+  // zera os campos não-salvos sempre que `config` muda de referência
+  // (ver comentário lá), então recriar o objeto à toa a cada poll apagaria
+  // edições em andamento do usuário sem necessidade.
+  const load = useCallback((silent = false) => {
     const s = getSettings()
-    if (!s.mqttEnabled || !s.mqttTopicPrefix) {
-      setChannel('mqtt')
-      setError('Configure e ative o MQTT em Meu Receptor antes de carregar a configuração.')
+    if (!s.mqttTopicPrefix) {
+      setChannel('http')
+      if (!silent) setError('Configure o prefixo do receptor em Meu Receptor antes de carregar a configuração.')
       return
     }
 
-    setChannel('mqtt')
-    setLoading(true)
-    setError(null)
-    fetchMqttConfig(s.mqttBrokerUrl, s.mqttTopicPrefix)
-      .then(cfg => { setConfig(cfg); setLoadedAt(Date.now()) })
-      .catch((e: Error) => setError(e.message || 'Falha ao carregar a configuração'))
-      .finally(() => setLoading(false))
+    setChannel('http')
+    if (!silent) { setLoading(true); setError(null) }
+    fetch(`/api/receiver-config/snapshot?prefix=${encodeURIComponent(s.mqttTopicPrefix)}`)
+      .then(r => r.json())
+      .then((d: { snapshot?: { config: Record<string, string>; updatedAt: number } | null }) => {
+        if (!d.snapshot) {
+          if (!silent) setError('O receptor ainda não reportou a configuração — precisa acordar pelo menos uma vez com mqtt.siteurl configurado.')
+          return
+        }
+        const cfg = parseConfigJson(d.snapshot.config)
+        if (!cfg) { if (!silent) setError('Config recebida em formato inválido'); return }
+        if (silent && JSON.stringify(cfg) === JSON.stringify(configRef.current)) {
+          setLoadedAt(d.snapshot.updatedAt) // sem mudança de conteúdo, só atualiza o carimbo
+          return
+        }
+        setConfig(cfg)
+        setLoadedAt(d.snapshot.updatedAt)
+      })
+      .catch(() => { if (!silent) setError('Falha ao carregar a configuração') })
+      .finally(() => { if (!silent) setLoading(false) })
   }, [])
 
-  // Carrega sozinho uma vez por sessão, assim que MQTT estiver configurado —
-  // hasLoadedRef garante no máximo uma chamada mesmo com o double-invoke do
-  // StrictMode em dev.
+  // Carrega sozinho uma vez por sessão, assim que o prefixo estiver
+  // configurado — hasLoadedRef garante no máximo uma chamada mesmo com o
+  // double-invoke do StrictMode em dev. Depois, atualiza sozinho em segundo
+  // plano (mesmo cadenciamento do polling de live status).
   useEffect(() => {
     if (hasLoadedRef.current) return
     const s = getSettings()
-    if (!s.mqttEnabled || !s.mqttTopicPrefix) return
+    if (!s.mqttTopicPrefix) return
     hasLoadedRef.current = true
     load()
   }, [load])
+
+  // Cadência do polling em segundo plano: usa mqtt.report_interval assim que
+  // a própria config carrega (não faz sentido checar mais rápido do que o
+  // receptor de fato reporta); antes disso, ou se o campo não vier, cai no
+  // default.
+  const reportIntervalMs = Number(config?.['mqtt.report_interval'])
+  const snapshotPollMs = isFinite(reportIntervalMs) && reportIntervalMs > 0
+    ? Math.min(MAX_SNAPSHOT_POLL_MS, Math.max(MIN_SNAPSHOT_POLL_MS, reportIntervalMs))
+    : DEFAULT_SNAPSHOT_POLL_MS
+
+  useEffect(() => {
+    const id = setInterval(() => load(true), snapshotPollMs)
+    return () => clearInterval(id)
+  }, [load, snapshotPollMs])
 
   const apply = useCallback((changes: Record<string, string>, mode: 'live' | 'reboot') => {
     const s = getSettings()
     const base = configRef.current
     if (!base) return
+    if (!s.rdzConfigSecret.trim()) {
+      setApplyError('Defina o segredo de gravação (mqtt.cfgsecret) em Meu Receptor antes de aplicar.')
+      return
+    }
     setApplying(true)
     setApplyError(null)
     setApplyResult(null)
-    writeMqttConfig(s.mqttBrokerUrl, s.mqttTopicPrefix, s.rdzConfigSecret, changes, mode)
-      .then(result => {
-        setApplyResult(result)
-        setConfig(prev => prev ? { ...prev, ...changes } : prev)
+    stopPolling()
+
+    const reqId = randomReqId()
+    const changesJson = JSON.stringify(changes)
+
+    computeCfgAuth(s.rdzConfigSecret, reqId, changesJson)
+      .then(auth => fetch('/api/receiver-config/request', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prefix: s.mqttTopicPrefix, reqId, auth, apply: mode, changes }),
+      }))
+      .then(r => r.json())
+      .then((d: { ok: boolean; error?: string }) => {
+        if (!d.ok) throw new Error(d.error ?? 'Falha ao enfileirar a mudança')
+
+        // Enfileirado — mostra "pendente" já (o receptor pode aplicar em
+        // segundos se já estiver acordado, ou só no próximo wake) e começa
+        // a fazer polling do resultado.
+        setApplying(false)
+        setApplyResult({ ok: true, pending: true })
+
+        const deadline = Date.now() + RESULT_POLL_TIMEOUT_MS
+        const poll = () => {
+          fetch(`/api/receiver-config/result?prefix=${encodeURIComponent(s.mqttTopicPrefix)}&reqId=${reqId}`)
+            .then(r => r.json())
+            .then((rd: { resolved?: boolean; result?: { ok: boolean; error?: string; rebooting?: boolean } }) => {
+              if (!rd.resolved || !rd.result) {
+                if (Date.now() > deadline) stopPolling()
+                return
+              }
+              stopPolling()
+              if (!rd.result.ok) {
+                setApplyResult(null)
+                setApplyError(rd.result.error ?? 'O receptor recusou a gravação')
+              } else {
+                setApplyResult({ ok: true, rebooting: rd.result.rebooting })
+                setConfig(prev => prev ? { ...prev, ...changes } : prev)
+              }
+            })
+            .catch(() => {})
+        }
+        poll()
+        pollRef.current.id = setInterval(poll, RESULT_POLL_MS)
+        pollRef.current.timeout = setTimeout(stopPolling, RESULT_POLL_TIMEOUT_MS)
       })
-      .catch((e: Error) => setApplyError(e.message || 'Falha ao aplicar a configuração'))
-      .finally(() => setApplying(false))
-  }, [])
+      .catch((e: Error) => {
+        setApplying(false)
+        setApplyError(e.message || 'Falha ao aplicar a configuração')
+      })
+  }, [stopPolling])
 
   return { config, loadedAt, loading, error, channel, load, applying, applyError, applyResult, apply }
 }

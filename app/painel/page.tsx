@@ -115,15 +115,12 @@ export default function PainelPage() {
             enabled={receiver.enabled}
             callsign={callsign}
             source={receiver.source}
-            mqttConfigured={receiver.mqttConfigured}
-            mqttConnected={receiver.mqttConnected}
-            uptimeMs={receiver.uptimeMs}
+            liveConfigured={receiver.liveConfigured}
+            liveConnected={receiver.liveConnected}
             ttgoBattV={receiver.ttgoBattV}
             sleeping={receiver.sleeping}
             waitingLate={receiver.waitingLate}
-            receiverIp={receiver.receiverIp}
-            mqttLastMessageAt={receiver.mqttLastMessageAt}
-            mqttPublishedAt={receiver.mqttPublishedAt}
+            liveLastMessageAt={receiver.liveLastMessageAt}
             power={receiver.power}
             selected={selected}
             onSelect={setSelected}
@@ -145,7 +142,6 @@ export default function PainelPage() {
             todayFlights={todayFlights}
             selected={selected}
             chasePos={geo.pos ? { lat: geo.pos.lat, lon: geo.pos.lon } : null}
-            receiverPos={receiver.rxPosition}
             receiverName={callsign}
           />
         </div>

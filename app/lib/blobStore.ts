@@ -12,7 +12,7 @@
  * Sem essas variáveis (ex.: dev local sem .env.local), as funções são no-op.
  */
 import { S3Client, GetObjectCommand, PutObjectCommand, ListObjectsV2Command, DeleteObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3'
-import type { YearStore, SyncStatus, ReceiverRegistryEntry, PollStatus } from './types'
+import type { YearStore, SyncStatus, PollStatus, KnownReceiverEntry } from './types'
 import type { TodayFlight } from './radiosondy'
 
 export type { YearStore }
@@ -309,59 +309,49 @@ export async function writeSyncStatus(status: SyncStatus): Promise<void> {
   }
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Registro de receptores (ver ReceiverRegistryEntry em types.ts) — um arquivo
-// só, com todos os receptores conhecidos. Populado por POST /api/register-receiver
-// e consumido pelo cron do servidor (app/api/poll) pra saber quais prefixos
-// MQTT consultar.
-// ──────────────────────────────────────────────────────────────────────────────
-const RECEIVER_REGISTRY_KEY = 'sondas/receivers-registry.json'
 
-export async function readReceiverRegistry(): Promise<ReceiverRegistryEntry[]> {
+// ──────────────────────────────────────────────────────────────────────────────
+// Auto-descoberta via reporte HTTP direto (ver /api/receiver-report e
+// KnownReceiverEntry em types.ts) — decoupled do registro acima (que é
+// específico do polling MQTT server-side e exige brokerUrl). Qualquer
+// receptor que reporte algo aqui vira automaticamente descobrível pelo
+// navegador, sem precisar de MQTT nem de cadastro manual.
+// ──────────────────────────────────────────────────────────────────────────────
+const KNOWN_RECEIVERS_KEY = 'sondas/known-receivers.json'
+const KNOWN_RECEIVER_REWRITE_THRESHOLD_MS = 10 * 60_000 // evita reescrever a cada report (pmu/sleep/power/fw chegam separados)
+
+export async function readKnownReceivers(): Promise<KnownReceiverEntry[]> {
   const client = getClient()
   if (!client) return []
   try {
-    const res = await client.send(new GetObjectCommand({ Bucket: bucket(), Key: RECEIVER_REGISTRY_KEY }))
+    const res = await client.send(new GetObjectCommand({ Bucket: bucket(), Key: KNOWN_RECEIVERS_KEY }))
     const body = await res.Body?.transformToString()
     if (!body) return []
     const arr = JSON.parse(body)
     return Array.isArray(arr) ? arr : []
   } catch (e: any) {
     if (e?.name === 'NoSuchKey' || e?.$metadata?.httpStatusCode === 404) return []
-    console.error('[R2] readReceiverRegistry falhou:', e)
+    console.error('[R2] readKnownReceivers falhou:', e)
     return []
   }
 }
 
-export async function writeReceiverRegistry(entries: ReceiverRegistryEntry[]): Promise<void> {
+export async function upsertKnownReceiver(prefix: string): Promise<void> {
   const client = getClient()
   if (!client) return
-  try {
-    await client.send(new PutObjectCommand({
-      Bucket: bucket(),
-      Key: RECEIVER_REGISTRY_KEY,
-      Body: JSON.stringify(entries),
-      ContentType: 'application/json',
-    }))
-  } catch (e) {
-    console.error('[R2] writeReceiverRegistry falhou:', e)
-  }
-}
-
-// Upsert de um único receptor no registro — usado pelo endpoint de registro
-// (POST /api/register-receiver), que só conhece o próprio receptor, não a
-// lista inteira.
-export async function upsertReceiverRegistry(prefix: string, brokerUrl: string): Promise<void> {
-  const entries = await readReceiverRegistry()
+  const entries = await readKnownReceivers()
   const now = Date.now()
   const existing = entries.find(e => e.prefix === prefix)
-  if (existing) {
-    existing.brokerUrl = brokerUrl
-    existing.lastSeenAt = now
-  } else {
-    entries.push({ prefix, brokerUrl, addedAt: now, lastSeenAt: now })
+  if (existing && now - existing.lastSeenAt < KNOWN_RECEIVER_REWRITE_THRESHOLD_MS) return // já visto recentemente, não reescreve à toa
+  if (existing) existing.lastSeenAt = now
+  else entries.push({ prefix, firstSeenAt: now, lastSeenAt: now })
+  try {
+    await client.send(new PutObjectCommand({
+      Bucket: bucket(), Key: KNOWN_RECEIVERS_KEY, Body: JSON.stringify(entries), ContentType: 'application/json',
+    }))
+  } catch (e) {
+    console.error('[R2] upsertKnownReceiver falhou:', e)
   }
-  await writeReceiverRegistry(entries)
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -437,3 +427,236 @@ export async function writePollStatus(status: PollStatus): Promise<void> {
     console.error('[R2] writePollStatus falhou:', e)
   }
 }
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Firmware (auto-OTA): o app funciona como o "servidor OTA" do próprio
+// usuário (ver conn-ota.cpp no firmware). Um slot por receptor (mesma chave
+// receiverKey() usada no histórico de power/batt) — cada receptor cadastrado
+// pode ter seu próprio firmware/versão publicados. Upload via
+// /api/firmware/[receiver]/upload (Meu Receptor), servido em
+// /api/firmware/[receiver]/version e /api/firmware/[receiver]/ino.
+// ──────────────────────────────────────────────────────────────────────────────
+function firmwareMetaPath(key: string) { return `sondas/firmware/${key}/meta.json` }
+function firmwareBinPath(key: string) { return `sondas/firmware/${key}/firmware.bin` }
+
+export interface FirmwareMeta {
+  version:    string
+  uploadedAt: number
+  sizeBytes:  number
+}
+
+export async function readFirmwareMeta(key: string): Promise<FirmwareMeta | null> {
+  const client = getClient()
+  if (!client) return null
+  try {
+    const res = await client.send(new GetObjectCommand({ Bucket: bucket(), Key: firmwareMetaPath(key) }))
+    const body = await res.Body?.transformToString()
+    return body ? JSON.parse(body) : null
+  } catch (e: any) {
+    if (e?.name === 'NoSuchKey' || e?.$metadata?.httpStatusCode === 404) return null
+    console.error('[R2] readFirmwareMeta falhou:', e)
+    return null
+  }
+}
+
+export async function writeFirmwareBinary(key: string, bin: Uint8Array, version: string): Promise<void> {
+  const client = getClient()
+  if (!client) throw new Error('R2 não configurado')
+  await client.send(new PutObjectCommand({
+    Bucket: bucket(), Key: firmwareBinPath(key), Body: bin, ContentType: 'application/octet-stream',
+  }))
+  const meta: FirmwareMeta = { version, uploadedAt: Date.now(), sizeBytes: bin.byteLength }
+  await client.send(new PutObjectCommand({
+    Bucket: bucket(), Key: firmwareMetaPath(key), Body: JSON.stringify(meta), ContentType: 'application/json',
+  }))
+}
+
+export async function readFirmwareBinary(key: string): Promise<Uint8Array | null> {
+  const client = getClient()
+  if (!client) return null
+  try {
+    const res = await client.send(new GetObjectCommand({ Bucket: bucket(), Key: firmwareBinPath(key) }))
+    const bytes = await res.Body?.transformToByteArray()
+    return bytes ?? null
+  } catch (e: any) {
+    if (e?.name === 'NoSuchKey' || e?.$metadata?.httpStatusCode === 404) return null
+    console.error('[R2] readFirmwareBinary falhou:', e)
+    return null
+  }
+}
+
+// Versão que o RECEPTOR reportou ter instalada (ver reportVersion em
+// conn-report.cpp, chamado uma vez por boot) — distinto do FirmwareMeta acima
+// (o que está PUBLICADO/disponível pra baixar). Permite o painel mostrar
+// "instalado vX" vs "publicado vY" e destacar quando estão desatualizados.
+export interface InstalledFirmware {
+  version:      string
+  reportedAt:   number
+}
+
+function installedVersionPath(key: string) { return `sondas/receivers/${key}/version.json` }
+
+export async function readInstalledFirmware(key: string): Promise<InstalledFirmware | null> {
+  const client = getClient()
+  if (!client) return null
+  try {
+    const res = await client.send(new GetObjectCommand({ Bucket: bucket(), Key: installedVersionPath(key) }))
+    const body = await res.Body?.transformToString()
+    return body ? JSON.parse(body) : null
+  } catch (e: any) {
+    if (e?.name === 'NoSuchKey' || e?.$metadata?.httpStatusCode === 404) return null
+    console.error('[R2] readInstalledFirmware falhou:', e)
+    return null
+  }
+}
+
+export async function writeInstalledFirmware(key: string, version: string): Promise<void> {
+  const client = getClient()
+  if (!client) return
+  try {
+    const data: InstalledFirmware = { version, reportedAt: Date.now() }
+    await client.send(new PutObjectCommand({
+      Bucket: bucket(), Key: installedVersionPath(key), Body: JSON.stringify(data), ContentType: 'application/json',
+    }))
+  } catch (e) {
+    console.error('[R2] writeInstalledFirmware falhou:', e)
+  }
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// "Live status" (branch mqtt-cfg-only): substitui, pro painel "Meu receptor"
+// em /painel, o que antes vinha ao vivo via tópicos MQTT pmu/sleep/power —
+// agora o firmware reporta via HTTP direto (/api/receiver-report) e o
+// navegador faz polling deste snapshot (useReceiverLiveStatus.ts). Não é
+// histórico (isso já existe em readReceiverHistory) — é só "o último estado
+// conhecido", sobrescrito a cada report, merge por campo (um report só de
+// pmu não apaga o sleep/power já conhecidos).
+// ──────────────────────────────────────────────────────────────────────────────
+import type { RdzPmu, RdzSleep, RdzPower } from './mqtt'
+
+export interface ReceiverLiveStatus {
+  pmu?:       RdzPmu
+  sleep?:     RdzSleep
+  power?:     RdzPower
+  updatedAt:  number
+}
+
+function liveStatusPath(key: string) { return `sondas/receivers/${key}/live.json` }
+
+export async function readReceiverLiveStatus(key: string): Promise<ReceiverLiveStatus | null> {
+  const client = getClient()
+  if (!client) return null
+  try {
+    const res = await client.send(new GetObjectCommand({ Bucket: bucket(), Key: liveStatusPath(key) }))
+    const body = await res.Body?.transformToString()
+    return body ? JSON.parse(body) : null
+  } catch (e: any) {
+    if (e?.name === 'NoSuchKey' || e?.$metadata?.httpStatusCode === 404) return null
+    console.error('[R2] readReceiverLiveStatus falhou:', e)
+    return null
+  }
+}
+
+export async function writeReceiverLiveStatus(
+  key: string,
+  data: { pmu?: RdzPmu; sleep?: RdzSleep; power?: RdzPower }
+): Promise<void> {
+  const client = getClient()
+  if (!client) return
+  try {
+    const prev = await readReceiverLiveStatus(key)
+    const next: ReceiverLiveStatus = {
+      pmu:   data.pmu   ?? prev?.pmu,
+      sleep: data.sleep ?? prev?.sleep,
+      power: data.power ?? prev?.power,
+      updatedAt: Date.now(),
+    }
+    await client.send(new PutObjectCommand({
+      Bucket: bucket(), Key: liveStatusPath(key), Body: JSON.stringify(next), ContentType: 'application/json',
+    }))
+  } catch (e) {
+    console.error('[R2] writeReceiverLiveStatus falhou:', e)
+  }
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Config remota completa via HTTP (substitui cfg/get, cfg/set do MQTT
+// legado — ver conn-cfg.cpp/cfgchannel.cpp no firmware). Três peças:
+//  - snapshot: o firmware empurra a config (redigida) uma vez por boot;
+//  - request:  o navegador enfileira uma mudança; o firmware faz polling
+//              (boot + periódico enquanto acordado) e aplica;
+//  - result:   o firmware reporta o resultado; o navegador faz polling.
+// ──────────────────────────────────────────────────────────────────────────────
+export interface ConfigSnapshot {
+  config:    Record<string, string>
+  updatedAt: number
+}
+
+export interface ConfigRequest {
+  reqId:     string
+  auth:      string
+  apply:     'live' | 'reboot'
+  changes:   Record<string, string>
+  createdAt: number
+}
+
+export interface ConfigResult {
+  reqId:       string
+  ok:          boolean
+  error?:      string
+  rebooting?:  boolean
+  resolvedAt:  number
+}
+
+function configSnapshotPath(key: string) { return `sondas/receivers/${key}/config-snapshot.json` }
+function configRequestPath(key: string) { return `sondas/receivers/${key}/config-request.json` }
+function configResultPath(key: string) { return `sondas/receivers/${key}/config-result.json` }
+
+async function readJsonKey<T>(key: string): Promise<T | null> {
+  const client = getClient()
+  if (!client) return null
+  try {
+    const res = await client.send(new GetObjectCommand({ Bucket: bucket(), Key: key }))
+    const body = await res.Body?.transformToString()
+    return body ? JSON.parse(body) : null
+  } catch (e: any) {
+    if (e?.name === 'NoSuchKey' || e?.$metadata?.httpStatusCode === 404) return null
+    console.error(`[R2] readJsonKey(${key}) falhou:`, e)
+    return null
+  }
+}
+
+async function writeJsonKey(key: string, data: unknown): Promise<void> {
+  const client = getClient()
+  if (!client) return
+  try {
+    await client.send(new PutObjectCommand({
+      Bucket: bucket(), Key: key, Body: JSON.stringify(data), ContentType: 'application/json',
+    }))
+  } catch (e) {
+    console.error(`[R2] writeJsonKey(${key}) falhou:`, e)
+  }
+}
+
+async function deleteJsonKey(key: string): Promise<void> {
+  const client = getClient()
+  if (!client) return
+  try {
+    await client.send(new DeleteObjectCommand({ Bucket: bucket(), Key: key }))
+  } catch (e) {
+    console.error(`[R2] deleteJsonKey(${key}) falhou:`, e)
+  }
+}
+
+export const readConfigSnapshot = (key: string) => readJsonKey<ConfigSnapshot>(configSnapshotPath(key))
+export const writeConfigSnapshot = (key: string, config: Record<string, string>) =>
+  writeJsonKey(configSnapshotPath(key), { config, updatedAt: Date.now() } as ConfigSnapshot)
+
+export const readConfigRequest = (key: string) => readJsonKey<ConfigRequest>(configRequestPath(key))
+export const writeConfigRequest = (key: string, req: Omit<ConfigRequest, 'createdAt'>) =>
+  writeJsonKey(configRequestPath(key), { ...req, createdAt: Date.now() } as ConfigRequest)
+export const deleteConfigRequest = (key: string) => deleteJsonKey(configRequestPath(key))
+
+export const readConfigResult = (key: string) => readJsonKey<ConfigResult>(configResultPath(key))
+export const writeConfigResult = (key: string, result: Omit<ConfigResult, 'resolvedAt'>) =>
+  writeJsonKey(configResultPath(key), { ...result, resolvedAt: Date.now() } as ConfigResult)

@@ -173,109 +173,63 @@ export default function ReceiverSettingsPanel({
         aba do painel aberta (mesmo em segundo plano). Lembre de salvar depois de alterar.
       </p>
 
-      {/* MQTT direto do firmware (opcional) */}
+      {/* Identidade do receptor + canais HTTP diretos */}
       <div className="mt-5 pt-5 border-t border-border">
-        <h3 className="text-xs font-semibold text-white mb-1">MQTT — tempo real (opcional)</h3>
+        <h3 className="text-xs font-semibold text-white mb-1">Receptor — identidade e config remota</h3>
         <p className="text-[11px] text-faint mb-3">
-          Além do SondeHub (~20s), o firmware pode publicar cada frame num broker MQTT
-          público e o painel assinar direto (~1s de latência, uptime e bateria do receptor).
-          Desligado, o app usa só o SondeHub, como sempre.
+          Bateria/sleep/economia/auto-OTA chegam via reporte HTTP direto do firmware — configure só
+          <span className="mono"> mqtt.siteurl</span> nele (endereço deste app; um campo só serve
+          report, config remota e auto-OTA). O prefixo abaixo identifica qual receptor é este.
         </p>
 
-        <button
-          onClick={() => setConfig(c => ({ ...c, mqttEnabled: !c.mqttEnabled }))}
-          className={`flex items-center gap-2 px-3 py-2 rounded-md text-xs border transition-all ${
-            config.mqttEnabled
-              ? 'bg-blue-600 border-blue-600 text-white'
-              : 'bg-surface border-border text-gray-400 hover:text-white'
-          }`}
-        >
-          {config.mqttEnabled ? 'MQTT ativado' : 'Ativar MQTT'}
-        </button>
-
-        {config.mqttEnabled && (
-          <div className="mt-4">
-            <label className="block text-xs text-gray-400 mb-1.5">Broker (WebSocket, para o navegador)</label>
-            <select
-              value={
-                config.mqttBrokerUrl === 'wss://broker.emqx.io:8084/mqtt' ||
-                config.mqttBrokerUrl === 'wss://broker.hivemq.com:8884/mqtt'
-                  ? config.mqttBrokerUrl : 'custom'
-              }
-              onChange={e => {
-                if (e.target.value !== 'custom') setConfig(c => ({ ...c, mqttBrokerUrl: e.target.value }))
-                else setConfig(c => ({ ...c, mqttBrokerUrl: 'wss://' }))
-              }}
-              className="bg-bg border border-border rounded-md text-sm text-white px-3 py-2 outline-none focus:border-blue-500 cursor-pointer"
-            >
-              <option value="wss://broker.emqx.io:8084/mqtt">EMQX público (broker.emqx.io)</option>
-              <option value="wss://broker.hivemq.com:8884/mqtt">HiveMQ público (broker.hivemq.com)</option>
-              <option value="custom">Personalizado…</option>
-            </select>
-            {config.mqttBrokerUrl !== 'wss://broker.emqx.io:8084/mqtt' &&
-              config.mqttBrokerUrl !== 'wss://broker.hivemq.com:8884/mqtt' && (
-              <input
-                type="text"
-                value={config.mqttBrokerUrl}
-                onChange={e => setConfig(c => ({ ...c, mqttBrokerUrl: e.target.value }))}
-                placeholder="wss://seu-broker:8084/mqtt"
-                className="mt-2 w-full max-w-md block bg-bg border border-border rounded-md text-sm text-white mono px-3 py-2 outline-none focus:border-blue-500"
-              />
-            )}
-
-            <label className="block text-xs text-gray-400 mt-4 mb-1.5">Prefixo do tópico</label>
-            <div className="flex flex-wrap items-center gap-2">
-              <input
-                type="text"
-                value={config.mqttTopicPrefix}
-                onChange={e => setConfig(c => ({ ...c, mqttTopicPrefix: e.target.value }))}
-                placeholder="ex.: pu7iol (igual ao mqtt.prefix do TTGO)"
-                className="w-64 bg-bg border border-border rounded-md text-sm text-white mono px-3 py-2 outline-none focus:border-blue-500"
-              />
-              <button
-                onClick={() => setConfig(c => ({
-                  ...c,
-                  // Sugestão = exatamente o callsign, sem barras — é o que a
-                  // maioria dos firmwares reais usa em mqtt.prefix (ex.:
-                  // "pu7iol", não "rdz/pu7iol/"). Precisa bater com o valor
-                  // configurado no TTGO, seja lá qual for.
-                  mqttTopicPrefix: c.uploaderCallsign.trim().toLowerCase().replace(/[^a-z0-9_/-]/g, ''),
-                }))}
-                disabled={!config.uploaderCallsign.trim()}
-                className="px-3 py-2 bg-surface border border-border rounded-md text-xs text-gray-400 hover:text-white transition-all disabled:opacity-50"
-              >
-                Sugerir
-              </button>
-            </div>
-            <p className="text-[11px] text-faint mt-2 leading-relaxed">
-              Precisa ser <strong>idêntico</strong> ao <span className="mono">mqtt.prefix</span> já
-              configurado no seu TTGO (Config → mqtt.prefix na web UI dele) — não adivinhe, copie
-              o valor de lá. Exemplo real: se o TTGO tem <span className="mono">mqtt.prefix=pu7iol</span>,
-              os tópicos são <span className="mono">pu7ioluptime</span>, <span className="mono">pu7iolpmu</span>
-              {' '}etc. (sem barra — o prefixo é só concatenado). No TTGO, garanta também{' '}
-              <span className="mono">mqtt.active=7</span> (soma de sondas+uptime+bateria) e{' '}
-              <span className="mono">mqtt.host</span>/<span className="mono">mqtt.port</span> apontando
-              para o mesmo broker escolhido acima.
-              Atenção: broker público é aberto — os dados são visíveis a qualquer um (telemetria de
-              sonda já é pública no SondeHub).
-            </p>
-
-            <label className="block text-xs text-gray-400 mt-4 mb-1.5">Prefixo de descoberta (múltiplos receptores)</label>
+        <div>
+          <label className="block text-xs text-gray-400 mb-1.5">Prefixo (identidade do receptor)</label>
+          <div className="flex flex-wrap items-center gap-2">
             <input
               type="text"
-              value={config.mqttDiscoveryBase}
-              onChange={e => setConfig(c => ({ ...c, mqttDiscoveryBase: e.target.value }))}
-              placeholder="ex.: home/ (assina home/+/uptime)"
+              value={config.mqttTopicPrefix}
+              onChange={e => setConfig(c => ({ ...c, mqttTopicPrefix: e.target.value }))}
+              placeholder="ex.: pu7iol (igual ao mqtt.prefix do TTGO)"
               className="w-64 bg-bg border border-border rounded-md text-sm text-white mono px-3 py-2 outline-none focus:border-blue-500"
             />
-            <p className="text-[11px] text-faint mt-1.5">
-              Se você tem múltiplos receptores com prefixos como <span className="mono">home/rdz01/</span>,{' '}
-              <span className="mono">home/rdz02/</span> etc., configure <span className="mono">home/</span>{' '}
-              aqui. O app assina <span className="mono">home/+/uptime</span> e detecta novos receptores
-              automaticamente. Deixe vazio para desabilitar.
-            </p>
+            <button
+              onClick={() => setConfig(c => ({
+                ...c,
+                // Sugestão = exatamente o callsign, sem barras — é o que a
+                // maioria dos firmwares reais usa em mqtt.prefix (ex.:
+                // "pu7iol", não "rdz/pu7iol/"). Precisa bater com o valor
+                // configurado no TTGO, seja lá qual for.
+                mqttTopicPrefix: c.uploaderCallsign.trim().toLowerCase().replace(/[^a-z0-9_/-]/g, ''),
+              }))}
+              disabled={!config.uploaderCallsign.trim()}
+              className="px-3 py-2 bg-surface border border-border rounded-md text-xs text-gray-400 hover:text-white transition-all disabled:opacity-50"
+            >
+              Sugerir
+            </button>
           </div>
-        )}
+          <p className="text-[11px] text-faint mt-2 leading-relaxed">
+            Precisa ser <strong>idêntico</strong> ao <span className="mono">mqtt.prefix</span> já
+            configurado no seu TTGO (Config → mqtt.prefix na web UI dele) — não adivinhe, copie
+            o valor de lá. É a chave usada em toda URL/endpoint dos canais HTTP diretos (report,
+            OTA, config remota, live status). <strong>Não</strong> precisa ser igual ao callsign de
+            uploader do SondeHub acima — são identidades independentes (o botão &quot;Sugerir&quot; só
+            preenche um a partir do outro por conveniência).
+          </p>
+
+          <label className="block text-xs text-gray-400 mt-4 mb-1.5">Segredo de gravação remota da config (mqtt.cfgsecret)</label>
+          <input
+            type="password"
+            value={config.rdzConfigSecret}
+            onChange={e => setConfig(c => ({ ...c, rdzConfigSecret: e.target.value }))}
+            placeholder="idêntico ao mqtt.cfgsecret configurado no receptor"
+            className="w-64 bg-bg border border-border rounded-md text-sm text-white mono px-3 py-2 outline-none focus:border-blue-500"
+          />
+          <p className="text-[11px] text-faint mt-1.5">
+            Só necessário pra gravar mudanças de config remotamente (seção &quot;Configuração completa
+            do firmware&quot; abaixo) — configure primeiro no receptor (Config → mqtt.cfgsecret, via
+            HTTP local) e copie o mesmo valor aqui. Vazio = leitura funciona, gravação fica bloqueada.
+          </p>
+        </div>
 
         <div className="mt-4 pt-4 border-t border-border">
           <button

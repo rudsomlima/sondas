@@ -67,7 +67,7 @@ export function parseConfigJson(payload: unknown): RdzConfig | null {
 // Campos que carregam credenciais — o app nunca deve tentar exibi-los em
 // texto puro mesmo que um payload malformado os traga preenchidos (o
 // firmware já redige isso no canal MQTT; esta é uma segunda camada no app).
-export const SENSITIVE_KEYS = new Set(['mqtt.password', 'mqtt.username', 'mqtt.cfgsecret', 'passcode'])
+export const SENSITIVE_KEYS = new Set(['mqtt.cfgsecret', 'passcode'])
 
 export function isSensitiveKey(key: string): boolean {
   return SENSITIVE_KEYS.has(key)
