@@ -660,3 +660,41 @@ export const deleteConfigRequest = (key: string) => deleteJsonKey(configRequestP
 export const readConfigResult = (key: string) => readJsonKey<ConfigResult>(configResultPath(key))
 export const writeConfigResult = (key: string, result: Omit<ConfigResult, 'resolvedAt'>) =>
   writeJsonKey(configResultPath(key), { ...result, resolvedAt: Date.now() } as ConfigResult)
+
+// Mesmo padrão do canal de config.txt acima, só que carregando texto bruto
+// (o conteúdo de screens1.txt) em vez de um mapa chave=valor estruturado.
+export interface ScreensSnapshot {
+  text:      string
+  updatedAt: number
+}
+
+export interface ScreensRequest {
+  reqId:     string
+  auth:      string
+  text:      string
+  createdAt: number
+}
+
+export interface ScreensResult {
+  reqId:       string
+  ok:          boolean
+  error?:      string
+  resolvedAt:  number
+}
+
+function screensSnapshotPath(key: string) { return `sondas/receivers/${key}/screens-snapshot.json` }
+function screensRequestPath(key: string) { return `sondas/receivers/${key}/screens-request.json` }
+function screensResultPath(key: string) { return `sondas/receivers/${key}/screens-result.json` }
+
+export const readScreensSnapshot = (key: string) => readJsonKey<ScreensSnapshot>(screensSnapshotPath(key))
+export const writeScreensSnapshot = (key: string, text: string) =>
+  writeJsonKey(screensSnapshotPath(key), { text, updatedAt: Date.now() } as ScreensSnapshot)
+
+export const readScreensRequest = (key: string) => readJsonKey<ScreensRequest>(screensRequestPath(key))
+export const writeScreensRequest = (key: string, req: Omit<ScreensRequest, 'createdAt'>) =>
+  writeJsonKey(screensRequestPath(key), { ...req, createdAt: Date.now() } as ScreensRequest)
+export const deleteScreensRequest = (key: string) => deleteJsonKey(screensRequestPath(key))
+
+export const readScreensResult = (key: string) => readJsonKey<ScreensResult>(screensResultPath(key))
+export const writeScreensResult = (key: string, result: Omit<ScreensResult, 'resolvedAt'>) =>
+  writeJsonKey(screensResultPath(key), { ...result, resolvedAt: Date.now() } as ScreensResult)

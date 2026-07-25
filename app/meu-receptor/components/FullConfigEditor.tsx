@@ -6,8 +6,10 @@ import type { RdzConfig } from '@/app/lib/rdzConfig'
 import { isSensitiveKey, parseConfigTxt, configTxtFromChanges } from '@/app/lib/rdzConfig'
 import { RDZ_CONFIG_SECTIONS } from '@/app/lib/rdzConfigSections'
 import SleepConfigEditor from './SleepConfigEditor'
+import OledScreenEditor from './OledScreenEditor'
 
 const SLEEP_SECTION_LABEL = 'Deep Sleep / Energia'
+const DISPLAY_SECTION_LABEL = 'Display (OLED/TFT)'
 
 const SLEEP_KEYS = new Set([
   'sleep.mode','sleep.w1start','sleep.w1dur','sleep.w2start','sleep.w2dur',
@@ -186,6 +188,7 @@ export default function FullConfigEditor({ config, loadedAt, applying, applyErro
                   </div>
                 )
               })}
+              {section.label === DISPLAY_SECTION_LABEL && <OledScreenEditor />}
             </div>
           </details>
         )
