@@ -79,15 +79,24 @@ export function useBatteryHistory(
   const lastRef     = useRef<{ at: number; v: number } | null>(null)
   const receiverRef = useRef(receiverKey)
 
-  // Carrega histórico inicial do localStorage; se vazio, tenta R2
+  // Carrega o localStorage de cara (exibição imediata) e sempre busca o R2 em
+  // paralelo, mesclando os dois — o R2 é escrito pelo servidor a cada report,
+  // independente da aba estar aberta, então pode ter dados mais recentes que
+  // o cache local "congelado" de uma sessão anterior (ver #bug: gráfico preso
+  // num horário antigo porque o local não estava vazio e o R2 nunca era
+  // consultado de novo).
   useEffect(() => {
     const local = readHistory(receiverKey)
-    if (local.length > 0) { setHistory(local); return }
+    if (local.length > 0) setHistory(local)
     loadFromR2(receiverKey).then(r2data => {
       if (r2data.length === 0) return
-      const pruned = pruneHistory(r2data)
-      writeLocalHistory(receiverKey, pruned)
-      setHistory(pruned)
+      setHistory(prev => {
+        const merged = new Map(prev.map(e => [e.at, e]))
+        for (const e of r2data) merged.set(e.at, e)
+        const next = pruneHistory([...merged.values()].sort((a, b) => a.at - b.at))
+        writeLocalHistory(receiverKey, next)
+        return next
+      })
     })
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []) // só no mount — receiverKey não muda sem reload de página
