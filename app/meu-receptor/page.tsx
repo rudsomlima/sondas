@@ -126,7 +126,12 @@ export default function MeuReceptorPage() {
     })
   }
 
-  // Remove um receptor da lista (não apaga os dados do R2)
+  // Remove um receptor da lista local e do discovery list no servidor
+  // (known-receivers.json) — não apaga histórico power/batt no R2 (ver
+  // R2Panel "Apagar histórico" pra isso). A remoção local é imediata e
+  // incondicional; a chamada ao servidor é fire-and-forget, mesmo padrão do
+  // useEffect de auto-descoberta acima — sem ela, o próximo carregamento da
+  // página re-adiciona o prefix de volta a partir do known-receivers.json.
   const forgetReceiver = (prefix: string) => {
     setConfigState(prev => {
       const next = {
@@ -137,6 +142,7 @@ export default function MeuReceptorPage() {
       setSettings(next)
       return next
     })
+    fetch(`/api/known-receivers?prefix=${encodeURIComponent(prefix)}`, { method: 'DELETE' }).catch(() => {})
   }
 
   const effectiveConfig: RdzConfig | null = firmwareConfig.config

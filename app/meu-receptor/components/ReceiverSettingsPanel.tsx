@@ -300,7 +300,7 @@ export default function ReceiverSettingsPanel({
             })}
           </div>
           <p className="text-[10px] text-faint mt-1.5">
-            Remover da lista não apaga os dados do receptor no R2.
+            Remover da lista tira o receptor da auto-descoberta, mas não apaga o histórico dele no R2.
             Gerencie o armazenamento em Configurações → Armazenamento no servidor.
           </p>
         </div>

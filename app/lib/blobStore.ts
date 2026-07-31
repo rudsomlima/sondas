@@ -354,6 +354,27 @@ export async function upsertKnownReceiver(prefix: string): Promise<void> {
   }
 }
 
+// Remove um prefix da lista de auto-descoberta (não apaga histórico
+// power/batt do receptor — ver deleteReceiverHistory pra isso). Sem isso,
+// um receptor que reportou uma vez (mesmo de teste) ficava "zumbi": o botão
+// "Remover da lista" só limpava o localStorage do navegador, e o próximo
+// carregamento de /meu-receptor re-adicionava o prefix de volta a partir
+// deste arquivo no R2.
+export async function deleteKnownReceiver(prefix: string): Promise<void> {
+  const client = getClient()
+  if (!client) return
+  const entries = await readKnownReceivers()
+  const next = entries.filter(e => e.prefix !== prefix)
+  if (next.length === entries.length) return // prefix não estava na lista
+  try {
+    await client.send(new PutObjectCommand({
+      Bucket: bucket(), Key: KNOWN_RECEIVERS_KEY, Body: JSON.stringify(next), ContentType: 'application/json',
+    }))
+  } catch (e) {
+    console.error('[R2] deleteKnownReceiver falhou:', e)
+  }
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Cache de voos ao vivo por estação (SondeHub + radiosondy.info), pra não
 // todo mundo que abrir /historico reprocessar o feed global sozinho.
