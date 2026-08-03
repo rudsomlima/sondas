@@ -175,6 +175,9 @@ export const RDZ_CONFIG_SECTIONS: RdzConfigSectionMeta[] = [
       f('sleep.extendmode', 'Modo da escuta extra (0=WiFi economizado, 1=WiFi off, 2=duty-cycle)', 'int'),
       f('sleep.extendsleep', 'Modo 2 — min dormindo por ciclo de checagem', 'int'),
       f('sleep.extendsniff', 'Modo 2 — min acordado escaneando por ciclo', 'int'),
+      // Fica nesta seção porque o auto-OTA roda dentro do sleepLoop() do
+      // firmware, no ciclo de wake (ver checkAutoOta em conn-ota.cpp).
+      f('ota.auto', 'Auto-OTA pelo app (0=off, 1=on) — atualiza quando a versão publicada é DIFERENTE da instalada, não "mais nova"; deixe 0 enquanto gravar por USB', 'int'),
     ],
   },
   {

@@ -1,6 +1,6 @@
 'use client'
 
-import type { ReactNode } from 'react'
+import { useRef, useState, type ReactNode } from 'react'
 import type { RdzConfig } from '@/app/lib/rdzConfig'
 import { parseSleepWindows, minutesToHHMM, hhmmToMinutes } from '@/app/lib/sleepWindows'
 import { nowGMT3 } from '@/app/lib/types'
@@ -105,7 +105,12 @@ function splitDay(s: number, e: number): [number, number][] {
   return [[ns, 1440], [0, ne - 1440]]
 }
 
-function buildPreviewSegments(rawSegs: PreviewSeg[]): { startPct: number; widthPct: number; kind: PreviewKind | 'sleeping' }[] {
+// Segmentos em minutos crus (0–1440) — a conversão pra % de tela fica pro
+// componente, que decide o domínio visível (dia inteiro ou uma faixa
+// selecionada por arraste, ver zoomRange no componente).
+interface BuiltSeg { startMin: number; endMin: number; kind: PreviewKind | 'sleeping' }
+
+function buildPreviewSegments(rawSegs: PreviewSeg[]): BuiltSeg[] {
   const pieces: { start: number; end: number; kind: PreviewKind }[] = []
   for (const seg of rawSegs) {
     for (const [s, e] of splitDay(seg.startMin, seg.endMin)) {
@@ -114,15 +119,38 @@ function buildPreviewSegments(rawSegs: PreviewSeg[]): { startPct: number; widthP
   }
   pieces.sort((a, b) => a.start - b.start)
 
-  const out: { startPct: number; widthPct: number; kind: PreviewKind | 'sleeping' }[] = []
+  const out: BuiltSeg[] = []
   let cursor = 0
   for (const p of pieces) {
-    if (p.start > cursor) out.push({ startPct: (cursor / 1440) * 100, widthPct: ((p.start - cursor) / 1440) * 100, kind: 'sleeping' })
-    out.push({ startPct: (p.start / 1440) * 100, widthPct: ((p.end - p.start) / 1440) * 100, kind: p.kind })
+    if (p.start > cursor) out.push({ startMin: cursor, endMin: p.start, kind: 'sleeping' })
+    out.push({ startMin: p.start, endMin: p.end, kind: p.kind })
     cursor = Math.max(cursor, p.end)
   }
-  if (cursor < 1440) out.push({ startPct: (cursor / 1440) * 100, widthPct: ((1440 - cursor) / 1440) * 100, kind: 'sleeping' })
+  if (cursor < 1440) out.push({ startMin: cursor, endMin: 1440, kind: 'sleeping' })
   return out
+}
+
+// Escolhe um intervalo "redondo" (minutos) pras marcas do eixo, visando ~6
+// marcas na faixa visível — mesma técnica do PowerTimeline.tsx (computeTicks).
+const TICK_CANDIDATES_MIN = [1, 2, 5, 10, 15, 30, 60, 120, 180, 360, 720, 1440]
+function computeAxisTicks(domainStart: number, domainEnd: number): { min: number; label: string }[] {
+  const span = domainEnd - domainStart
+  let step = TICK_CANDIDATES_MIN[TICK_CANDIDATES_MIN.length - 1]
+  for (const c of TICK_CANDIDATES_MIN) {
+    if (span / c <= 6) { step = c; break }
+  }
+  const first = Math.ceil(domainStart / step) * step
+  const ticks: { min: number; label: string }[] = []
+  for (let m = first; m <= domainEnd + 1e-9; m += step) {
+    ticks.push({ min: m, label: minutesToHHMM(wrapMinutes(Math.round(m))) })
+  }
+  return ticks
+}
+
+// Normaliza minutos pra dentro de um dia (0–1439) — usado pra formatar
+// horários que passaram da meia-noite ou vieram negativos (folga de acordar).
+function wrapMinutes(m: number): number {
+  return ((m % 1440) + 1440) % 1440
 }
 
 const PREVIEW_COLOR: Record<PreviewKind | 'sleeping', string> = {
@@ -137,7 +165,18 @@ const PREVIEW_OPACITY: Record<PreviewKind | 'sleeping', number> = {
 
 const EXTEND_MODE_LABELS = ['WiFi economizado (ao vivo)', 'WiFi desligado', 'Checagem periódica (dorme entre checagens)']
 
+const MIN_ZOOM_SPAN_MIN = 5 // menor faixa selecionável por arraste
+
 export default function SleepConfigEditor({ config, changes, setField }: SleepConfigEditorProps) {
+  // Zoom por seleção de área: arrasta sobre a barra pra restringir o
+  // domínio visível a [zoomRange[0], zoomRange[1]] minutos; null = dia
+  // inteiro (0–1440). dragPx guarda a posição em pixels durante o arraste,
+  // só pra desenhar o retângulo de seleção (a conversão pra minutos só
+  // acontece ao soltar o botão, com base na largura real do contêiner).
+  const [zoomRange, setZoomRange] = useState<[number, number] | null>(null)
+  const [dragPx, setDragPx] = useState<{ start: number; cur: number } | null>(null)
+  const barRef = useRef<HTMLDivElement>(null)
+
   const val = (key: string): string => changes[key] ?? config[key] ?? ''
   const valInt = (key: string, fallback = 0): number => {
     const n = parseInt(val(key), 10)
@@ -157,6 +196,19 @@ export default function SleepConfigEditor({ config, changes, setField }: SleepCo
   const wakemargin = valInt('sleep.wakemargin', 0)
   const holdoff    = valInt('sleep.holdoff', 0)
 
+  // Pra cada janela ativa, até que horas o receptor fica de pé no total
+  // (janela + escuta extra) — sem contar o holdoff, que só acontece *se*
+  // captar sinal perto do fim (não é "tempo garantido ligado").
+  const activeWindows = [
+    w1dur > 0 ? { n: 1 as const, start: w1start, dur: w1dur } : null,
+    w2dur > 0 ? { n: 2 as const, start: w2start, dur: w2dur } : null,
+  ].filter((w): w is { n: 1 | 2; start: number; dur: number } => w !== null)
+  const extendUntilHint = activeWindows.length
+    ? activeWindows
+        .map(w => `Janela ${w.n}: fica ligado até ${minutesToHHMM(wrapMinutes(w.start + w.dur + extendMin))}`)
+        .join(' · ')
+    : undefined
+
   const draft: RdzConfig = { ...config, ...changes }
   const windows = sleepOn ? parseSleepWindows(draft) : null
   const previewSegs = windows
@@ -166,6 +218,50 @@ export default function SleepConfigEditor({ config, changes, setField }: SleepCo
       ])
     : []
   const nowMin = (() => { const d = nowGMT3(); return d.getUTCHours() * 60 + d.getUTCMinutes() })()
+
+  // Domínio visível da barra: dia inteiro, ou a faixa selecionada por
+  // arraste (zoomRange). toPct converte um minuto absoluto pra posição (%)
+  // dentro da faixa visível atual.
+  const domainStart = zoomRange ? zoomRange[0] : 0
+  const domainEnd = zoomRange ? zoomRange[1] : 1440
+  const domainLen = domainEnd - domainStart
+  const toPct = (min: number) => ((min - domainStart) / domainLen) * 100
+
+  // Só a parte de cada segmento que cai dentro do domínio visível (recorta
+  // nas bordas ao dar zoom numa faixa parcial).
+  const visibleSegs = previewSegs
+    .map(s => ({ ...s, clipStart: Math.max(s.startMin, domainStart), clipEnd: Math.min(s.endMin, domainEnd) }))
+    .filter(s => s.clipEnd > s.clipStart)
+
+  // Rótulo de horário só quando o INÍCIO real do evento está visível (não
+  // quando é só a continuação de um segmento cortado na borda do zoom).
+  const visibleLabels = previewSegs.filter(s => s.startMin >= domainStart && s.startMin <= domainEnd)
+  const axisTicks = computeAxisTicks(domainStart, domainEnd)
+  const showNow = nowMin >= domainStart && nowMin <= domainEnd
+
+  function handleBarMouseDown(e: React.MouseEvent) {
+    const rect = barRef.current?.getBoundingClientRect()
+    if (!rect) return
+    setDragPx({ start: e.clientX - rect.left, cur: e.clientX - rect.left })
+  }
+  function handleBarMouseMove(e: React.MouseEvent) {
+    if (!dragPx) return
+    const rect = barRef.current?.getBoundingClientRect()
+    if (!rect) return
+    setDragPx(d => (d ? { ...d, cur: e.clientX - rect.left } : d))
+  }
+  function handleBarMouseUp() {
+    const rect = barRef.current?.getBoundingClientRect()
+    if (!dragPx || !rect || rect.width === 0) { setDragPx(null); return }
+    const x0 = Math.max(0, Math.min(dragPx.start, dragPx.cur))
+    const x1 = Math.min(rect.width, Math.max(dragPx.start, dragPx.cur))
+    setDragPx(null)
+    if (x1 - x0 < 4) return // clique simples, sem arraste de verdade
+    const min0 = domainStart + (x0 / rect.width) * domainLen
+    const min1 = domainStart + (x1 / rect.width) * domainLen
+    if (min1 - min0 < MIN_ZOOM_SPAN_MIN) return
+    setZoomRange([Math.round(min0), Math.round(min1)])
+  }
 
   const windowCard = (n: 1 | 2, start: number, dur: number) => {
     const startKey = `sleep.w${n}start`
@@ -211,35 +307,91 @@ export default function SleepConfigEditor({ config, changes, setField }: SleepCo
     <div className="space-y-3">
       {/* Prévia visual do dia de hoje */}
       <div className="bg-bg border border-border rounded-md p-3">
-        <p className="text-[10px] text-faint uppercase tracking-wide mb-2">Prévia — hoje, conforme os campos abaixo</p>
+        <div className="flex items-center justify-between gap-2 mb-2">
+          <p className="text-[10px] text-faint uppercase tracking-wide">Prévia — hoje, conforme os campos abaixo</p>
+          {sleepOn && windows && (
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <span className="text-[10px] text-faint hidden sm:inline">Arraste na barra pra dar zoom</span>
+              {zoomRange && (
+                <button
+                  type="button"
+                  onClick={() => setZoomRange(null)}
+                  className="px-1.5 py-0.5 text-[10px] rounded border border-border text-gray-400 hover:text-white hover:border-border-strong"
+                >
+                  Ver dia inteiro
+                </button>
+              )}
+            </div>
+          )}
+        </div>
         {!sleepOn ? (
           <p className="text-xs text-gray-300">Deep sleep desativado — o receptor fica sempre acordado.</p>
         ) : !windows ? (
           <p className="text-xs text-amber-400">Nenhuma janela ativa — o receptor vai dormir o dia inteiro. Ative a Janela 1 ou 2 abaixo.</p>
         ) : (
           <>
-            <div className="relative rounded overflow-hidden" style={{ height: 18 }}>
-              {previewSegs.map((s, i) => (
+            {/* Rótulos de horário de cada evento ficam ACIMA da barra, em duas
+                fileiras alternadas (eventos consecutivos raramente caem na
+                mesma fileira) — evita sobrepor tanto o gráfico quanto uns aos
+                outros quando dois eventos estão próximos (ex.: folga de
+                acordar bem pequena). Pra casos ainda mais apertados, arraste
+                sobre a barra pra selecionar e ampliar só aquele trecho. */}
+            <div className="relative" style={{ height: 24 }}>
+              {visibleLabels.map((s, i) => (
+                <span
+                  key={i}
+                  className="absolute text-[9px] text-faint mono whitespace-nowrap"
+                  style={{ left: `${toPct(s.startMin)}%`, top: i % 2 === 0 ? 0 : 11 }}
+                >
+                  {minutesToHHMM(wrapMinutes(s.startMin))}
+                </span>
+              ))}
+            </div>
+            <div
+              ref={barRef}
+              className="relative rounded overflow-hidden select-none cursor-crosshair"
+              style={{ height: 18 }}
+              onMouseDown={handleBarMouseDown}
+              onMouseMove={handleBarMouseMove}
+              onMouseUp={handleBarMouseUp}
+              onMouseLeave={() => dragPx && handleBarMouseUp()}
+            >
+              {visibleSegs.map((s, i) => (
                 <div
                   key={i}
                   style={{
-                    position: 'absolute', left: `${s.startPct}%`, width: `${Math.max(s.widthPct, 0.1)}%`,
+                    position: 'absolute', left: `${toPct(s.clipStart)}%`, width: `${Math.max(toPct(s.clipEnd) - toPct(s.clipStart), 0.1)}%`,
                     height: '100%', background: PREVIEW_COLOR[s.kind], opacity: PREVIEW_OPACITY[s.kind],
                   }}
                 />
               ))}
-              {[6, 12, 18].map(h => (
-                <div key={h} style={{ position: 'absolute', left: `${(h / 24) * 100}%`, top: 0, bottom: 0, width: 1, background: 'rgba(0,0,0,0.25)' }} />
+              {axisTicks.map((t, i) => (
+                <div key={i} style={{ position: 'absolute', left: `${toPct(t.min)}%`, top: 0, bottom: 0, width: 1, background: 'rgba(0,0,0,0.25)' }} />
               ))}
-              <div
-                title="Agora"
-                style={{ position: 'absolute', left: `${(nowMin / 1440) * 100}%`, top: 0, bottom: 0, width: 2, background: '#fff' }}
-              />
+              {showNow && (
+                <div
+                  title="Agora"
+                  style={{ position: 'absolute', left: `${toPct(nowMin)}%`, top: 0, bottom: 0, width: 2, background: '#fff' }}
+                />
+              )}
+              {dragPx && (
+                <div
+                  style={{
+                    position: 'absolute', top: 0, bottom: 0,
+                    left: Math.min(dragPx.start, dragPx.cur), width: Math.abs(dragPx.cur - dragPx.start),
+                    background: 'rgba(255,255,255,0.25)', border: '1px solid rgba(255,255,255,0.6)',
+                  }}
+                />
+              )}
             </div>
-            <div className="flex justify-between text-[10px] text-faint mt-1">
-              <span>0h</span><span>6h</span><span>12h</span><span>18h</span><span>24h</span>
+            <div className="relative text-[10px] text-faint" style={{ height: 14 }}>
+              {axisTicks.map((t, i) => (
+                <span key={i} className="absolute mono" style={{ left: `${toPct(t.min)}%`, transform: i === 0 ? 'none' : i === axisTicks.length - 1 ? 'translateX(-100%)' : 'translateX(-50%)' }}>
+                  {t.label}
+                </span>
+              ))}
             </div>
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-2 text-[11px] text-gray-300">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-[11px] text-gray-300">
               <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm inline-block" style={{ background: PREVIEW_COLOR.awake }} /> Acordado (com folga)</span>
               {extendOn && (
                 <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm inline-block" style={{ background: PREVIEW_COLOR.extend }} /> Escuta extra</span>
@@ -287,6 +439,7 @@ export default function SleepConfigEditor({ config, changes, setField }: SleepCo
               label="Duração extra (minutos)"
               value={String(extendMin)}
               onChange={v => setField('sleep.extend', v)}
+              hint={extendUntilHint}
             />
             <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3 text-xs">
               <label className="text-gray-400 sm:w-52 flex-shrink-0">Modo</label>

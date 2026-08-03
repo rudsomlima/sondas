@@ -1,6 +1,6 @@
 /**
  * Conteúdo bruto de RX_FSK/data/screens1.txt, copiado do firmware
- * (PlatformIO/Projects/rdz_ttgo_sonde_06_03_2026/rdz_ttgo_sonde) em 2026-07-24.
+ * (PlatformIO/Projects/rdz_ttgo_sonde_06_03_2026/rdz_ttgo_sonde) em 2026-07-31.
  *
  * Só esse arquivo é embutido: screens2.txt..screens6.txt são templates para o
  * driver TFT ILI9225 (usam `scale=`/`color=` e coordenadas em pixel fora da
@@ -107,6 +107,8 @@ fonts=0,1
 5,5=bImA
 6,0=xTemp:
 6,5=bT C
+7,0=xSleep:
+7,7=ksm
 
 @Meteo
 timer=-1,-1,-1

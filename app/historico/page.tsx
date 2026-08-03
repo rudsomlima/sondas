@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
-import { History, RefreshCw, AlertCircle, Loader2, HardDrive, Radio, Trash2 } from 'lucide-react'
+import { History, RefreshCw, AlertCircle, Loader2, HardDrive, Radio, Trash2, ShieldCheck } from 'lucide-react'
 import { clearMonth, clearYear } from '@/app/lib/cache'
 import { Station, DEFAULT_STATION, getSelectedStation, setSelectedStation } from '@/app/lib/stations'
 import type { Launch } from '@/app/lib/types'
@@ -27,6 +27,8 @@ export default function HistoricoPage() {
   const [showYearMap, setShowYearMap] = useState(false)
   const [deleteMonthConfirm, setDeleteMonthConfirm] = useState<number | null>(null)
   const [deleteYearConfirm, setDeleteYearConfirm] = useState(false)
+  const [rechecking, setRechecking] = useState(false)
+  const [recheckMsg, setRecheckMsg] = useState<string | null>(null)
 
   useEffect(() => {
     setStation(getSelectedStation())
@@ -61,6 +63,30 @@ export default function HistoricoPage() {
     setDeleteMonthConfirm(null)
     syncMonths(year, [targetMonth])
   }, [deleteMonthConfirm, year, station.id, setData, syncMonths])
+
+  const handleRecheckWyoming = useCallback(async () => {
+    setRechecking(true)
+    setRecheckMsg(null)
+    try {
+      const res = await fetch(`/api/sounding?action=recheck&year=${year}&station=${station.id}`)
+      const json = await res.json()
+      if (json.error) throw new Error(json.error)
+      if (json.downgraded > 0) {
+        // Alguns launches passaram de "confirmado" para "erro" — o cache
+        // local (localStorage) ficaria com o dado antigo até o próximo
+        // clique manual em "Atualizar", então recarrega direto da API.
+        clearYear(year, station.id)
+        await fetchData(year)
+        setRecheckMsg(`${json.downgraded} de ${json.checked} lançamento(s) atualizado(s): a Wyoming não confirma mais os dados.`)
+      } else {
+        setRecheckMsg(`Nenhuma mudança — ${json.checked} lançamento(s) reverificado(s), todos ainda confirmados pela Wyoming.`)
+      }
+    } catch (e: any) {
+      setRecheckMsg(e.message || 'Erro ao reverificar')
+    } finally {
+      setRechecking(false)
+    }
+  }, [year, station.id, fetchData])
 
   const handleConfirmDeleteYear = useCallback(() => {
     clearYear(year, station.id)
@@ -122,10 +148,21 @@ export default function HistoricoPage() {
             >
               <HardDrive size={14} />
             </Link>
+            <button
+              onClick={handleRecheckWyoming}
+              disabled={rechecking}
+              className="flex items-center gap-2 px-3 py-2.5 bg-surface border border-border rounded-md text-sm text-gray-400 hover:text-white hover:border-border-strong transition-all disabled:opacity-50"
+              title="A Wyoming às vezes muda de ideia depois de confirmar uma sondagem (fica indisponível). Reverifica os lançamentos já marcados como confirmados neste ano."
+            >
+              {rechecking ? <Loader2 size={14} className="animate-spin" /> : <ShieldCheck size={14} />}
+            </button>
           </div>
         </div>
 
         {showStationPicker && <StationPicker station={station} onSelect={changeStation} />}
+        {recheckMsg && (
+          <p className="text-xs text-gray-400 mt-2">{recheckMsg}</p>
+        )}
       </div>
 
       <LiveCard

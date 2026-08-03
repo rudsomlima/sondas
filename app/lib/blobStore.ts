@@ -492,6 +492,33 @@ export async function writeFirmwareBinary(key: string, bin: Uint8Array, version:
   }))
 }
 
+/**
+ * Despublica o firmware deste receptor (apaga binário + metadados).
+ *
+ * Com o meta.json ausente, /api/firmware/[receiver]/version passa a responder
+ * 404, e o `checkAutoOta()` do firmware trata `code != 200` como "sem
+ * novidade" e segue o fluxo normal — ou seja, apagar aqui é a forma limpa de
+ * desarmar o auto-OTA pelo lado do servidor, sem precisar mexer no receptor.
+ * Existe porque o firmware atualiza sempre que a versão publicada é
+ * DIFERENTE da instalada, não "mais nova": um binário antigo esquecido aqui
+ * faz o receptor se reverter para ele a cada boot.
+ */
+export async function deleteFirmware(key: string): Promise<void> {
+  const client = getClient()
+  if (!client) return
+  // Apaga o meta ANTES do binário: é o meta que faz /version responder 200 e
+  // dispara o download. Na ordem inversa, uma falha no meio deixaria o
+  // receptor baixando um binário que já não existe.
+  for (const path of [firmwareMetaPath(key), firmwareBinPath(key)]) {
+    try {
+      await client.send(new DeleteObjectCommand({ Bucket: bucket(), Key: path }))
+    } catch (e) {
+      console.error('[R2] deleteFirmware falhou:', path, e)
+      throw e
+    }
+  }
+}
+
 export async function readFirmwareBinary(key: string): Promise<Uint8Array | null> {
   const client = getClient()
   if (!client) return null

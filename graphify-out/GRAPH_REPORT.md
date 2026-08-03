@@ -1,308 +1,293 @@
-# Graph Report - C:\Users\rudso\OneDrive\Documentos\Site_sonda\sondas  (2026-07-08)
+# Graph Report - sondas  (2026-07-31)
 
 ## Corpus Check
-- 57 files · ~31,619 words
+- 112 files · ~66,506 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 364 nodes · 503 edges · 40 communities detected
-- Extraction: 79% EXTRACTED · 21% INFERRED · 0% AMBIGUOUS · INFERRED: 106 edges (avg confidence: 0.8)
+- 885 nodes · 2147 edges · 52 communities (48 shown, 4 thin omitted)
+- Extraction: 94% EXTRACTED · 6% INFERRED · 0% AMBIGUOUS · INFERRED: 120 edges (avg confidence: 0.78)
 - Token cost: 0 input · 0 output
 
+## Graph Freshness
+- Built from commit: `cba53779`
+- Run `git rev-parse HEAD` and compare to check if the graph is stale.
+- Run `graphify update .` after code changes (no API cost).
+
 ## Community Hubs (Navigation)
-- [[_COMMUNITY_Community 0|Community 0]]
-- [[_COMMUNITY_Community 1|Community 1]]
-- [[_COMMUNITY_Community 2|Community 2]]
-- [[_COMMUNITY_Community 3|Community 3]]
-- [[_COMMUNITY_Community 4|Community 4]]
-- [[_COMMUNITY_Community 5|Community 5]]
-- [[_COMMUNITY_Community 6|Community 6]]
-- [[_COMMUNITY_Community 7|Community 7]]
-- [[_COMMUNITY_Community 8|Community 8]]
-- [[_COMMUNITY_Community 9|Community 9]]
-- [[_COMMUNITY_Community 10|Community 10]]
-- [[_COMMUNITY_Community 11|Community 11]]
-- [[_COMMUNITY_Community 12|Community 12]]
-- [[_COMMUNITY_Community 13|Community 13]]
-- [[_COMMUNITY_Community 14|Community 14]]
-- [[_COMMUNITY_Community 15|Community 15]]
-- [[_COMMUNITY_Community 16|Community 16]]
-- [[_COMMUNITY_Community 17|Community 17]]
-- [[_COMMUNITY_Community 18|Community 18]]
-- [[_COMMUNITY_Community 19|Community 19]]
-- [[_COMMUNITY_Community 20|Community 20]]
-- [[_COMMUNITY_Community 21|Community 21]]
-- [[_COMMUNITY_Community 22|Community 22]]
-- [[_COMMUNITY_Community 23|Community 23]]
-- [[_COMMUNITY_Community 24|Community 24]]
-- [[_COMMUNITY_Community 25|Community 25]]
-- [[_COMMUNITY_Community 26|Community 26]]
-- [[_COMMUNITY_Community 27|Community 27]]
-- [[_COMMUNITY_Community 28|Community 28]]
-- [[_COMMUNITY_Community 29|Community 29]]
-- [[_COMMUNITY_Community 30|Community 30]]
-- [[_COMMUNITY_Community 31|Community 31]]
-- [[_COMMUNITY_Community 32|Community 32]]
-- [[_COMMUNITY_Community 33|Community 33]]
-- [[_COMMUNITY_Community 34|Community 34]]
-- [[_COMMUNITY_Community 35|Community 35]]
-- [[_COMMUNITY_Community 36|Community 36]]
-- [[_COMMUNITY_Community 37|Community 37]]
-- [[_COMMUNITY_Community 38|Community 38]]
-- [[_COMMUNITY_Community 39|Community 39]]
+- sounding/route.ts
+- painel/page.tsx
+- radiosondy.ts
+- LocalCachePanel.tsx
+- MissionMap.tsx
+- bucket
+- Shell.tsx
+- TopStatusBar.tsx
+- PowerTimeline.tsx
+- R2Panel.tsx
+- StationCompare.tsx
+- ChasePanel.tsx
+- YearMap.tsx
+- LiveCard.tsx
+- MonthAccordion.tsx
+- receiverKey
+- ConfidencePanel.tsx
+- dependencies
+- sondehub.ts
+- compilerOptions
+- stations.ts
+- BatteryChart.tsx
+- OledScreenEditor.tsx
+- Station
+- MonthlyChart.tsx
+- blobStore.ts
+- Launch
+- next.config.js
+- FlightMetricsCards.tsx
+- LaunchMap.tsx
+- receiver-config/request/route.ts
+- analytics/page.tsx
+- GET
+- receiver-screens/request/route.ts
+- types.ts
+- Sondas Natal 🛰️
+- Architecture
+- mqtt-fake-publish.mjs
+- readFirmwareMeta
+- receiver-history/route.ts
+- receiver-config/snapshot/route.ts
+- receiver-screens/snapshot/route.ts
+- readKnownReceivers
+- readFirmwareBinary
+- Bateria do TTGO via MQTT — nativo no firmware dev2 (patch aposentado)
+- poll/route.ts
+- vercel.json
+- leaflet-css.d.ts
 
 ## God Nodes (most connected - your core abstractions)
 1. `GET()` - 34 edges
-2. `map` - 18 edges
-3. `pad()` - 13 edges
-4. `now` - 11 edges
-5. `has` - 10 edges
-6. `readCache()` - 9 edges
-7. `redraw()` - 9 edges
-8. `getClient()` - 8 edges
-9. `bucket()` - 8 edges
-10. `fetchTodayFlights()` - 8 edges
+2. `getClient()` - 31 edges
+3. `bucket()` - 31 edges
+4. `receiverKey()` - 30 edges
+5. `Station` - 25 edges
+6. `Launch` - 25 edges
+7. `getSettings()` - 21 edges
+8. `map` - 18 edges
+9. `compilerOptions` - 16 edges
+10. `refreshLiveFlightsCache()` - 15 edges
 
 ## Surprising Connections (you probably didn't know these)
-- `landingDensity()` --calls--> `GET()`  [INFERRED]
-  C:\Users\rudso\OneDrive\Documentos\Site_sonda\sondas\app\lib\metrics.ts → C:\Users\rudso\OneDrive\Documentos\Site_sonda\sondas\app\api\sync-status\route.ts
-- `formatGmt3()` --calls--> `pad()`  [INFERRED]
-  C:\Users\rudso\OneDrive\Documentos\Site_sonda\sondas\app\lib\launchUtils.ts → C:\Users\rudso\OneDrive\Documentos\Site_sonda\sondas\app\painel\components\TopStatusBar.tsx
-- `wyomingSoundingUrl()` --calls--> `pad()`  [INFERRED]
-  C:\Users\rudso\OneDrive\Documentos\Site_sonda\sondas\app\lib\launchUtils.ts → C:\Users\rudso\OneDrive\Documentos\Site_sonda\sondas\app\painel\components\TopStatusBar.tsx
-- `loadTrajectory()` --calls--> `max`  [INFERRED]
-  C:\Users\rudso\OneDrive\Documentos\Site_sonda\sondas\app\painel\components\MissionMap.tsx → C:\Users\rudso\OneDrive\Documentos\Site_sonda\sondas\app\analytics\components\DriftRose.tsx
-- `DELETE()` --calls--> `all`  [INFERRED]
-  C:\Users\rudso\OneDrive\Documentos\Site_sonda\sondas\app\api\r2-admin\route.ts → C:\Users\rudso\OneDrive\Documentos\Site_sonda\sondas\app\analytics\components\StationCompare.tsx
+- `all` --calls--> `DELETE()`  [INFERRED]
+  app/analytics/components/StationCompare.tsx → app/api/r2-admin/route.ts
+- `onFocus()` --calls--> `getSelectedStation()`  [INFERRED]
+  app/components/Shell.tsx → app/lib/stations.ts
+- `DELETE()` --calls--> `map`  [INFERRED]
+  app/api/r2-admin/route.ts → app/painel/components/MissionMap.tsx
+- `fetchInventory()` --calls--> `nowGMT3()`  [INFERRED]
+  app/api/sounding/route.ts → app/lib/types.ts
+- `fetchInventory()` --calls--> `now`  [INFERRED]
+  app/api/sounding/route.ts → app/painel/page.tsx
 
-## Communities
+## Import Cycles
+- None detected.
 
-### Community 0 - "Community 0"
-_Retrieves, parses, caches, and synchronizes radiosonde launch and sounding data for weather reporting._
-Cohesion: 0.09
-Nodes (35): has, fetchRadiosondyLaunches(), roundToSynopticHour(), toReportStr(), DEFAULT_STATION_ID, fetchApproxLaunches(), fetchComplementaryLaunches(), fetchInventory() (+27 more)
+## Communities (52 total, 4 thin omitted)
 
-### Community 1 - "Community 1"
-_Manages rocket launch scheduling, data synchronization, and month‑based display, including cancellation and confirmation flows._
-Cohesion: 0.07
-Nodes (32): byMonth, cached, cancelled, cells, changeStation, currentYear, { data, setData, error, statusMsg, syncing, fetchData, syncMonths }, [deleteMonthConfirm, setDeleteMonthConfirm] (+24 more)
-
-### Community 2 - "Community 2"
-_Handles fetching radiosonde flight data and rendering live and historical balloon icons and legends on a map interface._
-Cohesion: 0.1
-Nodes (30): redraw(), balloonIconCounter, balloonSvgMarkup(), buildBalloonIcon(), buildHighlightBalloonIcon(), buildHighlightLiveBalloonIcon(), externalRadiosondyUrl(), fetchLiveFlights() (+22 more)
-
-### Community 3 - "Community 3"
-_Manages caching, retrieval, and statistical analysis of weather station data across years and months, and supports confidence calculations and synchronization._
-Cohesion: 0.09
-Nodes (21): CACHE_KEY, CACHE_VERSION, clearMonth(), clearStation(), clearYear(), DEFAULT_STATION, exportCache(), getCacheByYear() (+13 more)
-
-### Community 4 - "Community 4"
-
-Cohesion: 0.09
-Nodes (23): createBaseMap(), BALLOON_SIZE, cancelled, chaseLayerRef, init(), L, layer, leafletRef (+15 more)
-
-### Community 5 - "Community 5"
-_Manages CRUD and sync of yearly store data in a bucket, including matching and status tracking operations._
-Cohesion: 0.2
-Nodes (18): bucket(), DEFAULT_STATION_ID, deleteYearStore(), getClient(), getYearStoreSize(), listYearStores(), pathFor(), readSyncStatus() (+10 more)
-
-### Community 6 - "Community 6"
-_Handles station lookup, selection, and UI state for weather balloon launches, enabling navigation and mapping of launch sites._
-Cohesion: 0.1
-Nodes (18): BALLOON_SIZE, LaunchMap(), active, navItems, onFocus(), pathname, shortName, [sidebarOpen, setSidebarOpen] (+10 more)
-
-### Community 7 - "Community 7"
-
-Cohesion: 0.12
-Nodes (13): data, max, OCTANTS, cycle, fmtCountdown(), gmt3, gmt3Str, hadFlightToday (+5 more)
-
-### Community 8 - "Community 8"
-
+### Community 0 - "sounding/route.ts"
 Cohesion: 0.13
-Nodes (14): [bulkSyncFrom, setBulkSyncFrom], [bulkSyncStatus, setBulkSyncStatus], [cacheSizeBytes, setCacheSizeBytes], [cacheStats, setCacheStats], [cacheStatsByStation, setCacheStatsByStation], currentYear, [deleteConfirm, setDeleteConfirm], [expandedStations, setExpandedStations] (+6 more)
+Nodes (34): checkWyomingDataAvailable(), DEFAULT_STATION_ID, fetchApproxLaunches(), fetchComplementaryLaunches(), fetchInventory(), fetchSingleSounding(), fetchWithTimeout(), fetchWyomingMonth() (+26 more)
 
-### Community 9 - "Community 9"
-_Handles loading, displaying, and modifying a paginated file list with delete support and progress tracking._
-Cohesion: 0.17
-Nodes (11): [configured, setConfigured], [deleteConfirm, setDeleteConfirm], [deleting, setDeleting], [expandedStations, setExpandedStations], fetchFiles, [files, setFiles], handleDelete, [loaded, setLoaded] (+3 more)
+### Community 1 - "painel/page.tsx"
+Cohesion: 0.09
+Nodes (24): byMonth, { data, setData, error, statusMsg, syncing, fetchData, syncMonths }, [deleteMonthConfirm, setDeleteMonthConfirm], [deleteYearConfirm, setDeleteYearConfirm], [expandedMonth, setExpandedMonth], handleConfirmDeleteMonth, handleConfirmDeleteYear, [noMatchLaunches, setNoMatchLaunchesState] (+16 more)
 
-### Community 10 - "Community 10"
-_Manages the state and data needed to create, display, and toggle station entries while handling loading status, errors, and chart visualizations._
-Cohesion: 0.2
-Nodes (8): [adding, setAdding], addStation, baseEntry, chartData, COMPARE_COLORS, [entries, setEntries], [error, setError], [loading, setLoading]
+### Community 2 - "radiosondy.ts"
+Cohesion: 0.13
+Nodes (24): run(), isDaytimeHour(), ApproxLaunch, balloonIconCounter, balloonSvgMarkup(), buildBalloonIcon(), buildHighlightBalloonIcon(), buildHighlightLiveBalloonIcon() (+16 more)
 
-### Community 11 - "Community 11"
-_Provides tools for calculating geographic bearings, distances, trajectory analysis, landing density, and annual metrics for flight or navigation data._
-Cohesion: 0.24
-Nodes (6): bearingDeg(), CARDINALS, haversineKm(), computeYearMetrics(), landingDensity(), analyzeTrajectory()
+### Community 3 - "LocalCachePanel.tsx"
+Cohesion: 0.10
+Nodes (39): [bulkSyncFrom, setBulkSyncFrom], [bulkSyncStatus, setBulkSyncStatus], [cacheSizeBytes, setCacheSizeBytes], [cacheStats, setCacheStats], [cacheStatsByStation, setCacheStatsByStation], currentYear, DeleteConfirm, [deleteConfirm, setDeleteConfirm] (+31 more)
 
-### Community 12 - "Community 12"
-_It manages rendering a map view, handling markers, info balloons, and associated UI state such as error and status._
-Cohesion: 0.2
-Nodes (9): BALLOON_SIZE, cancelled, containerRef, [error, setError], mapDivRef, mapRef, markersLayerRef, startplace (+1 more)
+### Community 4 - "MissionMap.tsx"
+Cohesion: 0.09
+Nodes (22): BaseMap, createBaseMap(), DAY_NIGHT, POWER_STATE, SOURCE_COLORS, STATUS_COLORS, TRAJECTORY, antennaIconMarkup() (+14 more)
 
-### Community 13 - "Community 13"
-_Handles generation of URLs and formatting for retrieving and interpreting Wyoming weather sounding data and associated date-time information._
+### Community 5 - "bucket"
+Cohesion: 0.25
+Nodes (16): DELETE(), GET(), bucket(), deleteJsonKey(), deleteR2Object(), deleteYearStore(), getClient(), getYearStoreSize() (+8 more)
+
+### Community 6 - "Shell.tsx"
+Cohesion: 0.15
+Nodes (11): active, navItems, onFocus(), pathname, Shell(), shortName, [sidebarOpen, setSidebarOpen], [station, setStation] (+3 more)
+
+### Community 7 - "TopStatusBar.tsx"
+Cohesion: 0.15
+Nodes (15): max, TodayData, cycle, fmtCountdown(), gmt3, gmt3Str, hadFlightToday, landedCount (+7 more)
+
+### Community 8 - "PowerTimeline.tsx"
+Cohesion: 0.06
+Nodes (49): POWER_COLORS, configTxtFromChanges(), isSensitiveKey(), parseConfigTxt(), RdzConfig, RdzConfigValue, SENSITIVE_KEYS, RDZ_CONFIG_SECTIONS (+41 more)
+
+### Community 9 - "R2Panel.tsx"
+Cohesion: 0.10
+Nodes (21): [configured, setConfigured], [deleteConfirm, setDeleteConfirm], DeleteTarget, [deleting, setDeleting], [expandedStations, setExpandedStations], fetchFiles, FILE_DESCRIPTIONS, fileBasename() (+13 more)
+
+### Community 10 - "StationCompare.tsx"
+Cohesion: 0.15
+Nodes (14): [adding, setAdding], addStation, all, baseEntry, chartData, COMPARE_COLORS, CompareEntry, [entries, setEntries] (+6 more)
+
+### Community 11 - "ChasePanel.tsx"
+Cohesion: 0.21
+Nodes (15): GeoState, googleMapsNavUrl(), useGeolocation(), wazeNavUrl(), bearingDeg(), bearingToCardinal(), CARDINALS, formatDistance() (+7 more)
+
+### Community 12 - "YearMap.tsx"
+Cohesion: 0.13
+Nodes (16): fetchFromCache(), useLiveFlights(), BALLOON_SIZE, cancelled, containerRef, [error, setError], mapDivRef, mapRef (+8 more)
+
+### Community 13 - "LiveCard.tsx"
+Cohesion: 0.23
+Nodes (12): count, hadFlightToday, LiveCard(), todayMonth, formatGmt3(), isDaytime(), parseUtcDateStr(), sameLaunch() (+4 more)
+
+### Community 14 - "MonthAccordion.tsx"
+Cohesion: 0.19
+Nodes (13): days, isOpen, key, launches, m, MonthAccordion(), next, NoMatchNotice (+5 more)
+
+### Community 15 - "receiverKey"
+Cohesion: 0.06
+Nodes (74): POST(), useTodayData(), ReceiverLiveStatus, upsertKnownReceiver(), writeInstalledFirmware(), computeCfgAuth(), randomReqId(), num() (+66 more)
+
+### Community 16 - "ConfidencePanel.tsx"
+Cohesion: 0.19
+Nodes (13): SourceBadges(), SourceBadgesProps, SOURCES, stateLabel(), computeConfidence(), LaunchConfidence, SEVEN_DAYS_MS, SourceState (+5 more)
+
+### Community 17 - "dependencies"
+Cohesion: 0.04
+Nodes (44): autoprefixer, @aws-sdk/client-s3, leaflet, lucide-react, next, dependencies, @aws-sdk/client-s3, leaflet (+36 more)
+
+### Community 18 - "sondehub.ts"
+Cohesion: 0.14
+Nodes (28): writeLiveFlights(), gmt3DateStr(), LiveFlightsCacheSummary, refreshLiveFlightsCache(), todayStr(), fetchLiveFlights(), fetchRadiosondyFeatures(), fetchTodayFlights() (+20 more)
+
+### Community 19 - "compilerOptions"
+Cohesion: 0.07
+Nodes (26): dom, dom.iterable, esnext, next-env.d.ts, .next/types/**/*.ts, node_modules, **/*.ts, **/*.tsx (+18 more)
+
+### Community 20 - "stations.ts"
+Cohesion: 0.21
+Nodes (13): AnalyticsPage(), ConfiguracoesPage(), isSelected, [query, setQuery], results, StationPicker(), landingDensity(), DIACRITICS_REGEX (+5 more)
+
+### Community 21 - "BatteryChart.tsx"
+Cohesion: 0.16
+Nodes (24): BattVoltageEntry, shouldRecordBattReading(), BatteryChart(), BatteryChartProps, ChartPoint, dayEndUtcMs(), dayLabel(), dayLabelShort() (+16 more)
+
+### Community 22 - "OledScreenEditor.tsx"
+Cohesion: 0.14
+Nodes (18): MOCK_TELEMETRY, drawOledEntry(), formatEntry(), Formatted, FormattedEntry, FormattedQBar, sign(), IGNORED_PREFIXES (+10 more)
+
+### Community 23 - "Station"
+Cohesion: 0.28
+Nodes (7): LandingHeatmap(), LandingHeatmapProps, StationCompareProps, MonthAccordionProps, StationPickerProps, LandingCell, Station
+
+### Community 24 - "MonthlyChart.tsx"
+Cohesion: 0.33
+Nodes (4): chartData, MonthlyChart(), MonthlyChartProps, MONTHS
+
+### Community 25 - "blobStore.ts"
+Cohesion: 0.12
+Nodes (20): GET(), GET(), ConfigRequest, ConfigResult, ConfigSnapshot, DEFAULT_STATION_ID, FirmwareMeta, InstalledFirmware (+12 more)
+
+### Community 26 - "Launch"
+Cohesion: 0.30
+Nodes (10): LiveCardProps, LaunchMapProps, LiveFlightsSnapshot, TodayFlight, Launch, isSelected, LivePanelProps, pos (+2 more)
+
+### Community 29 - "FlightMetricsCards.tsx"
+Cohesion: 0.32
+Nodes (5): FlightMetricsCards(), Stat(), StatProps, SummaryCards(), YearData
+
+### Community 30 - "LaunchMap.tsx"
+Cohesion: 0.21
+Nodes (17): drawTrajectory(), BALLOON_SIZE, LaunchMap(), externalRadiosondyUrl(), lastDayOfMonth(), fetchSondeHubArchiveFramesForDay(), fetchSondeHubArchiveSondeForDay(), parseS3List() (+9 more)
+
+### Community 31 - "receiver-config/request/route.ts"
 Cohesion: 0.22
-Nodes (4): formatGmt3(), MONTHS, MONTHS_FULL, wyomingSoundingUrl()
+Nodes (14): DELETE(), GET(), POST(), GET(), POST(), configRequestPath(), configResultPath(), deleteConfigRequest() (+6 more)
 
-### Community 14 - "Community 14"
+### Community 32 - "analytics/page.tsx"
+Cohesion: 0.14
+Nodes (13): data, DriftRose(), OCTANTS, cells, [launches, setLaunches], [loading, setLoading], metrics, currentYear (+5 more)
 
-Cohesion: 0.29
-Nodes (6): days, isOpen, key, launches, m, next
+### Community 34 - "GET"
+Cohesion: 0.36
+Nodes (13): GET(), maxDuration, GET(), writeSyncStatus(), findLiveMatch(), findRecoveredMatch(), isWithinMatchWindow(), launchUtcInstant() (+5 more)
 
-### Community 15 - "Community 15"
-_Manages application configuration values, providing defaults and defining storage keys._
-Cohesion: 0.4
-Nodes (2): DEFAULT_SETTINGS, SETTINGS_KEY
+### Community 35 - "receiver-screens/request/route.ts"
+Cohesion: 0.24
+Nodes (12): DELETE(), GET(), POST(), GET(), POST(), deleteScreensRequest(), readScreensRequest(), readScreensResult() (+4 more)
 
-### Community 16 - "Community 16"
+### Community 36 - "types.ts"
+Cohesion: 0.18
+Nodes (11): formatWhen(), SyncStatusPanel(), FlightStats, KnownReceiverEntry, LaunchPosition, LaunchSources, PollStatus, SourceId (+3 more)
 
-Cohesion: 0.4
-Nodes (4): conf, launch, level, LEVEL_LABEL
+### Community 37 - "Sondas Natal 🛰️"
+Cohesion: 0.15
+Nodes (12): Cliente (Browser), Deploy no Vercel, Desenvolvimento local, Estação padrão, Estratégia de Cache, Fonte dos dados, Funcionalidades, Licença (+4 more)
 
-### Community 17 - "Community 17"
-_Handles metadata and viewport settings to control how a web page is rendered and displayed on different devices._
-Cohesion: 0.5
-Nodes (2): metadata, viewport
+### Community 38 - "Architecture"
+Cohesion: 0.18
+Nodes (9): Architecture, Background radiosondy-match sync (`app/api/radiosondy-sync/route.ts`), Commands, Data flow (Wyoming launch history), Key invariants to preserve when touching this code, Mission control refactor (branch mission-control), Multi-station support, Pages (+1 more)
 
-### Community 18 - "Community 18"
+### Community 39 - "mqtt-fake-publish.mjs"
+Cohesion: 0.24
+Nodes (10): args, client, homeLat, homeLon, pub(), publishPacket(), publishStation(), sleepIdx (+2 more)
 
-Cohesion: 0.5
-Nodes (1): SOURCES
+### Community 40 - "readFirmwareMeta"
+Cohesion: 0.31
+Nodes (8): GET(), POST(), GET(), firmwareMetaPath(), installedVersionPath(), readFirmwareMeta(), readInstalledFirmware(), writeFirmwareBinary()
 
-### Community 19 - "Community 19"
-_Tracks a user's flight activity for the day, recording how many flights were taken, whether a flight occurred today, and the month._
-Cohesion: 0.5
-Nodes (3): count, hadFlightToday, todayMonth
+### Community 41 - "receiver-history/route.ts"
+Cohesion: 0.42
+Nodes (8): DELETE(), GET(), parseType(), PUT(), deleteReceiverHistory(), readReceiverHistory(), receiverHistoryPath(), writeReceiverHistory()
 
-### Community 20 - "Community 20"
-_Manages query input, selection state, and displays the search results._
-Cohesion: 0.5
-Nodes (3): isSelected, [query, setQuery], results
+### Community 42 - "receiver-config/snapshot/route.ts"
+Cohesion: 0.53
+Nodes (5): GET(), POST(), configSnapshotPath(), readConfigSnapshot(), writeConfigSnapshot()
 
-### Community 21 - "Community 21"
-_Unable to determine domain due to missing code entities._
-Cohesion: 0.5
-Nodes (0): 
+### Community 43 - "receiver-screens/snapshot/route.ts"
+Cohesion: 0.53
+Nodes (5): GET(), POST(), readScreensSnapshot(), screensSnapshotPath(), writeScreensSnapshot()
 
-### Community 22 - "Community 22"
-_Manages compiling code, creating distributable packages, and configuring deployment targets._
-Cohesion: 0.5
-Nodes (3): brg, dist, target
+### Community 44 - "readKnownReceivers"
+Cohesion: 0.70
+Nodes (4): DELETE(), GET(), deleteKnownReceiver(), readKnownReceivers()
 
-### Community 23 - "Community 23"
-_Unable to determine domain due to missing code entities._
+### Community 45 - "readFirmwareBinary"
 Cohesion: 0.67
-Nodes (0): 
+Nodes (3): GET(), firmwareBinPath(), readFirmwareBinary()
 
-### Community 24 - "Community 24"
-_Stores and formats data for generating monthly visualizations._
-Cohesion: 0.67
-Nodes (2): chartData, MONTHS
-
-### Community 25 - "Community 25"
-_Handles mapping of numeric months to full month names for display._
-Cohesion: 0.67
-Nodes (1): MONTHS_FULL
-
-### Community 26 - "Community 26"
-_Keeps track of whether an element is selected and its position within the layout._
-Cohesion: 0.67
-Nodes (2): isSelected, pos
-
-### Community 27 - "Community 27"
-_Defines build‑time and runtime settings for a Next.js application, such as environment variables, routing, and transpilation options._
-Cohesion: 1.0
-Nodes (1): nextConfig
-
-### Community 28 - "Community 28"
-_Unable to determine domain due to missing code entities._
-Cohesion: 1.0
-Nodes (0): 
-
-### Community 29 - "Community 29"
-_Unable to determine domain due to missing code entities._
-Cohesion: 1.0
-Nodes (0): 
-
-### Community 30 - "Community 30"
-_Unable to determine domain due to missing code entities._
-Cohesion: 1.0
-Nodes (0): 
-
-### Community 31 - "Community 31"
-_Unable to determine domain due to missing code entities._
-Cohesion: 1.0
-Nodes (0): 
-
-### Community 32 - "Community 32"
-_Unable to determine domain due to missing code entities._
-Cohesion: 1.0
-Nodes (0): 
-
-### Community 33 - "Community 33"
-_Unable to determine domain due to missing code entities._
-Cohesion: 1.0
-Nodes (0): 
-
-### Community 34 - "Community 34"
-_Unable to determine domain due to missing code entities._
-Cohesion: 1.0
-Nodes (0): 
-
-### Community 35 - "Community 35"
-_Unable to determine domain due to missing code entities._
-Cohesion: 1.0
-Nodes (0): 
-
-### Community 36 - "Community 36"
-_Unable to determine domain due to missing code entities._
-Cohesion: 1.0
-Nodes (0): 
-
-### Community 37 - "Community 37"
-_Unable to determine domain due to missing code entities._
-Cohesion: 1.0
-Nodes (0): 
-
-### Community 38 - "Community 38"
-_Unable to determine domain due to missing code entities._
-Cohesion: 1.0
-Nodes (0): 
-
-### Community 39 - "Community 39"
-_Unable to determine domain due to missing code entities._
-Cohesion: 1.0
-Nodes (0): 
+### Community 46 - "Bateria do TTGO via MQTT — nativo no firmware dev2 (patch aposentado)"
+Cohesion: 0.50
+Nodes (3): Bateria do TTGO via MQTT — nativo no firmware dev2 (patch aposentado), Deep sleep v2 (fork local), O que é preciso configurar
 
 ## Knowledge Gaps
-- **158 isolated node(s):** `nextConfig`, `metadata`, `viewport`, `[launches, setLaunches]`, `[loading, setLoading]` (+153 more)
+- **298 isolated node(s):** `OCTANTS`, `COMPARE_COLORS`, `memoryCache`, `inventoryCache`, `MONTH_MAP` (+293 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **Thin community `Community 27`** (2 nodes): `next.config.js`, `nextConfig`
-  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 28`** (2 nodes): `page.tsx`, `HomePage()`
-  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 29`** (2 nodes): `Stat.tsx`, `Stat()`
-  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 30`** (2 nodes): `page.tsx`, `ConfiguracoesPage()`
-  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 31`** (2 nodes): `useLiveFlights.ts`, `useLiveFlights()`
-  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 32`** (2 nodes): `useTodayData.ts`, `useTodayData()`
-  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 33`** (1 nodes): `next-env.d.ts`
-  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 34`** (1 nodes): `postcss.config.js`
-  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 35`** (1 nodes): `tailwind.config.js`
-  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 36`** (1 nodes): `leaflet-css.d.ts`
-  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 37`** (1 nodes): `FlightMetricsCards.tsx`
-  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 38`** (1 nodes): `selection.ts`
-  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 39`** (1 nodes): `TelemetryPanel.tsx`
-  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
+- **4 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+
+## Suggested Questions
+_Questions this graph is uniquely positioned to answer:_
+
+- **Why does `getSettings()` connect `receiverKey` to `R2Panel.tsx`, `stations.ts`, `painel/page.tsx`?**
+  _High betweenness centrality (0.034) - this node is a cross-community bridge._
+- **Why does `Station` connect `Station` to `analytics/page.tsx`, `sounding/route.ts`, `painel/page.tsx`, `LocalCachePanel.tsx`, `MissionMap.tsx`, `Shell.tsx`, `TopStatusBar.tsx`, `StationCompare.tsx`, `ChasePanel.tsx`, `YearMap.tsx`, `MonthAccordion.tsx`, `receiverKey`, `ConfidencePanel.tsx`, `stations.ts`, `Launch`?**
+  _High betweenness centrality (0.024) - this node is a cross-community bridge._
+- **Why does `receiverKey()` connect `receiverKey` to `receiver-screens/snapshot/route.ts`, `receiver-config/snapshot/route.ts`, `receiver-screens/request/route.ts`, `receiver-config/request/route.ts`?**
+  _High betweenness centrality (0.021) - this node is a cross-community bridge._
+- **Are the 22 inferred relationships involving `GET()` (e.g. with `listYearStores()` and `readSyncStatus()`) actually correct?**
+  _`GET()` has 22 INFERRED edges - model-reasoned connections that need verification._
+- **What connects `OCTANTS`, `COMPARE_COLORS`, `memoryCache` to the rest of the system?**
+  _298 weakly-connected nodes found - possible documentation gaps or missing edges._
+- **Should `sounding/route.ts` be split into smaller, more focused modules?**
+  _Cohesion score 0.13445378151260504 - nodes in this community are weakly interconnected._
+- **Should `painel/page.tsx` be split into smaller, more focused modules?**
+  _Cohesion score 0.08923076923076922 - nodes in this community are weakly interconnected._

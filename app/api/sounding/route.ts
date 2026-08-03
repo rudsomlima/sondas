@@ -80,6 +80,17 @@ function launchToInventoryKey(l: { date: string; time_local: string; time_utc: s
   return `${date}_${l.time_utc}`
 }
 
+// Reverte um Launch já persistido para o formato de datetime que a Wyoming
+// espera na query ("YYYY-MM-DD HH:MM:SS") — usado por `action=recheck` para
+// reverificar, sob demanda, launches marcados como "confirmados" há tempo
+// (ver checkWyomingDataAvailable: a Wyoming pode responder OK numa sync e
+// 400 "Unable to retrieve the data" depois, para o mesmo id/datetime).
+function launchToWyomingDatetime(l: { date: string; time_local: string; time_utc: string }): string {
+  const key = launchToInventoryKey(l) // "YYYY-MM-DD_HH:00Z"
+  const [date, time] = key.split('_')
+  return `${date} ${time.slice(0, 5)}:00`
+}
+
 async function fetchInventory(station: string, year: number): Promise<string[]> {
   const cacheKey = `inventory_${station}_${year}`
   const now = nowGMT3()
@@ -156,10 +167,12 @@ function parseSingleSounding(html: string): Launch | null {
 // próxima chamada). Chamado para launches novos dentro de syncMonth, e também
 // no caminho "today" mas só para os lançamentos de HOJE (no máximo 1-2) — o
 // resultado fica em memoryCache, então polls repetidos não pagam o custo de novo.
-async function checkWyomingDataAvailable(station: string, datetime: string): Promise<boolean | null> {
+async function checkWyomingDataAvailable(station: string, datetime: string, force = false): Promise<boolean | null> {
   const cacheKey = `avail_${station}_${datetime}`
-  const cached = memoryCache.get(cacheKey)
-  if (cached) return cached.data
+  if (!force) {
+    const cached = memoryCache.get(cacheKey)
+    if (cached) return cached.data
+  }
 
   const url = `${WYOMING_BASE}?datetime=${datetime.replace(' ', '%20')}&id=${station}&src=${WYOMING_SRC}&type=TEXT:LIST`
 
@@ -588,6 +601,40 @@ export async function GET(request: NextRequest) {
         errors,
         cached: false,
       })
+    }
+
+    if (action === 'recheck') {
+      // Reverifica, sob demanda (botão "Reverificar Wyoming" no histórico),
+      // launches nativos da Wyoming (!l.source) ainda marcados como
+      // confirmados (wyomingDataOk !== false) — cobre o caso em que a
+      // checagem original (na sync) passou, mas a Wyoming, não-determinística
+      // do lado dela, agora recusa a mesma sondagem individual (400).
+      const year = parseInt(searchParams.get('year') ?? String(local.getUTCFullYear()))
+      const store = await readYearStore(station, year)
+      if (!store) {
+        return NextResponse.json({ year, station, rechecked: 0, downgraded: 0 })
+      }
+
+      const candidates = store.launches.filter(l => !l.source && l.wyomingDataOk !== false)
+      let rechecked = 0
+      let downgraded = 0
+      await mapWithConcurrency(candidates, 4, async l => {
+        const datetime = launchToWyomingDatetime(l)
+        const ok = await checkWyomingDataAvailable(station, datetime, true)
+        if (ok === null) return
+        rechecked++
+        if (ok === false && l.wyomingDataOk !== false) {
+          l.wyomingDataOk = false
+          downgraded++
+        }
+      })
+
+      if (downgraded > 0) {
+        store.updatedAt = Date.now()
+        await writeYearStore(station, store)
+      }
+
+      return NextResponse.json({ year, station, rechecked, downgraded, checked: candidates.length })
     }
 
     return NextResponse.json({ error: 'Unknown action' }, { status: 400 })

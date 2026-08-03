@@ -1,5 +1,5 @@
 import type { OledEntry } from './oledScreenParser'
-import { MOCK_TELEMETRY as M } from './oledMockData'
+import { MOCK_TELEMETRY, MOCK_TELEMETRY_MAX } from './oledMockData'
 
 /** Tamanho da grade de caracteres do OLED SSD1306 usado pelo firmware (U8x8Display::getDispSize) */
 export const OLED_COLS = 16
@@ -23,9 +23,12 @@ const sign = (v: number) => (v >= 0 ? '+' : '')
 /**
  * Formata o conteúdo dinâmico de um item de tela, replicando (de forma
  * aproximada, com dados mock) as funções draw* de RX_FSK/src/Display.cpp.
+ * :param data: fonte de valores mock — MOCK_TELEMETRY (preview normal) ou
+ *   MOCK_TELEMETRY_MAX (preview de arraste, "pior caso" de cada campo).
  */
-function formatEntry(entry: OledEntry): Formatted {
+function formatEntry(entry: OledEntry, data: typeof MOCK_TELEMETRY = MOCK_TELEMETRY): Formatted {
   const { code, extra } = entry
+  const M = data
   switch (code) {
     case 'l':
       return { kind: 'text', text: M.lat.toFixed(5) }
@@ -133,9 +136,40 @@ function formatEntry(entry: OledEntry): Formatted {
     }
     case 'x':
       return { kind: 'text', text: extra }
+    case 'k': {
+      // Killtimer (ver Display::drawKilltimer): extra[0] escolhe a origem
+      // (l=launchKT, b=burstKT, c=countKT, s=segundos até o próximo deep
+      // sleep — ver sleepCountdownS em RX_FSK/src/sleep.cpp); extra[1]
+      // escolhe o formato (4=h:mm, 6=h:mm:ss, m=min:seg sem limite de 60min,
+      // default=segundos crus). 0xffff = sem valor (mostra em branco).
+      // No receptor real, se a origem for "s" e sleep.mode estiver desligado
+      // (deep sleep desativado na config), o firmware mostra "OFF" em vez de
+      // branco — esse preview usa dado mock e não simula esse estado.
+      const sub = extra[0]
+      const value = sub === 'l' ? M.launchKT : sub === 'b' ? M.burstKT : sub === 'c' ? M.countKT : sub === 's' ? M.sleepS : undefined
+      if (value === undefined || value === 0xffff) return { kind: 'text', text: '' }
+      const v = Math.round(value)
+      const fmt = extra[1]
+      const pad2 = (n: number) => String(n).padStart(2, '0')
+      let text: string
+      if (fmt === '4') text = `${Math.floor(v / 3600)}:${pad2(Math.floor((v % 3600) / 60))}`
+      else if (fmt === '6') text = `${Math.floor(v / 3600)}:${pad2(Math.floor((v % 3600) / 60))}:${pad2(v % 60)}`
+      else if (fmt === 'm') text = `${Math.floor(v / 60)}:${pad2(v % 60)}`
+      else text = String(v)
+      if (extra.length > 2) text += extra.slice(2)
+      return { kind: 'text', text }
+    }
     default:
       return { kind: 'text', text: `[${code}]` }
   }
+}
+
+/** Nº de caracteres que o item ocuparia no pior caso — usado no ghost de
+ * preview durante o arraste (ver OledScreenEditor.tsx). */
+export function maxWidthChars(entry: OledEntry): number {
+  const formatted = formatEntry(entry, MOCK_TELEMETRY_MAX)
+  if (formatted.kind === 'qbar') return formatted.len
+  return Math.max(1, formatted.text.length)
 }
 
 const FG = '#7fe7ff'

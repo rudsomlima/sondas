@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { writeFirmwareBinary, readFirmwareMeta, readInstalledFirmware } from '@/app/lib/blobStore'
+import { writeFirmwareBinary, readFirmwareMeta, readInstalledFirmware, deleteFirmware } from '@/app/lib/blobStore'
 
 // GET — metadados do firmware publicado pra este receptor + versão que ele
 // mesmo reportou ter instalada (ver conn-report.cpp/reportVersion), pro
@@ -36,5 +36,24 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ rec
   } catch (e) {
     console.error('[api/firmware/upload] falhou:', e)
     return NextResponse.json({ ok: false, error: 'Erro ao publicar firmware' }, { status: 500 })
+  }
+}
+
+// DELETE — despublica o firmware deste receptor (apaga binário + metadados no
+// R2). Depois disso /version responde 404 e o receptor para de tentar
+// atualizar, ficando com o que já estiver gravado nele.
+//
+// Existe porque conn-ota.cpp atualiza quando a versão publicada é DIFERENTE
+// da instalada, não "mais nova": um binário antigo esquecido aqui faz o
+// receptor se reverter para ele a cada boot, desfazendo qualquer gravação por
+// USB. Mesmo modelo de confiança do POST (sem autenticação, uso pessoal).
+export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ receiver: string }> }) {
+  const { receiver } = await params
+  try {
+    await deleteFirmware(receiver)
+    return NextResponse.json({ ok: true })
+  } catch (e) {
+    console.error('[api/firmware/upload] DELETE falhou:', e)
+    return NextResponse.json({ ok: false, error: 'Erro ao apagar firmware publicado' }, { status: 500 })
   }
 }

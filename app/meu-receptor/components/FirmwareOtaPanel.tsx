@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Cpu, UploadCloud, CheckCircle2, XCircle, Loader2, AlertTriangle } from 'lucide-react'
+import { Cpu, UploadCloud, CheckCircle2, XCircle, Loader2, AlertTriangle, Trash2 } from 'lucide-react'
 
 interface FirmwareMeta {
   version:    string
@@ -40,6 +40,10 @@ export default function FirmwareOtaPanel({ receiverKey, pollMs }: FirmwareOtaPan
   const [uploading, setUploading] = useState(false)
   const [result, setResult] = useState<{ ok: boolean; msg: string } | null>(null)
   const [origin, setOrigin] = useState('')
+  const [deleting, setDeleting] = useState(false)
+  // Confirmação em dois cliques: despublicar é destrutivo (o binário sai do
+  // R2) e não dá pra desfazer sem ter o .bin em mãos de novo.
+  const [confirmDelete, setConfirmDelete] = useState(false)
 
   const load = (silent = false) => {
     if (!silent) setLoading(true)
@@ -85,6 +89,26 @@ export default function FirmwareOtaPanel({ receiverKey, pollMs }: FirmwareOtaPan
     }
   }
 
+  const handleDelete = async () => {
+    setDeleting(true)
+    setResult(null)
+    try {
+      const res = await fetch(`/api/firmware/${receiverKey}/upload`, { method: 'DELETE' })
+      const data = await res.json()
+      if (data.ok) {
+        setResult({ ok: true, msg: 'Firmware despublicado — o receptor não vai mais se atualizar sozinho.' })
+        setConfirmDelete(false)
+        load()
+      } else {
+        setResult({ ok: false, msg: data.error ?? 'Erro ao apagar.' })
+      }
+    } catch {
+      setResult({ ok: false, msg: 'Erro de rede ao apagar.' })
+    } finally {
+      setDeleting(false)
+    }
+  }
+
   const outOfDate = meta && installed && meta.version !== installed.version
 
   return (
@@ -100,7 +124,20 @@ export default function FirmwareOtaPanel({ receiverKey, pollMs }: FirmwareOtaPan
         <code className="text-[11px]">pio run -e ttgo-lora32</code>) e configure nele{' '}
         <code className="text-[11px]">mqtt.siteurl</code> = <code className="text-[11px]">{origin}</code>{' '}
         (mesmo campo do reporte de bateria e da config remota — o firmware monta o resto da URL sozinho).
-        No próximo wake sem sonda no ar e com bateria ok, ele confere a versão e se atualiza sozinho.
+        No próximo wake sem sonda no ar e com bateria ok, ele confere a versão e se atualiza sozinho —
+        desde que <code className="text-[11px]">ota.auto=1</code> na config dele.
+      </p>
+
+      <p className="text-xs text-amber-400/90 mb-3 flex gap-1.5">
+        <AlertTriangle size={13} className="flex-shrink-0 mt-0.5" />
+        <span>
+          O receptor atualiza quando a versão publicada é <strong>diferente</strong> da instalada, não
+          &ldquo;mais nova&rdquo;. Um binário antigo esquecido aqui faz ele voltar pra esse binário a cada
+          boot, desfazendo o que você gravar por USB. Ao gerar um build novo, altere{' '}
+          <code className="text-[11px]">version_id</code> em <code className="text-[11px]">version.h</code>{' '}
+          <em>e</em> publique aqui — ou use <strong>Despublicar</strong> / <code className="text-[11px]">ota.auto=0</code>{' '}
+          se for gravar só por USB.
+        </span>
       </p>
 
       {loading ? (
@@ -159,6 +196,37 @@ export default function FirmwareOtaPanel({ receiverKey, pollMs }: FirmwareOtaPan
           {uploading ? <Loader2 size={12} className="animate-spin" /> : <UploadCloud size={12} />}
           Publicar
         </button>
+
+        {meta && (
+          confirmDelete ? (
+            <span className="flex items-center gap-1.5 ml-auto">
+              <button
+                onClick={handleDelete}
+                disabled={deleting}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-red-600/25 border border-red-500/50 text-red-300 text-xs hover:bg-red-600/35 disabled:opacity-40 transition-colors"
+              >
+                {deleting ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
+                Confirmar
+              </button>
+              <button
+                onClick={() => setConfirmDelete(false)}
+                disabled={deleting}
+                className="px-2 py-1.5 rounded border border-border text-dim text-xs hover:text-white disabled:opacity-40"
+              >
+                Cancelar
+              </button>
+            </span>
+          ) : (
+            <button
+              onClick={() => setConfirmDelete(true)}
+              title="Apaga o binário e a versão publicados. O receptor fica com o que já tem gravado e para de tentar atualizar."
+              className="flex items-center gap-1.5 ml-auto px-3 py-1.5 rounded border border-red-900/60 text-red-400 text-xs hover:bg-red-950/40 transition-colors"
+            >
+              <Trash2 size={12} />
+              Despublicar
+            </button>
+          )
+        )}
       </div>
 
       {result && (

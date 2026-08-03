@@ -1,0 +1,567 @@
+{
+  ".graphifyrc.json": {
+    "mtime": 1783628237.52174,
+    "ast_hash": "452b15859f60d2f86da05378d64982ea",
+    "semantic_hash": ""
+  },
+  "app/analytics/components/DriftRose.tsx": {
+    "mtime": 1783628237.5229833,
+    "ast_hash": "c99d86b4d053e74f2f4fd20689d094db",
+    "semantic_hash": ""
+  },
+  "app/analytics/components/FlightMetricsCards.tsx": {
+    "mtime": 1783628237.5240862,
+    "ast_hash": "70a5ab529740d3719cd2f8884a886086",
+    "semantic_hash": ""
+  },
+  "app/analytics/components/LandingHeatmap.tsx": {
+    "mtime": 1783891624.5907166,
+    "ast_hash": "49fd5aaebba09481e4950c39768d4b1a",
+    "semantic_hash": ""
+  },
+  "app/analytics/components/StationCompare.tsx": {
+    "mtime": 1783628237.5240862,
+    "ast_hash": "a2f6cfdb314d82a86fd57e0e61db0c83",
+    "semantic_hash": ""
+  },
+  "app/analytics/page.tsx": {
+    "mtime": 1783628237.5251746,
+    "ast_hash": "7ca6b7ae0cd19ab695d45d912cfc3ec2",
+    "semantic_hash": ""
+  },
+  "app/api/firmware/[receiver]/ino/route.ts": {
+    "mtime": 1785468662.4266608,
+    "ast_hash": "5dec0802f8332654bc4b1340c72cc81b",
+    "semantic_hash": ""
+  },
+  "app/api/firmware/[receiver]/upload/route.ts": {
+    "mtime": 1785468662.4276643,
+    "ast_hash": "5021db31ec67276ed1e29b68062bafcb",
+    "semantic_hash": ""
+  },
+  "app/api/firmware/[receiver]/version/route.ts": {
+    "mtime": 1785468662.4286642,
+    "ast_hash": "0908a031db1d39490e3639dba476f107",
+    "semantic_hash": ""
+  },
+  "app/api/known-receivers/route.ts": {
+    "mtime": 1785496646.4359074,
+    "ast_hash": "e2c64d702bd6fea560686a882b010cd5",
+    "semantic_hash": ""
+  },
+  "app/api/live-flights/route.ts": {
+    "mtime": 1784639496.7593231,
+    "ast_hash": "a392f184ff8e40fb2e86056d7450b02f",
+    "semantic_hash": ""
+  },
+  "app/api/poll/route.ts": {
+    "mtime": 1785468662.4300103,
+    "ast_hash": "ced0f1f58939a9c6d72bd73a91276f30",
+    "semantic_hash": ""
+  },
+  "app/api/r2-admin/route.ts": {
+    "mtime": 1784144618.6372747,
+    "ast_hash": "7458fcc64b3b68517afbf99679827b1f",
+    "semantic_hash": ""
+  },
+  "app/api/radiosondy-sync/route.ts": {
+    "mtime": 1783728928.7068734,
+    "ast_hash": "ae8a98d087c0be74a1e4c94a3b0d9c36",
+    "semantic_hash": ""
+  },
+  "app/api/receiver-config/request/route.ts": {
+    "mtime": 1785468662.4310918,
+    "ast_hash": "641ac61f4abde8c88f6ac83abb1beceb",
+    "semantic_hash": ""
+  },
+  "app/api/receiver-config/result/route.ts": {
+    "mtime": 1785468662.4320912,
+    "ast_hash": "fd40d9f5da7cb001dadcdc6ce59e0b45",
+    "semantic_hash": ""
+  },
+  "app/api/receiver-config/snapshot/route.ts": {
+    "mtime": 1785468662.4330814,
+    "ast_hash": "27487fd1cde8537232ac0c58f99b3e9f",
+    "semantic_hash": ""
+  },
+  "app/api/receiver-history/route.ts": {
+    "mtime": 1784144434.1308846,
+    "ast_hash": "bbd499cb629ab958fc95810206d61bf8",
+    "semantic_hash": ""
+  },
+  "app/api/receiver-live-status/route.ts": {
+    "mtime": 1785468662.4330814,
+    "ast_hash": "81082ce683f48901ece1c94c7958710a",
+    "semantic_hash": ""
+  },
+  "app/api/receiver-report/route.ts": {
+    "mtime": 1785468662.4340851,
+    "ast_hash": "06af71488fd3ace6fb24719ad1ef8143",
+    "semantic_hash": ""
+  },
+  "app/api/receiver-screens/request/route.ts": {
+    "mtime": 1785468662.4350853,
+    "ast_hash": "4a81f31639bef95b267f75032f1e4bf3",
+    "semantic_hash": ""
+  },
+  "app/api/receiver-screens/result/route.ts": {
+    "mtime": 1785468662.4360838,
+    "ast_hash": "4cbb8939325b0384938579d353c8c625",
+    "semantic_hash": ""
+  },
+  "app/api/receiver-screens/snapshot/route.ts": {
+    "mtime": 1785468662.4370904,
+    "ast_hash": "6387cc284901b7311c502ff7c6777f65",
+    "semantic_hash": ""
+  },
+  "app/api/sounding/route.ts": {
+    "mtime": 1785516199.2786868,
+    "ast_hash": "309abf092ab6ce6766bdba8f6c437b7b",
+    "semantic_hash": ""
+  },
+  "app/api/sync-status/route.ts": {
+    "mtime": 1783628237.5281699,
+    "ast_hash": "599bcd3b17f39fca6de59184f4e54b6f",
+    "semantic_hash": ""
+  },
+  "app/components/Shell.tsx": {
+    "mtime": 1784049515.5954049,
+    "ast_hash": "bffa3fc9a03312209d3631857151e057",
+    "semantic_hash": ""
+  },
+  "app/components/TrajectoryLayer.ts": {
+    "mtime": 1783628237.529168,
+    "ast_hash": "329b55b8191d4dd15f94d3796990211b",
+    "semantic_hash": ""
+  },
+  "app/components/ui/SourceBadges.tsx": {
+    "mtime": 1783728539.7640116,
+    "ast_hash": "3af943ecb3842e02dbb8cce3f0e80655",
+    "semantic_hash": ""
+  },
+  "app/components/ui/Stat.tsx": {
+    "mtime": 1783628237.5311594,
+    "ast_hash": "f46c7fcd12c27764f114e819d099a6c1",
+    "semantic_hash": ""
+  },
+  "app/configuracoes/components/LocalCachePanel.tsx": {
+    "mtime": 1783628237.532175,
+    "ast_hash": "47ab541a4e3b378f4420cccfc2552b9c",
+    "semantic_hash": ""
+  },
+  "app/configuracoes/components/R2Panel.tsx": {
+    "mtime": 1784144668.0416105,
+    "ast_hash": "98b81911b6f32c4115e5b7ff8c7d70ba",
+    "semantic_hash": ""
+  },
+  "app/configuracoes/components/SyncStatusPanel.tsx": {
+    "mtime": 1783628237.5331533,
+    "ast_hash": "ac9c0c120074908d98def216796216e3",
+    "semantic_hash": ""
+  },
+  "app/configuracoes/page.tsx": {
+    "mtime": 1785468662.438089,
+    "ast_hash": "5221173fd70e6bd710b94c9909492ece",
+    "semantic_hash": ""
+  },
+  "app/historico/LaunchMap.tsx": {
+    "mtime": 1783628237.5351458,
+    "ast_hash": "3a2f99f3b2ecf94c8a3cf4431be179bd",
+    "semantic_hash": ""
+  },
+  "app/historico/YearMap.tsx": {
+    "mtime": 1783628237.5361423,
+    "ast_hash": "0070691d8d37c0cd7cf622b13a4a084f",
+    "semantic_hash": ""
+  },
+  "app/historico/components/LiveCard.tsx": {
+    "mtime": 1783889395.2122953,
+    "ast_hash": "064b5e2b6a146001308d86923b67d11a",
+    "semantic_hash": ""
+  },
+  "app/historico/components/MonthAccordion.tsx": {
+    "mtime": 1783728544.7970963,
+    "ast_hash": "fff107bda04d67cab21aca7d533317e4",
+    "semantic_hash": ""
+  },
+  "app/historico/components/MonthlyChart.tsx": {
+    "mtime": 1783628237.5381365,
+    "ast_hash": "a4422c38c9a67b247250c35102a0c3eb",
+    "semantic_hash": ""
+  },
+  "app/historico/components/StationPicker.tsx": {
+    "mtime": 1783628237.5381365,
+    "ast_hash": "ee8c58a1264189a4542ca507f303edb9",
+    "semantic_hash": ""
+  },
+  "app/historico/components/SummaryCards.tsx": {
+    "mtime": 1783628237.5381365,
+    "ast_hash": "4107c0df1d9f5fc4ac9a22f953800b2a",
+    "semantic_hash": ""
+  },
+  "app/historico/hooks/useLiveFlights.ts": {
+    "mtime": 1784639650.1082945,
+    "ast_hash": "595470a77e5360b4c4924cf977384e75",
+    "semantic_hash": ""
+  },
+  "app/historico/hooks/useTodayData.ts": {
+    "mtime": 1783628237.5391328,
+    "ast_hash": "363ff9165996288ca81e080b43b0b3fc",
+    "semantic_hash": ""
+  },
+  "app/historico/hooks/useYearData.ts": {
+    "mtime": 1783628237.5401294,
+    "ast_hash": "9a626183511385428596ecda37d74418",
+    "semantic_hash": ""
+  },
+  "app/historico/page.tsx": {
+    "mtime": 1785516259.384192,
+    "ast_hash": "066614a8735e09e72b3ce04d97a12579",
+    "semantic_hash": ""
+  },
+  "app/layout.tsx": {
+    "mtime": 1783628237.541126,
+    "ast_hash": "0683d03924e17ae90812df37d3f346a0",
+    "semantic_hash": ""
+  },
+  "app/leaflet-css.d.ts": {
+    "mtime": 1783193129.4933095,
+    "ast_hash": "1bb10c00cf04cee9991b031402f699ae",
+    "semantic_hash": ""
+  },
+  "app/lib/blobStore.ts": {
+    "mtime": 1785496627.4503016,
+    "ast_hash": "b38243f33de068cb99da83800f93d516",
+    "semantic_hash": ""
+  },
+  "app/lib/cache.ts": {
+    "mtime": 1783628237.542123,
+    "ast_hash": "b2abd2ce2332bfbec432f4c31e42e7b2",
+    "semantic_hash": ""
+  },
+  "app/lib/cfgAuth.ts": {
+    "mtime": 1785468662.4390895,
+    "ast_hash": "8c44b4d9027bd0590b85005be8fa972f",
+    "semantic_hash": ""
+  },
+  "app/lib/chase.ts": {
+    "mtime": 1783628237.5431197,
+    "ast_hash": "2fab10f159314fb3c6bab2ce2252ffbc",
+    "semantic_hash": ""
+  },
+  "app/lib/confidence.ts": {
+    "mtime": 1783728527.5340805,
+    "ast_hash": "2d5d57d9de662178956ddca9a2739c45",
+    "semantic_hash": ""
+  },
+  "app/lib/geo.ts": {
+    "mtime": 1783628237.5441172,
+    "ast_hash": "b6b60dc854aa130477867ef0ba8f69bc",
+    "semantic_hash": ""
+  },
+  "app/lib/launchUtils.ts": {
+    "mtime": 1783893854.7079363,
+    "ast_hash": "05f5269cdf5fc59d28717792829ec806",
+    "semantic_hash": ""
+  },
+  "app/lib/leafletBase.ts": {
+    "mtime": 1783628237.5451148,
+    "ast_hash": "2a5c78a88686c32c477fef621819cd28",
+    "semantic_hash": ""
+  },
+  "app/lib/liveFlightsCache.ts": {
+    "mtime": 1784639442.5637717,
+    "ast_hash": "d4ee5e58d5f60afe659f0a771995660b",
+    "semantic_hash": ""
+  },
+  "app/lib/metrics.ts": {
+    "mtime": 1783891607.7087567,
+    "ast_hash": "f769340f640601ca727c837fc5881223",
+    "semantic_hash": ""
+  },
+  "app/lib/mqtt.ts": {
+    "mtime": 1785468662.4390895,
+    "ast_hash": "4c14d675611cca69256f7ff500b71c5d",
+    "semantic_hash": ""
+  },
+  "app/lib/oledMockData.ts": {
+    "mtime": 1785468662.4400897,
+    "ast_hash": "c0e786ba8caf7daa2b910da5084a0ad8",
+    "semantic_hash": ""
+  },
+  "app/lib/oledRenderer.ts": {
+    "mtime": 1785468662.4400897,
+    "ast_hash": "09284b087b208adfaf809d9e0aedffc0",
+    "semantic_hash": ""
+  },
+  "app/lib/oledScreenParser.ts": {
+    "mtime": 1785468662.4410887,
+    "ast_hash": "659cc080f90d8f9fa6d59b80dff839ec",
+    "semantic_hash": ""
+  },
+  "app/lib/oledScreenSerializer.ts": {
+    "mtime": 1785468662.4410887,
+    "ast_hash": "b938e709b1d1fce86fe2ac4257e1d89d",
+    "semantic_hash": ""
+  },
+  "app/lib/oledTemplates.ts": {
+    "mtime": 1785468662.4420912,
+    "ast_hash": "8ad2d3eaa0fd288b7c81f2830d5550e8",
+    "semantic_hash": ""
+  },
+  "app/lib/powerColors.ts": {
+    "mtime": 1784379574.3372598,
+    "ast_hash": "eef50e5d01ca7184360aa6ad95a8b7b0",
+    "semantic_hash": ""
+  },
+  "app/lib/powerState.ts": {
+    "mtime": 1784639268.4999335,
+    "ast_hash": "c946b2c4bcea26d12fd383b5d1d6e58c",
+    "semantic_hash": ""
+  },
+  "app/lib/radiosondy.ts": {
+    "mtime": 1783893873.0239377,
+    "ast_hash": "53a22e66afd21c124a0da7bce8f5c242",
+    "semantic_hash": ""
+  },
+  "app/lib/rdzConfig.ts": {
+    "mtime": 1785468662.4420912,
+    "ast_hash": "f90c03be8da7e72b386b8ceef5f26c7f",
+    "semantic_hash": ""
+  },
+  "app/lib/rdzConfigSections.ts": {
+    "mtime": 1785468662.4430885,
+    "ast_hash": "1b2e24ae234c9cb3e8caae6609f91ef1",
+    "semantic_hash": ""
+  },
+  "app/lib/receiverCollect.ts": {
+    "mtime": 1785468662.4430885,
+    "ast_hash": "d19b28b2052b61c845c6bb523e793b45",
+    "semantic_hash": ""
+  },
+  "app/lib/receiverKey.ts": {
+    "mtime": 1784144375.3183813,
+    "ast_hash": "340598eab5182694c9fdc9e855f574e2",
+    "semantic_hash": ""
+  },
+  "app/lib/settings.ts": {
+    "mtime": 1785468662.4440897,
+    "ast_hash": "84ec666247d5a3e6303bee9eaaa5bcb5",
+    "semantic_hash": ""
+  },
+  "app/lib/sleepWindows.ts": {
+    "mtime": 1784379564.8441086,
+    "ast_hash": "409d0760d705d6f2d8affefe724e3189",
+    "semantic_hash": ""
+  },
+  "app/lib/sondehub.ts": {
+    "mtime": 1784639109.6545608,
+    "ast_hash": "65bb91f93d5d1659d68f459b8d6f05e3",
+    "semantic_hash": ""
+  },
+  "app/lib/stations.ts": {
+    "mtime": 1783628237.5490992,
+    "ast_hash": "9c30ba58c0d4afc9b9c64bc043436909",
+    "semantic_hash": ""
+  },
+  "app/lib/tokens.ts": {
+    "mtime": 1784048847.9938223,
+    "ast_hash": "7aaf1ba2efe1abf708ca0cf71bcd0d29",
+    "semantic_hash": ""
+  },
+  "app/lib/trajectory.ts": {
+    "mtime": 1783628237.550096,
+    "ast_hash": "12249aaf0a24a7ae180cf18d598ee7cb",
+    "semantic_hash": ""
+  },
+  "app/lib/types.ts": {
+    "mtime": 1785468662.4440897,
+    "ast_hash": "14c51c984a2044926de579ff6b2f47f9",
+    "semantic_hash": ""
+  },
+  "app/meu-receptor/components/BatteryChart.tsx": {
+    "mtime": 1784938942.028243,
+    "ast_hash": "a80114eb38f1302862e40aa8ae972a9c",
+    "semantic_hash": ""
+  },
+  "app/meu-receptor/components/FirmwareOtaPanel.tsx": {
+    "mtime": 1785468662.4450889,
+    "ast_hash": "f0c98be4b503a21af96a10609a38feab",
+    "semantic_hash": ""
+  },
+  "app/meu-receptor/components/FullConfigEditor.tsx": {
+    "mtime": 1785468662.4450889,
+    "ast_hash": "aab67863f8bc22cb1b44b9d595a66025",
+    "semantic_hash": ""
+  },
+  "app/meu-receptor/components/OledScreenEditor.tsx": {
+    "mtime": 1785468662.4460886,
+    "ast_hash": "173d55b4e9c3bf51adaf284213bac405",
+    "semantic_hash": ""
+  },
+  "app/meu-receptor/components/PowerTimeline.tsx": {
+    "mtime": 1784379655.1482575,
+    "ast_hash": "180643fa1240c04558ae95761f6766f0",
+    "semantic_hash": ""
+  },
+  "app/meu-receptor/components/ReceiverSettingsPanel.tsx": {
+    "mtime": 1785496682.0259488,
+    "ast_hash": "9ff9a3407171d5152f385cf4abf9e16a",
+    "semantic_hash": ""
+  },
+  "app/meu-receptor/components/SleepConfigEditor.tsx": {
+    "mtime": 1785468662.446983,
+    "ast_hash": "41e596fb11b34c12f75d53737dcacfad",
+    "semantic_hash": ""
+  },
+  "app/meu-receptor/hooks/useFirmwareConfig.ts": {
+    "mtime": 1785468662.446983,
+    "ast_hash": "15718eb9efc02f45b488e79a88a53edd",
+    "semantic_hash": ""
+  },
+  "app/meu-receptor/hooks/useScreensConfig.ts": {
+    "mtime": 1785468662.446983,
+    "ast_hash": "3c5edcf83a55cd0fe8b64360dc970aa8",
+    "semantic_hash": ""
+  },
+  "app/meu-receptor/page.tsx": {
+    "mtime": 1785496665.785907,
+    "ast_hash": "12066078996734694206679498fa95b5",
+    "semantic_hash": ""
+  },
+  "app/page.tsx": {
+    "mtime": 1783628237.5510929,
+    "ast_hash": "e245e1ced10b4138952ac6d1bf911ca4",
+    "semantic_hash": ""
+  },
+  "app/painel/components/ChasePanel.tsx": {
+    "mtime": 1783628237.5580692,
+    "ast_hash": "5418704e23a532d68f212eb28915b2ac",
+    "semantic_hash": ""
+  },
+  "app/painel/components/ConfidencePanel.tsx": {
+    "mtime": 1783628237.5580692,
+    "ast_hash": "1a2a1c70526ef4f894d206264b84d3a1",
+    "semantic_hash": ""
+  },
+  "app/painel/components/LivePanel.tsx": {
+    "mtime": 1783730726.616967,
+    "ast_hash": "4e867d9975292c8fc00ca0896e123c44",
+    "semantic_hash": ""
+  },
+  "app/painel/components/MissionMap.tsx": {
+    "mtime": 1783945964.624512,
+    "ast_hash": "d3518b3f40ccb032a68506ed5ac8a48d",
+    "semantic_hash": ""
+  },
+  "app/painel/components/ReceiverPanel.tsx": {
+    "mtime": 1785468662.446983,
+    "ast_hash": "ef4d870336d670cb143b827850021ada",
+    "semantic_hash": ""
+  },
+  "app/painel/components/TelemetryPanel.tsx": {
+    "mtime": 1783765762.3808827,
+    "ast_hash": "0a662734307fb7a6817f5f54c39dfd66",
+    "semantic_hash": ""
+  },
+  "app/painel/components/TopStatusBar.tsx": {
+    "mtime": 1783728886.8966556,
+    "ast_hash": "54e65972f774e489fa1ecf7ba4b0e04d",
+    "semantic_hash": ""
+  },
+  "app/painel/hooks/useBatteryHistory.ts": {
+    "mtime": 1785468662.446983,
+    "ast_hash": "64419654eb5b44c085d3f18d438eac18",
+    "semantic_hash": ""
+  },
+  "app/painel/hooks/usePowerStateHistory.ts": {
+    "mtime": 1785468662.446983,
+    "ast_hash": "56a962c078fdae0de6967684843accf5",
+    "semantic_hash": ""
+  },
+  "app/painel/hooks/useReceiver.ts": {
+    "mtime": 1785468662.446983,
+    "ast_hash": "ac548922129822a4b479fd0a4fcff0db",
+    "semantic_hash": ""
+  },
+  "app/painel/hooks/useReceiverAlerts.ts": {
+    "mtime": 1783730755.6754875,
+    "ast_hash": "b8c8440ddcf5b0afc66d3719837752d6",
+    "semantic_hash": ""
+  },
+  "app/painel/hooks/useReceiverLiveStatus.ts": {
+    "mtime": 1785468662.446983,
+    "ast_hash": "049f8e4f4b06159d3be73b0071f02525",
+    "semantic_hash": ""
+  },
+  "app/painel/hooks/useReceiverStatus.ts": {
+    "mtime": 1783889284.5713072,
+    "ast_hash": "ef97d32a919867b4a0aaea87f4111ccd",
+    "semantic_hash": ""
+  },
+  "app/painel/page.tsx": {
+    "mtime": 1785468662.446983,
+    "ast_hash": "3b47ec38f67f3d75e26c4016e5494734",
+    "semantic_hash": ""
+  },
+  "app/painel/selection.ts": {
+    "mtime": 1783765701.9929886,
+    "ast_hash": "6133501e4afe7a7acc5693645b75750c",
+    "semantic_hash": ""
+  },
+  "next.config.js": {
+    "mtime": 1782055111.886883,
+    "ast_hash": "60072d4c6ad51ba30502355cbaf6ebef",
+    "semantic_hash": ""
+  },
+  "package.json": {
+    "mtime": 1785468662.446983,
+    "ast_hash": "623f28268c8e6c9cb02075816b09c259",
+    "semantic_hash": ""
+  },
+  "postcss.config.js": {
+    "mtime": 1782055111.886883,
+    "ast_hash": "762a94d1749c8e97eebf3f94102e8eb2",
+    "semantic_hash": ""
+  },
+  "scripts/mqtt-fake-publish.mjs": {
+    "mtime": 1783783127.7006068,
+    "ast_hash": "67f258469a7a6543fdeb06eac64da052",
+    "semantic_hash": ""
+  },
+  "tailwind.config.js": {
+    "mtime": 1783628237.6350882,
+    "ast_hash": "2e857a9004001aa86215a3d4bdd4d425",
+    "semantic_hash": ""
+  },
+  "tsconfig.json": {
+    "mtime": 1782055111.886883,
+    "ast_hash": "bde45d8a101840988e61cc06cd573a6e",
+    "semantic_hash": ""
+  },
+  "vercel.json": {
+    "mtime": 1784639556.588143,
+    "ast_hash": "e50f0207de1d981e58a696bb7c757ebd",
+    "semantic_hash": ""
+  },
+  "CLAUDE.md": {
+    "mtime": 1783728944.3852966,
+    "ast_hash": "991166f5aecc9a1043ab64a0615b0827",
+    "semantic_hash": ""
+  },
+  "README.md": {
+    "mtime": 1782086600.3976018,
+    "ast_hash": "45905df83bcb57f09e2de9b2e0c9214b",
+    "semantic_hash": ""
+  },
+  "docs/firmware-batt-patch.md": {
+    "mtime": 1783783138.2718213,
+    "ast_hash": "fdbbc79f8d6459d08281110e6a23d271",
+    "semantic_hash": ""
+  },
+  "app/icon.svg": {
+    "mtime": 1782073611.6652162,
+    "ast_hash": "061054ebe76d1f7390750e8240d1364c",
+    "semantic_hash": ""
+  }
+}
