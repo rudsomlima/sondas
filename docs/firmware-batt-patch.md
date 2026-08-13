@@ -1,38 +1,60 @@
-# Bateria do TTGO via MQTT — nativo no firmware dev2 (patch aposentado)
+# Bateria e energia do TTGO — reporte HTTP direto (não MQTT)
 
-**Este documento substituiu o antigo patch de firmware.** O branch `dev2` do
-rdzTTGOsonde (usado no fork local com deep sleep v2) **já publica a tensão da
-bateria do TTGO nativamente**, no tópico **`{prefix}pmu`** (QoS 1, retained):
+> **Este documento substitui a versão anterior**, que descrevia publicação via
+> MQTT (`{prefix}pmu`, `mqtt.active` bitfield). **MQTT foi removido do
+> projeto por completo** (branch `mqtt-cfg-only` e seguintes) — o firmware
+> nunca mais publica em tópicos de broker. Todo o reporte de bateria/energia/
+> deep sleep é `POST` HTTP direto pro app (`RX_FSK/src/conn-report.cpp`),
+> consumido em `POST /api/receiver-report` e lido pelo app via
+> `GET /api/receiver-live-status`. Ver a seção "Meu Receptor" em
+> `sondas/CLAUDE.md` para a arquitetura completa desse canal.
+
+## O que o firmware reporta
+
+`reportPmu()`, `reportSleep()` e `reportPower()`
+(`RX_FSK/src/conn-report.cpp`) fazem `POST {mqtt.siteurl}/api/receiver-report`
+a cada ciclo de wake, com corpos como:
 
 ```json
-{"V_Batt": 3.987}
+{"prefix": "pu7iol", "pmu": {"V_Batt": 3.987}}
+{"prefix": "pu7iol", "sleep": {"sleep_until": 1783166700, "reason": "out_of_window", "V_Batt": 3.812, "boot": 42}}
+{"prefix": "pu7iol", "power": {"eco": true, "cpu_mhz": 80, "wifi": "modem_sleep"}}
 ```
 
-(Em placas com PMU AXP — T-Beam — vêm também `I_Batt`, `I_Vbus`, `V_Vbus`, `T_sys`.)
+(o nome do campo de config `mqtt.siteurl` é histórico — é só a URL base do
+app, nada depende de broker; ver nota equivalente em `AUTO_OTA_GUIDE.md` no
+repo do firmware.)
+
+Em placas com PMU AXP (T-Beam), `pmu` também traz `I_Batt`/`I_Vbus`/`V_Vbus`/
+`T_sys`. `sleep.reason` pode ser `out_of_window` | `window_end` |
+`signal_lost` | `vpanic` (sleep de verdade) ou `listen_extend` |
+`listen_wifioff` | `listen_check` (escuta estendida — acordado, aguardando
+lançamento atrasado); `sleep_until: 0` = acordado. Ver
+`docs/DEEP_SLEEP_V2_GUIDE.md` no repo do firmware para o significado de cada
+`reason` e de todos os campos `sleep.*`.
 
 ## O que é preciso configurar
 
-1. `mqtt.active` é um **bitfield**: 1=Sondes, 2=Uptime, 4=PMU, 8=GPS, 16=RF.
-   Para o app Sondas funcionar completo use **`mqtt.active=7`** (sondes + uptime + pmu).
-2. `batt_adc=35` no TTGO LoRa32 v2.1 (autodetectado na maioria dos casos; sem
-   `batt_adc` válido o tópico `pmu` não é publicado).
-3. O app Sondas lê `V_Batt` do tópico `pmu` automaticamente (e também aceita o
-   campo `batt` no `uptime`, para compatibilidade com firmwares antigos patchados).
+1. `mqtt.siteurl` — URL do app publicado (ex.: `https://sondas.vercel.app`,
+   ou o IP do relay HTTP→HTTPS se o firmware não tiver TLS — ver
+   `http-relay/README.md`). Sem isso, nada é reportado (todas as funções em
+   `conn-report.cpp` fazem no-op se `mqtt.siteurl` estiver vazio).
+2. `mqtt.prefix` — identidade do receptor; precisa bater exatamente com o
+   `mqttTopicPrefix` configurado no app (aba "Meu Receptor").
+3. `batt_adc=35` no TTGO LoRa32 v2.1 (autodetectado na maioria dos casos; sem
+   `batt_adc` válido, `V_Batt` não é reportado).
+4. `mqtt.report_interval` — intervalo em ms entre reportes periódicos
+   (bateria, config/telas pendentes). O app usa esse mesmo valor pra
+   calibrar a cadência do próprio polling (ver `useFirmwareConfig.ts`).
 
-## Deep sleep v2 (fork local)
+O app lê tudo isso automaticamente assim que o receptor reporta pela primeira
+vez — não precisa de nenhum passo manual além de configurar `mqtt.siteurl`/
+`mqtt.prefix` no firmware.
 
-O fork em `PlatformIO/Projects/rdz_ttgo_sonde_06_03_2026/rdz_ttgo_sonde`
-(branch `deep-sleep-custom`) adiciona ainda o tópico **`{prefix}sleep`**
-(retained), publicado antes de cada deep sleep e limpo ao acordar:
+## Testando sem hardware
 
-```json
-{"sleep_until": 1783166700, "reason": "out_of_window", "V_Batt": 3.812, "boot": 42}
-```
-
-`reason`: `out_of_window` | `window_end` | `signal_lost` | `vlow` | `vcrit`;
-`sleep_until: 0` = acordado. O app mostra "dormindo até HH:MM" no card
-"Meu receptor" a partir desse tópico. Configuração das janelas e economias:
-web UI do TTGO, seção "Deep sleep / power management" (`sleep.*`).
-
-Para testar a UI sem hardware: `node scripts/mqtt-fake-publish.mjs rdz/seucallsign/`
-(e `--sleep 30` para simular o receptor dormindo).
+O script antigo `scripts/mqtt-fake-publish.mjs` **não funciona mais** — ele
+simula publicação via broker MQTT, canal que não existe mais no app. Para
+testar a UI sem um TTGO real, use `curl` direto contra
+`POST /api/receiver-report` com os corpos JSON acima (troque `prefix` por um
+valor de teste).
