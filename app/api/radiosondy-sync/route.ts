@@ -4,8 +4,9 @@ import {
   fetchRadiosondyFeatures, fetchLiveFlights, findRecoveredMatch, findLiveMatch,
   isWithinMatchWindow, launchUtcInstant, LiveSondePosition, parsePopupTelemetry,
 } from '@/app/lib/radiosondy'
-import { fetchSondeHubArchiveFramesForDay } from '@/app/lib/sondehub'
-import { SOUTH_AMERICA_STATIONS } from '@/app/lib/stations'
+import { fetchSondeHubArchiveFramesForDay, SONDEHUB_RECENT_SECONDS } from '@/app/lib/sondehub'
+import { fetchRecentSondeHubPoints, findPointForLaunch, type SondePoint } from '@/app/lib/sondePoints'
+import { SOUTH_AMERICA_STATIONS, type Station } from '@/app/lib/stations'
 import { nowGMT3, SyncStationStatus } from '@/app/lib/types'
 import { analyzeTrajectory, pointsFromFrames } from '@/app/lib/trajectory'
 
@@ -49,6 +50,14 @@ export async function GET() {
     return liveFlightsCache
   }
 
+  const recentPointsCache = new Map<string, SondePoint[]>()
+  async function recentPointsOnce(station: Station): Promise<SondePoint[]> {
+    if (!recentPointsCache.has(station.id)) {
+      recentPointsCache.set(station.id, await fetchRecentSondeHubPoints(station).catch(() => []))
+    }
+    return recentPointsCache.get(station.id)!
+  }
+
   const summary: Record<string, SyncStationStatus> = {}
 
   for (const station of stations) {
@@ -76,6 +85,7 @@ export async function GET() {
 
     let changed = false
     let checked = 0, yes = 0, no = 0, pending = 0
+    const usedSerials = new Set(store.launches.flatMap(l => l.position ? [l.position.sondeNumber] : []))
 
     for (const [month, pendingLaunches] of byMonth) {
       let features
@@ -91,6 +101,7 @@ export async function GET() {
         const recovered = findRecoveredMatch(features, instant)
         if (recovered) {
           l.radiosondyMatch = 'yes'
+          usedSerials.add(recovered.feature.sondeNumber)
           const { altitude, course } = parsePopupTelemetry(recovered.feature.popupContent)
           l.position = {
             lat: recovered.feature.lat, lon: recovered.feature.lon,
@@ -134,7 +145,17 @@ export async function GET() {
         // rastreados por RF, sem recuperação física registrada (caso real:
         // Fernando de Noronha, 12/03/2026, V2931576).
         let sonde: { serial: string; lat: number; lon: number } | null = null
-        try {
+        // O arquivo S3 tem meses de atraso: nos últimos 7 dias, o último frame
+        // de RF recebido (site + raio da estação) é a fonte que existe.
+        if (Date.now() - instant.getTime() < SONDEHUB_RECENT_SECONDS * 1000) {
+          const recent = await recentPointsOnce(station)
+          const point = findPointForLaunch(l, recent, usedSerials)
+          if (point) {
+            usedSerials.add(point.serial)
+            sonde = { serial: point.serial, lat: point.lat, lon: point.lon }
+          }
+        }
+        if (!sonde) try {
           const archive = await fetchSondeHubArchiveFramesForDay(station.id, l.year, l.month, l.day)
           if (archive) {
             const points = pointsFromFrames(archive.frames)

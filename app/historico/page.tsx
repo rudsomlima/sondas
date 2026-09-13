@@ -1,12 +1,17 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { History, RefreshCw, AlertCircle, Loader2, HardDrive, Radio, Trash2, ShieldCheck } from 'lucide-react'
-import { clearMonth, clearYear } from '@/app/lib/cache'
+import { clearMonth, clearYear, getCacheByYear, writeCache } from '@/app/lib/cache'
 import { Station, DEFAULT_STATION, getSelectedStation, setSelectedStation } from '@/app/lib/stations'
-import type { Launch } from '@/app/lib/types'
+import type { Launch, LaunchPosition } from '@/app/lib/types'
+import { nowGMT3 } from '@/app/lib/types'
+import { isValidPosition, launchInstantMs, mergeLaunchCollections, sourceCounts } from '@/app/lib/launchData'
+import { launchKey } from '@/app/lib/launchUtils'
+import { attachPositions, mergeSondePoints, pointsFromLaunches, type SondePoint } from '@/app/lib/sondePoints'
 import { useYearData } from './hooks/useYearData'
+import { useSondePoints } from './hooks/useSondePoints'
 import { useTodayData } from './hooks/useTodayData'
 import { useLiveFlights } from './hooks/useLiveFlights'
 import StationPicker from './components/StationPicker'
@@ -16,36 +21,128 @@ import MonthlyChart from './components/MonthlyChart'
 import MonthAccordion from './components/MonthAccordion'
 
 export default function HistoricoPage() {
-  const currentYear = new Date().getFullYear()
+  const currentYear = nowGMT3().getUTCFullYear()
   const [year, setYear] = useState(currentYear)
   const [station, setStation] = useState<Station>(DEFAULT_STATION)
   const [showStationPicker, setShowStationPicker] = useState(false)
   const [expandedMonth, setExpandedMonth] = useState<number | null>(null)
   const [selectedLaunch, setSelectedLaunch] = useState<Launch | null>(null)
   const [noMatchLaunches, setNoMatchLaunchesState] = useState<Set<string>>(new Set())
-  const [noMatchNotice, setNoMatchNotice] = useState<{ date: string; time_local: string; wyomingUrl: string } | null>(null)
   const [showYearMap, setShowYearMap] = useState(false)
   const [deleteMonthConfirm, setDeleteMonthConfirm] = useState<number | null>(null)
   const [deleteYearConfirm, setDeleteYearConfirm] = useState(false)
   const [rechecking, setRechecking] = useState(false)
   const [recheckMsg, setRecheckMsg] = useState<string | null>(null)
+  const userInteractedViewRef = useRef<string | null>(null)
+  const autoSelectedLaunchRef = useRef<string | null>(null)
 
   useEffect(() => {
     setStation(getSelectedStation())
   }, [])
 
-  const { data, setData, error, statusMsg, syncing, fetchData, syncMonths } = useYearData(year, station)
-  const { todayData, todayLoading, lastFetchAt } = useTodayData(station)
-  const { todayFlights, liveFlightChecked } = useLiveFlights(station, todayData?.today)
+  const { data, setData, error, statusMsg, syncing, failedMonths, lastUpdatedAt, fetchData, syncMonths } = useYearData(year, station)
+  const { todayData, todayLoading, todayError, lastFetchAt } = useTodayData(station)
+  const { todayFlights, liveFlightChecked, liveError, sourceHealth } = useLiveFlights(station, todayData?.today)
+  const viewKey = `${station.id}:${year}`
+
+  // Ao trocar de estação/ano, libera uma nova seleção automática. Enquanto o
+  // backfill anual chega mês a mês, acompanha o lançamento mais recente já
+  // localizado. Depois da primeira interação do usuário, não toma mais o
+  // controle da seleção nessa visualização.
+  useEffect(() => {
+    userInteractedViewRef.current = null
+    autoSelectedLaunchRef.current = null
+    setExpandedMonth(null)
+    setSelectedLaunch(null)
+    setShowYearMap(false)
+  }, [viewKey])
+
+  useEffect(() => {
+    if (!data || data.year !== year || data.station !== station.id || data.launches.length === 0) return
+    if (userInteractedViewRef.current === viewKey) return
+
+    const latest = data.launches.reduce((best, launch) =>
+      launchInstantMs(launch) > launchInstantMs(best) ? launch : best
+    )
+    const latestKey = launchKey(latest)
+    if (autoSelectedLaunchRef.current === latestKey) return
+
+    autoSelectedLaunchRef.current = latestKey
+    setExpandedMonth(latest.month)
+    setShowYearMap(false)
+    setSelectedLaunch(latest)
+  }, [data, station.id, viewKey, year])
+
+  const setSelectedLaunchByUser = useCallback((launch: Launch | null) => {
+    userInteractedViewRef.current = viewKey
+    setSelectedLaunch(launch)
+  }, [viewKey])
+
+  const setExpandedMonthByUser = useCallback((month: number | null) => {
+    userInteractedViewRef.current = viewKey
+    setExpandedMonth(month)
+  }, [viewKey])
 
   const changeStation = useCallback((s: Station) => {
     setStation(s)
     setSelectedStation(s)
     setSelectedLaunch(null)
     setNoMatchLaunchesState(new Set())
-    setNoMatchNotice(null)
     setShowStationPicker(false)
   }, [])
+
+  // Posições de todas as fontes do mês aberto (ou do mês corrente): preenchem
+  // lançamentos sem posição e ficam como contexto no mapa do lançamento.
+  const clock = nowGMT3()
+  const pointsMonth = expandedMonth ?? (year === clock.getUTCFullYear() ? clock.getUTCMonth() + 1 : null)
+  const { points: sondePoints } = useSondePoints(station, year, pointsMonth)
+  const dataRef = useRef(data)
+  dataRef.current = data
+
+  const applyPositions = useCallback((resolved: Launch[]) => {
+    const withPosition = resolved.filter(l => isValidPosition(l.position))
+    if (withPosition.length === 0) return
+    // Só atualiza meses já presentes no cache local: criar uma entrada nova
+    // faria o useYearData pular a busca desse mês no servidor.
+    for (const m of new Set(withPosition.map(l => l.month))) {
+      const entry = getCacheByYear(year, station.id).find(c => c.month === m)
+      if (!entry) continue
+      writeCache({ ...entry, launches: mergeLaunchCollections(entry.launches as Launch[], withPosition.filter(l => l.month === m)) })
+    }
+    const byKey = new Map(withPosition.map(l => [`${l.date}_${l.time_utc}`, l.position!]))
+    setData(prev => {
+      if (!prev || prev.year !== year || prev.station !== station.id) return prev
+      let changed = false
+      const launches = prev.launches.map(l => {
+        const position = byKey.get(`${l.date}_${l.time_utc}`)
+        if (!position || isValidPosition(l.position)) return l
+        changed = true
+        return { ...l, position }
+      })
+      return changed ? { ...prev, launches } : prev
+    })
+  }, [year, station.id, setData])
+
+  useEffect(() => {
+    if (!data || data.year !== year || data.station !== station.id || sondePoints.length === 0) return
+    const { changed } = attachPositions(data.launches, sondePoints)
+    if (changed.length > 0) applyPositions(changed)
+  }, [data, sondePoints, year, station.id, applyPositions])
+
+  const handleYearPoints = useCallback((points: SondePoint[]) => {
+    const current = dataRef.current
+    if (!current || current.year !== year || current.station !== station.id) return
+    applyPositions(attachPositions(current.launches, points).changed)
+  }, [year, station.id, applyPositions])
+
+  const handleLaunchPosition = useCallback((launch: Launch, position: LaunchPosition) => {
+    applyPositions([{ ...launch, position }])
+  }, [applyPositions])
+
+  const monthContextPoints = useMemo(() => {
+    if (!data || expandedMonth == null) return sondePoints
+    return mergeSondePoints(pointsFromLaunches(data.launches.filter(l => l.month === expandedMonth)), sondePoints)
+  }, [data, expandedMonth, sondePoints])
 
   const setNoMatchLaunches = useCallback((updater: (prev: Set<string>) => Set<string>) => {
     setNoMatchLaunchesState(updater)
@@ -94,7 +191,7 @@ export default function HistoricoPage() {
     fetchData(year)
   }, [year, station.id, fetchData])
 
-  const years = Array.from({ length: 5 }, (_, i) => currentYear - i)
+  const years = Array.from({ length: currentYear - 2019 }, (_, i) => currentYear - i)
 
   // Agrupa por mês
   const byMonth: Record<number, Launch[]> = {}
@@ -168,13 +265,25 @@ export default function HistoricoPage() {
       <LiveCard
         todayData={todayData}
         todayLoading={todayLoading}
+        todayError={todayError}
+        liveError={liveError}
         todayFlights={todayFlights}
         liveFlightChecked={liveFlightChecked}
         lastFetchAt={lastFetchAt}
         selectedLaunch={selectedLaunch}
-        onExpandMonth={m => setExpandedMonth(m)}
-        onSelectLaunch={l => { setShowYearMap(false); setSelectedLaunch(l) }}
+        onExpandMonth={setExpandedMonthByUser}
+        onSelectLaunch={l => { setShowYearMap(false); setSelectedLaunchByUser(l) }}
       />
+
+      {(todayError || liveError) && (
+        <div className="panel p-3 mb-6 border-yellow-500/20 bg-yellow-500/5 flex items-start gap-2.5">
+          <AlertCircle size={15} className="text-yellow-400 flex-shrink-0 mt-0.5" />
+          <div className="text-xs">
+            <p className="text-yellow-300">Consulta ao vivo parcial; dados anteriores foram preservados.</p>
+            <p className="text-dim mt-1">{todayError || liveError}</p>
+          </div>
+        </div>
+      )}
 
       {error && (
         <div className="panel p-4 mb-6 border-red-500/20 bg-red-500/5 flex items-start gap-3">
@@ -196,24 +305,36 @@ export default function HistoricoPage() {
       {data ? (
         <>
           <SummaryCards data={data} />
+          <div className="panel px-4 py-3 mb-6 flex items-center gap-x-5 gap-y-2 flex-wrap text-[11px]">
+            <span className="text-dim">Cobertura</span>
+            <span className="text-src-wyoming mono">W {sourceCounts(data.launches).wyoming}</span>
+            <span className="text-src-radiosondy mono">R {sourceCounts(data.launches).radiosondy}</span>
+            <span className="text-src-sondehub mono">S {sourceCounts(data.launches).sondehub}</span>
+            <span className="text-gray-300 mono">posições {sourceCounts(data.launches).positioned}/{data.count}</span>
+            {failedMonths.size > 0 && <span className="text-yellow-400">{failedMonths.size} mês(es) aguardando nova tentativa</span>}
+            <span className="ml-auto text-faint">
+              {lastUpdatedAt ? `cache atualizado ${new Date(lastUpdatedAt).toLocaleString('pt-BR')}` : 'sem cache local'} · ao vivo {sourceHealth.cache === 'ok' ? 'via snapshot' : 'via fontes diretas'}
+            </span>
+          </div>
           <MonthlyChart year={year} byMonth={byMonth} />
           <MonthAccordion
             year={year}
             station={station}
             byMonth={byMonth}
             expandedMonth={expandedMonth}
-            setExpandedMonth={setExpandedMonth}
+            setExpandedMonth={setExpandedMonthByUser}
             selectedLaunch={selectedLaunch}
-            setSelectedLaunch={setSelectedLaunch}
+            setSelectedLaunch={setSelectedLaunchByUser}
             noMatchLaunches={noMatchLaunches}
             setNoMatchLaunches={setNoMatchLaunches}
-            noMatchNotice={noMatchNotice}
-            setNoMatchNotice={setNoMatchNotice}
             showYearMap={showYearMap}
             setShowYearMap={setShowYearMap}
             deleteMonthConfirm={deleteMonthConfirm}
             onRequestDeleteMonth={setDeleteMonthConfirm}
             onConfirmDeleteMonth={handleConfirmDeleteMonth}
+            monthPoints={monthContextPoints}
+            onLaunchPosition={handleLaunchPosition}
+            onYearPoints={handleYearPoints}
           />
 
           {data.count > 0 && (

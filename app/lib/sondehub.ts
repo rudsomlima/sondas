@@ -37,21 +37,11 @@ export const LIVE_STALE_MS = 10 * 60 * 1000
 export interface SondeHubLastFrame { lat: number; lon: number; alt: number; vel_v: number; reportDate: Date }
 
 export async function fetchSondeHubLastFrames(): Promise<Map<string, SondeHubLastFrame>> {
-  const res = await fetch('https://api.v2.sondehub.org/sondes/telemetry?duration=12h', { cache: 'no-store' })
+  // /sondes returns one latest frame per serial and is substantially smaller
+  // than polling the rate-limited, high-resolution /sondes/telemetry feed.
+  const res = await fetch('https://api.v2.sondehub.org/sondes?last=43200', { cache: 'no-store' })
   if (!res.ok) throw new Error(`Erro ${res.status} ao consultar sondehub.org`)
-  const data: Record<string, Record<string, SondeHubFrame>> = await res.json()
-
-  const out = new Map<string, SondeHubLastFrame>()
-  for (const [serial, frames] of Object.entries(data)) {
-    const timestamps = Object.keys(frames).sort()
-    const lastTs = timestamps[timestamps.length - 1]
-    const last = frames[lastTs]
-    if (!last || typeof last.lat !== 'number' || typeof last.lon !== 'number') continue
-    const reportDate = new Date(last.datetime)
-    if (isNaN(reportDate.getTime())) continue
-    out.set(serial, { lat: last.lat, lon: last.lon, alt: last.alt ?? 0, vel_v: last.vel_v ?? 0, reportDate })
-  }
-  return out
+  return latestFramesFromResponse(await res.json())
 }
 
 // Filtra os últimos frames (já buscados) pra uma estação — distância e data
@@ -84,11 +74,96 @@ export function filterSondeHubFlights(
 // mantido pros chamadores de uma estação só (ex. useLiveFlights.ts). Quem
 // for consultar várias estações deve usar fetchSondeHubLastFrames() +
 // filterSondeHubFlights() direto, pra não refazer o fetch global por estação.
+function latestFramesFromResponse(data: unknown): Map<string, SondeHubLastFrame> {
+  const out = new Map<string, SondeHubLastFrame>()
+  if (!data || typeof data !== 'object') return out
+  for (const [serial, value] of Object.entries(data as Record<string, unknown>)) {
+    if (!value || typeof value !== 'object') continue
+    // /sondes and /sondes/site return a flat last frame. Keep support for a
+    // timestamp-keyed object as the API has used both shapes historically.
+    const record = value as Record<string, any>
+    const candidates = typeof record.lat === 'number'
+      ? [record]
+      : Object.values(record).filter(v => v && typeof v === 'object') as Record<string, any>[]
+    const last = candidates
+      .filter(f => typeof f.lat === 'number' && typeof f.lon === 'number' && typeof f.datetime === 'string')
+      .sort((a, b) => String(a.datetime).localeCompare(String(b.datetime)))
+      .at(-1)
+    if (!last) continue
+    const reportDate = new Date(last.datetime)
+    if (Number.isNaN(reportDate.getTime())) continue
+    out.set(serial, { lat: last.lat, lon: last.lon, alt: last.alt ?? 0, vel_v: last.vel_v ?? 0, reportDate })
+  }
+  return out
+}
+
+async function fetchSondeHubSiteFrames(stationId: string, lastSeconds = 3 * 24 * 3600) {
+  const res = await fetch(
+    `https://api.v2.sondehub.org/sondes/site/${encodeURIComponent(stationId)}?last=${lastSeconds}`,
+    { cache: 'no-store' },
+  )
+  if (!res.ok) throw new Error(`Erro ${res.status} ao consultar estação no sondehub.org`)
+  return latestFramesFromResponse(await res.json())
+}
+
+async function fetchSondeHubNearbyFrames(lat: number, lon: number, radiusKm: number, lastSeconds: number) {
+  const url = `https://api.v2.sondehub.org/sondes?lat=${lat}&lon=${lon}` +
+    `&distance=${Math.round(radiusKm * 1000)}&last=${lastSeconds}`
+  const res = await fetch(url, { cache: 'no-store' })
+  if (!res.ok) throw new Error(`Erro ${res.status} ao consultar área no sondehub.org`)
+  return latestFramesFromResponse(await res.json())
+}
+
+// A API recusa janelas de 7 dias ou mais ("Duration too long") — 1h de folga.
+export const SONDEHUB_RECENT_SECONDS = 7 * 24 * 3600 - 3600
+
+export interface SondeHubRecentFrame {
+  serial: string
+  frame: SondeHubLastFrame
+  association: 'station' | 'geographic'
+}
+
+/**
+ * Último frame de cada sonda dos últimos ~7 dias ligada à estação: pelo
+ * endpoint do launch site E por proximidade (raio), juntos — não um OU outro.
+ * O site do SondeHub costuma vir vazio (confirmado em 2026-09 para Natal/82599,
+ * enquanto a busca por raio tinha 16 sondas na mesma semana), e são essas
+ * sondas que faltavam nos mapas quando o radiosondy.info não registrou o pouso.
+ */
+export async function fetchSondeHubRecentFrames(
+  stationId: string, stationLat: number, stationLon: number, radiusKm = 300
+): Promise<SondeHubRecentFrame[]> {
+  const [site, nearby] = await Promise.allSettled([
+    fetchSondeHubSiteFrames(stationId, SONDEHUB_RECENT_SECONDS),
+    fetchSondeHubNearbyFrames(stationLat, stationLon, radiusKm, SONDEHUB_RECENT_SECONDS),
+  ])
+  if (site.status === 'rejected' && nearby.status === 'rejected') throw nearby.reason
+  const out = new Map<string, SondeHubRecentFrame>()
+  if (nearby.status === 'fulfilled') {
+    for (const [serial, frame] of nearby.value) out.set(serial, { serial, frame, association: 'geographic' })
+  }
+  if (site.status === 'fulfilled') {
+    for (const [serial, frame] of site.value) out.set(serial, { serial, frame, association: 'station' })
+  }
+  return [...out.values()]
+}
+
+/** Uses the launch-site endpoint first, then a geographic fallback. */
 export async function fetchSondeHubFlights(
-  stationLat: number, stationLon: number, todayStr: string, radiusKm = 300
+  stationId: string, stationLat: number, stationLon: number, todayStr: string, radiusKm = 300
 ): Promise<TodayFlight[]> {
-  const frames = await fetchSondeHubLastFrames()
-  return filterSondeHubFlights(frames, stationLat, stationLon, todayStr, radiusKm)
+  const lastSeconds = 3 * 24 * 3600
+  let siteFrames = new Map<string, SondeHubLastFrame>()
+  try { siteFrames = await fetchSondeHubSiteFrames(stationId, lastSeconds) } catch {}
+
+  // Site attribution is stronger than proximity and remains valid after a
+  // long drift, so do not discard it merely for leaving the search radius.
+  const siteFlights = filterSondeHubFlights(siteFrames, stationLat, stationLon, todayStr, Number.POSITIVE_INFINITY)
+    .map(f => ({ ...f, source: 'sondehub-site' as const }))
+  if (siteFlights.length > 0) return siteFlights
+
+  const nearby = await fetchSondeHubNearbyFrames(stationLat, stationLon, radiusKm, lastSeconds)
+  return filterSondeHubFlights(nearby, stationLat, stationLon, todayStr, radiusKm)
 }
 
 /**
@@ -149,10 +224,15 @@ export async function fetchNearbySondes(
     `&distance=${Math.round(radiusKm * 1000)}&last=${lastSeconds}`
   const res = await fetch(url, { cache: 'no-store' })
   if (!res.ok) throw new Error(`Erro ${res.status} ao consultar sondehub.org`)
-  const data: Record<string, NearbySondeApiFrame> = await res.json()
+  const data: Record<string, NearbySondeApiFrame | Record<string, NearbySondeApiFrame>> = await res.json()
 
   const out: NearbySonde[] = []
-  for (const [serial, f] of Object.entries(data)) {
+  for (const [serial, value] of Object.entries(data)) {
+    const record = value as Record<string, any>
+    const f = (typeof record.lat === 'number' ? record : Object.values(record)
+      .filter(v => v && typeof v === 'object')
+      .sort((a: any, b: any) => String(a.datetime ?? '').localeCompare(String(b.datetime ?? '')))
+      .at(-1)) as NearbySondeApiFrame | undefined
     if (!f || typeof f.lat !== 'number' || typeof f.lon !== 'number' || !f.datetime) continue
     out.push({
       serial,
@@ -211,6 +291,7 @@ export interface LaunchPosition {
   lon: number
   sondeNumber: string
   status: string
+  altitude?: number
 }
 
 export interface SondeHubApproxLaunch {
@@ -222,6 +303,7 @@ export interface SondeHubApproxLaunch {
   year: number
   source: 'sondehub'
   approx: true
+  association: 'station' | 'geographic'
   // Posição já em mãos (vem do mesmo frame de telemetria usado pra estimar o
   // horário) — sem custo extra de rede, persistida no servidor pra
   // LaunchMap.tsx não precisar refazer essa busca depois.
@@ -232,7 +314,7 @@ export interface SondeHubApproxLaunch {
 // SondeHubApproxLaunch, com o mesmo cuidado de fronteira de mês usado em
 // fetchRadiosondyLaunches (app/lib/radiosondy.ts): o ajuste de -3h pode
 // empurrar a data pro mês anterior, e nesse caso mantemos a data em UTC.
-function toApproxLaunch(utcMs: number, position?: LaunchPosition): SondeHubApproxLaunch {
+function toApproxLaunch(utcMs: number, position: LaunchPosition | undefined, association: SondeHubApproxLaunch['association']): SondeHubApproxLaunch {
   const pad = (n: number) => String(n).padStart(2, '0')
   const utcDate = new Date(utcMs)
   const localDate = gmt3DateWithMonthGuard(utcMs)
@@ -245,6 +327,7 @@ function toApproxLaunch(utcMs: number, position?: LaunchPosition): SondeHubAppro
     year: localDate.getUTCFullYear(),
     source: 'sondehub',
     approx: true,
+    association,
     position,
   }
 }
@@ -265,34 +348,40 @@ function toApproxLaunch(utcMs: number, position?: LaunchPosition): SondeHubAppro
  * o mês corrente, como complemento ao radiosondy.info e ao arquivo.
  */
 export async function fetchSondeHubApproxLaunches(
-  stationLat: number, stationLon: number, year: number, month: number, radiusKm = 300
+  stationLat: number, stationLon: number, year: number, month: number, radiusKm = 300, stationId?: string
 ): Promise<SondeHubApproxLaunch[]> {
-  const res = await fetch('https://api.v2.sondehub.org/sondes/telemetry?duration=3d', { cache: 'no-store' })
-  if (!res.ok) throw new Error(`Erro ${res.status} ao consultar sondehub.org`)
-  const data: Record<string, Record<string, SondeHubFrame>> = await res.json()
-
-  // Um lançamento por hora sinótica (00/06/12/18Z) — mesma suposição de
-  // fetchRadiosondyLaunches. Usa o PRIMEIRO frame de cada sonda já dentro do
-  // raio como proxy do horário de lançamento (mais próximo do solo/decolagem
-  // do que o último frame, usado em fetchSondeHubFlights) — e já guarda essa
-  // posição, sem custo extra de rede, pra persistir no servidor.
-  const byRoundedUtc = new Map<number, { serial: string; lat: number; lon: number }>()
-  for (const [serial, frames] of Object.entries(data)) {
-    const timestamps = Object.keys(frames).sort()
-    for (const ts of timestamps) {
-      const f = frames[ts]
-      if (typeof f.lat !== 'number' || typeof f.lon !== 'number') continue
-      if (haversineKm(stationLat, stationLon, f.lat, f.lon) > radiusKm) continue
-      const launchDate = new Date(f.datetime)
-      if (isNaN(launchDate.getTime())) break
-      const rounded = roundToSynopticHour(launchDate).getTime()
-      if (!byRoundedUtc.has(rounded)) byRoundedUtc.set(rounded, { serial, lat: f.lat, lon: f.lon })
-      break
+  if (stationId) {
+    try {
+      const siteFrames = await fetchSondeHubSiteFrames(stationId)
+      if (siteFrames.size > 0) {
+        const byRounded = new Map<number, { serial: string; frame: SondeHubLastFrame }>()
+        for (const [serial, frame] of siteFrames) {
+          const rounded = roundToSynopticHour(frame.reportDate).getTime()
+          if (!byRounded.has(rounded)) byRounded.set(rounded, { serial, frame })
+        }
+        return [...byRounded.entries()]
+          .map(([utcMs, { serial, frame }]) => toApproxLaunch(utcMs, {
+            lat: frame.lat, lon: frame.lon, sondeNumber: serial, status: 'UNKNOWN', altitude: frame.alt,
+          }, 'station'))
+          .filter(l => l.year === year && l.month === month)
+      }
+    } catch {
+      // Geographic telemetry remains the fallback.
     }
+  }
+  const nearbyFrames = await fetchSondeHubNearbyFrames(stationLat, stationLon, radiusKm, 3 * 24 * 3600)
+
+  // One mission per synoptic slot. The filtered /sondes endpoint returns the
+  // latest frame only; this is enough for slot association and avoids polling
+  // the documented rate-limited global high-resolution telemetry endpoint.
+  const byRoundedUtc = new Map<number, { serial: string; lat: number; lon: number }>()
+  for (const [serial, frame] of nearbyFrames) {
+    const rounded = roundToSynopticHour(frame.reportDate).getTime()
+    if (!byRoundedUtc.has(rounded)) byRoundedUtc.set(rounded, { serial, lat: frame.lat, lon: frame.lon })
   }
 
   return [...byRoundedUtc.entries()]
-    .map(([utcMs, pos]) => toApproxLaunch(utcMs, { lat: pos.lat, lon: pos.lon, sondeNumber: pos.serial, status: 'UNKNOWN' }))
+    .map(([utcMs, pos]) => toApproxLaunch(utcMs, { lat: pos.lat, lon: pos.lon, sondeNumber: pos.serial, status: 'UNKNOWN' }, 'geographic'))
     .filter(l => l.year === year && l.month === month)
 }
 
@@ -409,11 +498,13 @@ export async function fetchSondeHubArchiveLaunches(
       const launchDate = new Date(frames[0].datetime)
       if (isNaN(launchDate.getTime())) continue
       const serialMatch = key.match(/\/([^/]+)\.json$/)
-      const first = frames[0]
-      const position = serialMatch && typeof first.lat === 'number' && typeof first.lon === 'number'
-        ? { lat: first.lat, lon: first.lon, sondeNumber: serialMatch[1], status: 'UNKNOWN' }
+      // The launch timestamp comes from the first frame, but a map position
+      // must use the final valid frame (landing/last reception), not launchsite.
+      const last = [...frames].reverse().find(f => typeof f.lat === 'number' && typeof f.lon === 'number')
+      const position = serialMatch && last
+        ? { lat: last.lat, lon: last.lon, sondeNumber: serialMatch[1], status: 'UNKNOWN', altitude: last.alt }
         : undefined
-      out.push(toApproxLaunch(roundToSynopticHour(launchDate).getTime(), position))
+      out.push(toApproxLaunch(roundToSynopticHour(launchDate).getTime(), position, 'station'))
     } catch {
       // Falha pontual num arquivo: não bloqueia os demais dias do mês.
       continue

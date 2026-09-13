@@ -72,6 +72,7 @@ export function computeConfidence(l: Launch, wyomingSupported = true): LaunchCon
   }
 
   if (l.approx) notes.push('Horário aproximado (arredondado para o ciclo sinótico).')
+  if (l.association === 'geographic') notes.push('Associação por proximidade geográfica; pode ser um voo de outra estação.')
 
   const confirmedCount = [wyoming, radiosondy, sondehub].filter(s => s === 'confirmed').length
   const level: LaunchConfidence['level'] =

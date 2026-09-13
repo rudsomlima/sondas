@@ -5,6 +5,9 @@ import { fetchRadiosondyLaunches } from '@/app/lib/radiosondy'
 import { fetchSondeHubApproxLaunches, fetchSondeHubArchiveLaunches } from '@/app/lib/sondehub'
 import { nowGMT3, Launch, YearStore } from '@/app/lib/types'
 import { gmt3DateWithMonthGuard } from '@/app/lib/launchUtils'
+import { mergeLaunchCollections } from '@/app/lib/launchData'
+
+export const maxDuration = 60
 
 const DEFAULT_STATION_ID = '82599'
 const WYOMING_BASE = 'https://weather.uwyo.edu/wsgi/sounding'
@@ -329,7 +332,7 @@ async function fetchApproxLaunches(
       : Promise.resolve([]),
     fetchSondeHubArchiveLaunches(stationInfo.id, year, month),
     isCurrentMonth
-      ? fetchSondeHubApproxLaunches(stationInfo.lat, stationInfo.lon, year, month)
+      ? fetchSondeHubApproxLaunches(stationInfo.lat, stationInfo.lon, year, month, 300, stationInfo.id)
       : Promise.resolve([]),
   ])
 
@@ -358,7 +361,7 @@ async function fetchComplementaryLaunches(
     stationInfo.radiosondyStartplace
       ? fetchRadiosondyLaunches(year, month, stationInfo.radiosondyStartplace).then(approx => approx.map(radiosondyApproxToLaunch))
       : Promise.resolve([]),
-    fetchSondeHubApproxLaunches(stationInfo.lat, stationInfo.lon, year, month),
+    fetchSondeHubApproxLaunches(stationInfo.lat, stationInfo.lon, year, month, 300, stationInfo.id),
   ])
 
   const byKey = new Map<string, Launch>()
@@ -422,8 +425,7 @@ async function syncMonth(
     // Wyoming publicou o lançamento oficial em 12:00Z) — isso deixava a mesma
     // sonda persistida duas vezes indefinidamente, já que a chave exata nunca
     // batia pra remover a entrada aproximada antiga.
-    const wyomingDatesNow = new Set(mergedWyoming.map(l => l.date))
-    merged = mergedWyoming.concat(existingApprox.filter(l => !wyomingDatesNow.has(l.date)))
+    merged = mergeLaunchCollections(mergedWyoming, existingApprox)
   } catch {
     // Wyoming indisponível — usa fontes alternativas (radiosondy.info + sondehub)
     // para não deixar o mês vazio enquanto a Wyoming estiver fora.
@@ -439,14 +441,7 @@ async function syncMonth(
       // Para estações com Wyoming, fontes complementares só preenchem dias que
       // a Wyoming ainda não publicou — evita duplicatas quando radiosondy.info /
       // sondehub usam horários arredondados diferentes dos da Wyoming.
-      const wyomingDates = wyomingOk
-        ? new Set(merged.filter(l => !l.source).map(l => l.date))
-        : new Set<string>()
-      const knownKeys = new Set(merged.map(l => `${l.date}_${l.time_utc}`))
-      merged = merged.concat(complementary.filter(l =>
-        !knownKeys.has(`${l.date}_${l.time_utc}`) &&
-        (wyomingDates.size === 0 || !wyomingDates.has(l.date))
-      ))
+      merged = mergeLaunchCollections(merged, complementary)
     } catch {
       // Falha pontual nas fontes complementares.
     }
@@ -475,8 +470,12 @@ export async function GET(request: NextRequest) {
       const month = local.getUTCMonth() + 1
       const stationInfo = findStation(station)
       let launches: Launch[]
+      let partial = false
+      const sourceStatus: Record<string, string> = {}
       if (stationInfo?.wyomingSupported === false) {
         launches = await fetchApproxLaunches(stationInfo, year, month, true)
+        sourceStatus.wyoming = 'not-supported'
+        sourceStatus.alternatives = 'ok'
       } else {
         let wyomingOk = false
         try {
@@ -497,26 +496,30 @@ export async function GET(request: NextRequest) {
           })
           launches = pairs.filter(p => p.launch.wyomingDataOk !== false).map(p => p.launch)
           wyomingOk = true
+          sourceStatus.wyoming = 'ok'
         } catch {
           launches = []
+          partial = true
+          sourceStatus.wyoming = 'unavailable'
         }
         if (stationInfo) {
           try {
             const complementary = wyomingOk
               ? await fetchComplementaryLaunches(stationInfo, year, month)
               : await fetchApproxLaunches(stationInfo, year, month, true)
-            const wyomingDates = wyomingOk ? new Set(launches.map(l => l.date)) : new Set<string>()
-            const knownKeys = new Set(launches.map(l => `${l.date}_${l.time_utc}`))
-            launches = launches.concat(complementary.filter(l =>
-              !knownKeys.has(`${l.date}_${l.time_utc}`) &&
-              (wyomingDates.size === 0 || !wyomingDates.has(l.date))
-            ))
+            launches = mergeLaunchCollections(launches, complementary)
+            sourceStatus.alternatives = 'ok'
           } catch {
             // Falha pontual nas fontes complementares.
+            partial = true
+            sourceStatus.alternatives = 'unavailable'
           }
         }
       }
-      const todayLaunches = launches.filter(l => l.date === todayStr)
+      const candidates = launches.filter(l => l.date === todayStr)
+      const todayLaunches = candidates.filter(l =>
+        !l.source || l.source === 'radiosondy' || (l.source === 'sondehub' && l.association === 'station')
+      )
 
       return NextResponse.json({
         today: todayStr,
@@ -525,7 +528,10 @@ export async function GET(request: NextRequest) {
         count: todayLaunches.length,
         launches: todayLaunches,
         all_this_month: launches,
+        candidates,
         cached: false,
+        partial,
+        sourceStatus,
       })
     }
 

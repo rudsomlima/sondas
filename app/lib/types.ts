@@ -55,6 +55,10 @@ export interface Launch {
   // aproximado. Ausente = Wyoming (padrão).
   source?: SourceId
   approx?: boolean
+  // Strength of the link between telemetry and launch site. Geographic means
+  // the sonde merely passed within the configured radius and is not, alone,
+  // proof that this station launched it.
+  association?: 'station' | 'geographic' | 'startplace'
   // Wyoming listou este datetime no inventário, mas a sondagem individual
   // (type=TEXT:LIST) não retornou dados ao ser verificada (ver
   // checkWyomingDataAvailable em app/api/sounding/route.ts). true = dados
@@ -88,6 +92,10 @@ export interface TodayData {
   launched_today: boolean
   count: number
   launches: Launch[]
+  all_this_month?: Launch[]
+  candidates?: Launch[]
+  partial?: boolean
+  sourceStatus?: Record<string, string>
 }
 
 // Status da última execução do cron radiosondy-sync (app/api/radiosondy-sync)

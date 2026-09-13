@@ -35,8 +35,8 @@
     "semantic_hash": ""
   },
   "app/api/firmware/[receiver]/upload/route.ts": {
-    "mtime": 1785468662.4276643,
-    "ast_hash": "5021db31ec67276ed1e29b68062bafcb",
+    "mtime": 1785714171.5734203,
+    "ast_hash": "f0c0fdd1a321c93799af272416b8496a",
     "semantic_hash": ""
   },
   "app/api/firmware/[receiver]/version/route.ts": {
@@ -115,8 +115,8 @@
     "semantic_hash": ""
   },
   "app/api/sounding/route.ts": {
-    "mtime": 1785516199.2786868,
-    "ast_hash": "309abf092ab6ce6766bdba8f6c437b7b",
+    "mtime": 1789302524.2729106,
+    "ast_hash": "c552eddba9b25e1f992da8113864b4cd",
     "semantic_hash": ""
   },
   "app/api/sync-status/route.ts": {
@@ -165,23 +165,23 @@
     "semantic_hash": ""
   },
   "app/historico/LaunchMap.tsx": {
-    "mtime": 1783628237.5351458,
-    "ast_hash": "3a2f99f3b2ecf94c8a3cf4431be179bd",
+    "mtime": 1789305906.0462,
+    "ast_hash": "f5e019d624d1f78eeeff51bbe106ce76",
     "semantic_hash": ""
   },
   "app/historico/YearMap.tsx": {
-    "mtime": 1783628237.5361423,
-    "ast_hash": "0070691d8d37c0cd7cf622b13a4a084f",
+    "mtime": 1789305906.0462,
+    "ast_hash": "a1d6e6ec2999e4c1d1ef21f84e27dbee",
     "semantic_hash": ""
   },
   "app/historico/components/LiveCard.tsx": {
-    "mtime": 1783889395.2122953,
-    "ast_hash": "064b5e2b6a146001308d86923b67d11a",
+    "mtime": 1789301778.8281517,
+    "ast_hash": "415588c8ac72121eda9c6c6e6a287902",
     "semantic_hash": ""
   },
   "app/historico/components/MonthAccordion.tsx": {
-    "mtime": 1783728544.7970963,
-    "ast_hash": "fff107bda04d67cab21aca7d533317e4",
+    "mtime": 1789305219.0417626,
+    "ast_hash": "36722291c837620bfe595a181772e710",
     "semantic_hash": ""
   },
   "app/historico/components/MonthlyChart.tsx": {
@@ -195,28 +195,28 @@
     "semantic_hash": ""
   },
   "app/historico/components/SummaryCards.tsx": {
-    "mtime": 1783628237.5381365,
-    "ast_hash": "4107c0df1d9f5fc4ac9a22f953800b2a",
+    "mtime": 1789270695.4502542,
+    "ast_hash": "25087db268b69cbabd3e1b17cf5d222c",
     "semantic_hash": ""
   },
   "app/historico/hooks/useLiveFlights.ts": {
-    "mtime": 1784639650.1082945,
-    "ast_hash": "595470a77e5360b4c4924cf977384e75",
+    "mtime": 1789301739.8606207,
+    "ast_hash": "4a2fb0fc67aef3666e5073a6ed519a13",
     "semantic_hash": ""
   },
   "app/historico/hooks/useTodayData.ts": {
-    "mtime": 1783628237.5391328,
-    "ast_hash": "363ff9165996288ca81e080b43b0b3fc",
+    "mtime": 1789270400.603696,
+    "ast_hash": "54d3e92aab3125f17fab724a9f91afde",
     "semantic_hash": ""
   },
   "app/historico/hooks/useYearData.ts": {
-    "mtime": 1783628237.5401294,
-    "ast_hash": "9a626183511385428596ecda37d74418",
+    "mtime": 1789270440.1621385,
+    "ast_hash": "4c3c46ce6344fe90effb8322071657b7",
     "semantic_hash": ""
   },
   "app/historico/page.tsx": {
-    "mtime": 1785516259.384192,
-    "ast_hash": "066614a8735e09e72b3ce04d97a12579",
+    "mtime": 1789305237.3640218,
+    "ast_hash": "66a6af3fd1d9b2d54dc4153edbd55879",
     "semantic_hash": ""
   },
   "app/layout.tsx": {
@@ -230,8 +230,8 @@
     "semantic_hash": ""
   },
   "app/lib/blobStore.ts": {
-    "mtime": 1785496627.4503016,
-    "ast_hash": "b38243f33de068cb99da83800f93d516",
+    "mtime": 1785714152.5407736,
+    "ast_hash": "c8d300af5f42fa604b13f749b60f37cd",
     "semantic_hash": ""
   },
   "app/lib/cache.ts": {
@@ -250,8 +250,8 @@
     "semantic_hash": ""
   },
   "app/lib/confidence.ts": {
-    "mtime": 1783728527.5340805,
-    "ast_hash": "2d5d57d9de662178956ddca9a2739c45",
+    "mtime": 1789301716.344234,
+    "ast_hash": "1d8308f8250b95af3e7281baef686674",
     "semantic_hash": ""
   },
   "app/lib/geo.ts": {
@@ -260,8 +260,8 @@
     "semantic_hash": ""
   },
   "app/lib/launchUtils.ts": {
-    "mtime": 1783893854.7079363,
-    "ast_hash": "05f5269cdf5fc59d28717792829ec806",
+    "mtime": 1789301999.754383,
+    "ast_hash": "a0f8ee8a0608b025e52c39675ce229e3",
     "semantic_hash": ""
   },
   "app/lib/leafletBase.ts": {
@@ -270,8 +270,8 @@
     "semantic_hash": ""
   },
   "app/lib/liveFlightsCache.ts": {
-    "mtime": 1784639442.5637717,
-    "ast_hash": "d4ee5e58d5f60afe659f0a771995660b",
+    "mtime": 1789270884.3737085,
+    "ast_hash": "f08b9de67eba3cda026ec3caf038562e",
     "semantic_hash": ""
   },
   "app/lib/metrics.ts": {
@@ -285,13 +285,13 @@
     "semantic_hash": ""
   },
   "app/lib/oledMockData.ts": {
-    "mtime": 1785468662.4400897,
-    "ast_hash": "c0e786ba8caf7daa2b910da5084a0ad8",
+    "mtime": 1785519609.77166,
+    "ast_hash": "446ab2ce3bbce2d3aeaf3946daeff45b",
     "semantic_hash": ""
   },
   "app/lib/oledRenderer.ts": {
-    "mtime": 1785468662.4400897,
-    "ast_hash": "09284b087b208adfaf809d9e0aedffc0",
+    "mtime": 1785583799.5935977,
+    "ast_hash": "8fba2fabf9be74c848ef86efc92dceda",
     "semantic_hash": ""
   },
   "app/lib/oledScreenParser.ts": {
@@ -305,8 +305,8 @@
     "semantic_hash": ""
   },
   "app/lib/oledTemplates.ts": {
-    "mtime": 1785468662.4420912,
-    "ast_hash": "8ad2d3eaa0fd288b7c81f2830d5550e8",
+    "mtime": 1785549785.54824,
+    "ast_hash": "6ee66a9931e177c28b29f70181ff07fc",
     "semantic_hash": ""
   },
   "app/lib/powerColors.ts": {
@@ -320,8 +320,8 @@
     "semantic_hash": ""
   },
   "app/lib/radiosondy.ts": {
-    "mtime": 1783893873.0239377,
-    "ast_hash": "53a22e66afd21c124a0da7bce8f5c242",
+    "mtime": 1789305906.0462,
+    "ast_hash": "0e4a245e0ce2d42b8650fe57fea682bd",
     "semantic_hash": ""
   },
   "app/lib/rdzConfig.ts": {
@@ -330,8 +330,8 @@
     "semantic_hash": ""
   },
   "app/lib/rdzConfigSections.ts": {
-    "mtime": 1785468662.4430885,
-    "ast_hash": "1b2e24ae234c9cb3e8caae6609f91ef1",
+    "mtime": 1785714324.6682448,
+    "ast_hash": "ac3ae802fcc2eb45a90f831e025d0aef",
     "semantic_hash": ""
   },
   "app/lib/receiverCollect.ts": {
@@ -355,8 +355,8 @@
     "semantic_hash": ""
   },
   "app/lib/sondehub.ts": {
-    "mtime": 1784639109.6545608,
-    "ast_hash": "65bb91f93d5d1659d68f459b8d6f05e3",
+    "mtime": 1789301825.6444793,
+    "ast_hash": "fbab736e36fffed1ecede0f2e0643e04",
     "semantic_hash": ""
   },
   "app/lib/stations.ts": {
@@ -375,8 +375,8 @@
     "semantic_hash": ""
   },
   "app/lib/types.ts": {
-    "mtime": 1785468662.4440897,
-    "ast_hash": "14c51c984a2044926de579ff6b2f47f9",
+    "mtime": 1789301702.7303581,
+    "ast_hash": "c1be4bbebefd76737798756a2ec1f09f",
     "semantic_hash": ""
   },
   "app/meu-receptor/components/BatteryChart.tsx": {
@@ -385,8 +385,8 @@
     "semantic_hash": ""
   },
   "app/meu-receptor/components/FirmwareOtaPanel.tsx": {
-    "mtime": 1785468662.4450889,
-    "ast_hash": "f0c98be4b503a21af96a10609a38feab",
+    "mtime": 1785714225.4211974,
+    "ast_hash": "38edcd8325b3f0a0f195493b46e5acfd",
     "semantic_hash": ""
   },
   "app/meu-receptor/components/FullConfigEditor.tsx": {
@@ -395,8 +395,8 @@
     "semantic_hash": ""
   },
   "app/meu-receptor/components/OledScreenEditor.tsx": {
-    "mtime": 1785468662.4460886,
-    "ast_hash": "173d55b4e9c3bf51adaf284213bac405",
+    "mtime": 1785626239.004705,
+    "ast_hash": "ed6d60c6c7eb55420985c671507f234c",
     "semantic_hash": ""
   },
   "app/meu-receptor/components/PowerTimeline.tsx": {
@@ -410,8 +410,8 @@
     "semantic_hash": ""
   },
   "app/meu-receptor/components/SleepConfigEditor.tsx": {
-    "mtime": 1785468662.446983,
-    "ast_hash": "41e596fb11b34c12f75d53737dcacfad",
+    "mtime": 1785616250.959403,
+    "ast_hash": "ce7a0fcd1656710447567d1f135c23a4",
     "semantic_hash": ""
   },
   "app/meu-receptor/hooks/useFirmwareConfig.ts": {
@@ -445,13 +445,13 @@
     "semantic_hash": ""
   },
   "app/painel/components/LivePanel.tsx": {
-    "mtime": 1783730726.616967,
-    "ast_hash": "4e867d9975292c8fc00ca0896e123c44",
+    "mtime": 1789301795.9442725,
+    "ast_hash": "cf3844e7895c2b3a665e8b5fc535a11c",
     "semantic_hash": ""
   },
   "app/painel/components/MissionMap.tsx": {
-    "mtime": 1783945964.624512,
-    "ast_hash": "d3518b3f40ccb032a68506ed5ac8a48d",
+    "mtime": 1789302006.2631302,
+    "ast_hash": "725fa6c287f5d716e303cced82c7785c",
     "semantic_hash": ""
   },
   "app/painel/components/ReceiverPanel.tsx": {
@@ -465,8 +465,8 @@
     "semantic_hash": ""
   },
   "app/painel/components/TopStatusBar.tsx": {
-    "mtime": 1783728886.8966556,
-    "ast_hash": "54e65972f774e489fa1ecf7ba4b0e04d",
+    "mtime": 1789301788.3449821,
+    "ast_hash": "9470db7261a64bab7d9edf012b1cebfd",
     "semantic_hash": ""
   },
   "app/painel/hooks/useBatteryHistory.ts": {
@@ -500,13 +500,13 @@
     "semantic_hash": ""
   },
   "app/painel/page.tsx": {
-    "mtime": 1785468662.446983,
-    "ast_hash": "3b47ec38f67f3d75e26c4016e5494734",
+    "mtime": 1789301702.7303581,
+    "ast_hash": "73c0befc29c14e876b4b292d002409cb",
     "semantic_hash": ""
   },
   "app/painel/selection.ts": {
-    "mtime": 1783765701.9929886,
-    "ast_hash": "6133501e4afe7a7acc5693645b75750c",
+    "mtime": 1789270680.8276255,
+    "ast_hash": "09eabc6ba5dca230ace1986ad9a1ed51",
     "semantic_hash": ""
   },
   "next.config.js": {
@@ -545,8 +545,8 @@
     "semantic_hash": ""
   },
   "CLAUDE.md": {
-    "mtime": 1783728944.3852966,
-    "ast_hash": "991166f5aecc9a1043ab64a0615b0827",
+    "mtime": 1785924696.9172134,
+    "ast_hash": "fef7d982f0a2525f342c8aa6513d4a1e",
     "semantic_hash": ""
   },
   "README.md": {
@@ -555,13 +555,28 @@
     "semantic_hash": ""
   },
   "docs/firmware-batt-patch.md": {
-    "mtime": 1783783138.2718213,
-    "ast_hash": "fdbbc79f8d6459d08281110e6a23d271",
+    "mtime": 1785924512.2877893,
+    "ast_hash": "5e4634068faa2e06822d746e5d10b312",
     "semantic_hash": ""
   },
   "app/icon.svg": {
     "mtime": 1782073611.6652162,
     "ast_hash": "061054ebe76d1f7390750e8240d1364c",
+    "semantic_hash": ""
+  },
+  "app/lib/launchData.ts": {
+    "mtime": 1789301619.2267332,
+    "ast_hash": "efda8681e80d68d0d3a6fd88749b6177",
+    "semantic_hash": ""
+  },
+  "app/painel/components/DataCoveragePanel.tsx": {
+    "mtime": 1789270680.8276255,
+    "ast_hash": "da23f5974ceab26bd7627bf59187c20f",
+    "semantic_hash": ""
+  },
+  "docs/DATA_SOURCES.md": {
+    "mtime": 1789301485.4360454,
+    "ast_hash": "3a37a3281a9c3fe88fce354c43132f25",
     "semantic_hash": ""
   }
 }

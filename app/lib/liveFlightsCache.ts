@@ -20,11 +20,12 @@ import { fetchSondeHubLastFrames, filterSondeHubFlights, type SondeHubLastFrame 
 import { gmt3DateStr } from './launchUtils'
 import { writeLiveFlights } from './blobStore'
 import type { PollStationStatus } from './types'
+import { nowGMT3 } from './types'
 
 function todayStr(): string {
-  const d = new Date()
+  const d = nowGMT3()
   const pad = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`
 }
 
 export interface LiveFlightsCacheSummary {
@@ -34,27 +35,27 @@ export interface LiveFlightsCacheSummary {
 
 export async function refreshLiveFlightsCache(): Promise<LiveFlightsCacheSummary> {
   const today = todayStr()
-  const now = new Date()
-  const stations = SOUTH_AMERICA_STATIONS.filter(s => s.radiosondyStartplace)
+  const now = nowGMT3()
+  const stations = SOUTH_AMERICA_STATIONS
 
   const summary: LiveFlightsCacheSummary = { stations: {}, errors: 0 }
 
   let liveFeed: Awaited<ReturnType<typeof fetchLiveFlights>> = []
   let sondeHubFrames: Map<string, SondeHubLastFrame> = new Map()
-  try {
-    [liveFeed, sondeHubFrames] = await Promise.all([fetchLiveFlights(), fetchSondeHubLastFrames()])
-  } catch (e) {
-    console.error('[liveFlightsCache] falha ao buscar feeds globais:', e)
-    summary.errors++
-    return summary
-  }
+  const [radioResult, hubResult] = await Promise.allSettled([fetchLiveFlights(), fetchSondeHubLastFrames()])
+  if (radioResult.status === 'fulfilled') liveFeed = radioResult.value
+  else { console.error('[liveFlightsCache] radiosondy indisponível:', radioResult.reason); summary.errors++ }
+  if (hubResult.status === 'fulfilled') sondeHubFrames = hubResult.value
+  else { console.error('[liveFlightsCache] SondeHub indisponível:', hubResult.reason); summary.errors++ }
+  if (radioResult.status === 'rejected' && hubResult.status === 'rejected') return summary
 
   for (const station of stations) {
-    const startplace = station.radiosondyStartplace!
+    const startplace = station.radiosondyStartplace
     try {
       const bySondeNumber = new Map<string, TodayFlight>()
 
       for (const f of liveFeed) {
+        if (!startplace) continue
         if (!matchesStartplace(f, startplace)) continue
         if (gmt3DateStr(new Date(f.lastReportUtc)) !== today) continue
         bySondeNumber.set(f.sondeNumber, {
@@ -77,7 +78,7 @@ export async function refreshLiveFlightsCache(): Promise<LiveFlightsCacheSummary
       // Busca os já pousados (export_search.php, específico por estação) só
       // quando algo já apareceu ao vivo pra essa estação hoje — evita ~20
       // requisições extras por execução em dias sem nenhuma atividade.
-      if (bySondeNumber.size > 0) {
+      if (bySondeNumber.size > 0 && startplace) {
         const recovered = await fetchRadiosondyFeatures(now.getUTCFullYear(), now.getUTCMonth() + 1, startplace)
         for (const f of recovered) {
           if (gmt3DateStr(f.date) !== today) continue
@@ -99,8 +100,8 @@ export async function refreshLiveFlightsCache(): Promise<LiveFlightsCacheSummary
       const flights = [...bySondeNumber.values()]
       await writeLiveFlights(station.id, { updatedAt: Date.now(), flights })
       summary.stations[station.id] = {
-        radiosondy: flights.filter(f => f.source !== 'sondehub').length,
-        sondehub:   flights.filter(f => f.source === 'sondehub').length,
+        radiosondy: flights.filter(f => f.source.startsWith('radiosondy')).length,
+        sondehub:   flights.filter(f => f.source.startsWith('sondehub')).length,
       }
     } catch (e) {
       console.error(`[liveFlightsCache] falhou pra estação ${station.id}:`, e)

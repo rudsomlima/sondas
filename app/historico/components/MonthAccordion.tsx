@@ -1,19 +1,15 @@
 'use client'
 
-import { ChevronDown, Wind, Trash2, Sun, Moon, Map as MapIcon } from 'lucide-react'
+import { ChevronDown, Wind, Trash2, Sun, Moon, Map as MapIcon, MapPin } from 'lucide-react'
 import LaunchMap from '../LaunchMap'
 import YearMap from '../YearMap'
 import SourceBadges from '@/app/components/ui/SourceBadges'
 import { computeConfidence } from '@/app/lib/confidence'
-import { MONTHS, MONTHS_FULL, isDaytime, sameLaunch, launchKey, wyomingSoundingUrl } from '@/app/lib/launchUtils'
+import { MONTHS, MONTHS_FULL, isDaytime, sameLaunch, launchKey } from '@/app/lib/launchUtils'
+import { isValidPosition } from '@/app/lib/launchData'
 import type { Station } from '@/app/lib/stations'
-import type { Launch } from '@/app/lib/types'
-
-interface NoMatchNotice {
-  date: string
-  time_local: string
-  wyomingUrl: string
-}
+import type { Launch, LaunchPosition } from '@/app/lib/types'
+import type { SondePoint } from '@/app/lib/sondePoints'
 
 interface MonthAccordionProps {
   year: number
@@ -25,25 +21,26 @@ interface MonthAccordionProps {
   setSelectedLaunch: (l: Launch | null) => void
   noMatchLaunches: Set<string>
   setNoMatchLaunches: (updater: (prev: Set<string>) => Set<string>) => void
-  noMatchNotice: NoMatchNotice | null
-  setNoMatchNotice: (n: NoMatchNotice | null) => void
   showYearMap: boolean
   setShowYearMap: (v: boolean) => void
   deleteMonthConfirm: number | null
   onRequestDeleteMonth: (m: number | null) => void
   onConfirmDeleteMonth: () => void
+  monthPoints?: SondePoint[] // sondas de todas as fontes do mês aberto
+  onLaunchPosition?: (launch: Launch, position: LaunchPosition) => void
+  onYearPoints?: (points: SondePoint[]) => void
 }
 
-// Acordeão mês → dia → horários, com badges de fonte (W/R/S), aviso de
-// no-match, LaunchMap embutido e mapa do ano.
+// Acordeão mês → dia → horários, com badges de fonte (W/R/S), LaunchMap
+// embutido e mapa do ano.
 export default function MonthAccordion({
   year, station, byMonth,
   expandedMonth, setExpandedMonth,
   selectedLaunch, setSelectedLaunch,
   noMatchLaunches, setNoMatchLaunches,
-  noMatchNotice, setNoMatchNotice,
   showYearMap, setShowYearMap,
   deleteMonthConfirm, onRequestDeleteMonth, onConfirmDeleteMonth,
+  monthPoints, onLaunchPosition, onYearPoints,
 }: MonthAccordionProps) {
   return (
     <div className="panel overflow-hidden mb-6">
@@ -70,7 +67,8 @@ export default function MonthAccordion({
           <YearMap
             year={year}
             station={station.id}
-            monthsWithData={Object.keys(byMonth).map(Number)}
+            launches={Object.values(byMonth).flat()}
+            onPoints={onYearPoints}
             onClose={() => setShowYearMap(false)}
           />
         </div>
@@ -81,6 +79,7 @@ export default function MonthAccordion({
           const m = idx + 1
           const launches = byMonth[m] ?? []
           const days = new Set(launches.map(l => l.date)).size
+          const tracked = launches.filter(l => isValidPosition(l.position)).length
           const isOpen = expandedMonth === m
 
           return (
@@ -96,6 +95,13 @@ export default function MonthAccordion({
                     <>
                       <span className="badge badge-info mono text-xs">{launches.length}</span>
                       <span className="text-xs text-gray-400">{days} dia{days !== 1 ? 's' : ''}</span>
+                      <span
+                        className="text-xs text-emerald-400 flex items-center gap-1 whitespace-nowrap"
+                        title="Lançamentos com posição de rastreio válida"
+                      >
+                        <MapPin size={11} />
+                        {tracked} rastreado{tracked !== 1 ? 's' : ''}
+                      </span>
                     </>
                   ) : (
                     <span className="text-xs text-gray-400">sem dados</span>
@@ -161,7 +167,9 @@ export default function MonthAccordion({
                                 const noMatch = l.radiosondyMatch === 'no' || noMatchLaunches.has(launchKey(l))
                                 const sourceLabel = l.source === 'sondehub' ? 'sondehub.org' : 'radiosondy.info'
                                 const title = l.approx
-                                  ? station.wyomingSupported === false
+                                  ? l.association === 'geographic'
+                                    ? 'Candidato aproximado do sondehub.org por proximidade geográfica; pode pertencer a outra estação'
+                                  : station.wyomingSupported === false
                                     ? `Horário aproximado via ${sourceLabel} — Wyoming não cobre esta estação`
                                     : `Horário aproximado via ${sourceLabel} — Wyoming ainda não publicou este lançamento`
                                   : noMatch
@@ -171,15 +179,9 @@ export default function MonthAccordion({
                                   <button
                                     key={i}
                                     onClick={() => {
-                                      if (noMatch && !l.position) {
-                                        setNoMatchNotice({
-                                          date: l.date,
-                                          time_local: l.time_local,
-                                          wyomingUrl: wyomingSoundingUrl(l, station.id),
-                                        })
-                                        return
-                                      }
-                                      setNoMatchNotice(null)
+                                      // Mesmo marcado "sem correspondência" (o cron marca isso
+                                      // cedo, antes do pouso ser registrado), o mapa ainda tenta
+                                      // todas as fontes — só ele mostra o aviso se nada aparecer.
                                       setShowYearMap(false)
                                       setSelectedLaunch(sameLaunch(selectedLaunch, l) ? null : l)
                                     }}
@@ -199,32 +201,12 @@ export default function MonthAccordion({
                       ))}
                   </div>
 
-                  {noMatchNotice && !selectedLaunch && (
-                    <div className="mt-3 border border-border rounded px-4 py-3 flex items-center gap-3 flex-wrap bg-surface text-sm text-gray-400">
-                      <span>
-                        Lançamento {noMatchNotice.date.split('-').reverse().join('/')} às {noMatchNotice.time_local} — sem correspondência no radiosondy.info.
-                      </span>
-                      <a
-                        href={noMatchNotice.wyomingUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-sky-400 hover:underline text-xs flex-shrink-0"
-                      >
-                        Ver sondagem na Wyoming ↗
-                      </a>
-                      <button
-                        onClick={() => setNoMatchNotice(null)}
-                        className="ml-auto text-gray-600 hover:text-gray-300 text-xs"
-                      >
-                        ✕
-                      </button>
-                    </div>
-                  )}
-
                   {selectedLaunch && selectedLaunch.month === m && (
                     <LaunchMap
                       launch={selectedLaunch}
                       station={station.id}
+                      contextPoints={monthPoints}
+                      onPosition={onLaunchPosition}
                       onClose={() => setSelectedLaunch(null)}
                       onResult={found => {
                         setNoMatchLaunches(prev => {

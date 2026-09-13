@@ -1,4 +1,5 @@
 import type { Launch } from '@/app/lib/types'
+import type { TodayFlight } from '@/app/lib/radiosondy'
 
 // Alvo selecionado no painel: uma sonda de hoje (ao vivo/pousada) ou um
 // lançamento recente com posição conhecida.
@@ -18,4 +19,5 @@ export interface SelectedTarget {
   frequency?: number
   battV?: number // bateria da sonda (V)
   receivedByMe?: boolean
+  source?: TodayFlight['source']
 }

@@ -15,14 +15,22 @@ import type { Station } from '@/app/lib/stations'
 import type { Launch } from '@/app/lib/types'
 import type { TodayFlight } from '@/app/lib/radiosondy'
 import type { SelectedTarget } from '../selection'
+import { isValidCoordinate, isValidPosition } from '@/app/lib/launchData'
+import { formatGmt3, parseUtcDateStr } from '@/app/lib/launchUtils'
+import { sondePointPopup, type SondePoint } from '@/app/lib/sondePoints'
 
 const BALLOON_SIZE = 15
+
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>'"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[c] ?? c))
+}
 
 // Ícone de antena (mesmos paths do lucide-react "Antenna", viewBox 24x24)
 // para o marcador do "meu receptor" no mapa — só o glifo em vermelho (sem
 // círculo de fundo), com o nome/callsign da estação como rótulo abaixo,
 // mesmo estilo de "pill" escura usado nos rótulos de dia/noite dos balões.
 function antennaIconMarkup(name: string, sizePx: number): string {
+  const safeName = escapeHtml(name)
   return `
     <div style="display:flex;flex-direction:column;align-items:center;">
       <svg width="${sizePx}" height="${sizePx}" viewBox="0 0 24 24"
@@ -32,7 +40,7 @@ function antennaIconMarkup(name: string, sizePx: number): string {
         <path d="M4.5 7h15"/><path d="M12 16v6"/>
       </svg>
       <div style="margin-top:2px;background:rgba(0,0,0,0.75);border:1px solid rgba(255,255,255,0.4);border-radius:4px;padding:1px 5px;white-space:nowrap;">
-        <span style="color:#fff;font-size:10px;font-family:monospace;font-weight:700;">${name}</span>
+        <span style="color:#fff;font-size:10px;font-family:monospace;font-weight:700;">${safeName}</span>
       </div>
     </div>`
 }
@@ -40,6 +48,7 @@ function antennaIconMarkup(name: string, sizePx: number): string {
 interface MissionMapProps {
   station: Station
   monthLaunches: Launch[] // lançamentos do mês corrente (pousos como contexto)
+  extraPoints?: SondePoint[] // sondas do mês de qualquer fonte, com ou sem lançamento casado
   todayFlights: TodayFlight[]
   selected: SelectedTarget | null
   chasePos: { lat: number; lon: number } | null
@@ -49,7 +58,9 @@ interface MissionMapProps {
 
 // Mapa central do mission control: pousos do mês + sondas de hoje +
 // trajetória do voo selecionado + posição do caçador.
-export default function MissionMap({ station, monthLaunches, todayFlights, selected, chasePos, receiverPos, receiverName }: MissionMapProps) {
+const NO_POINTS: SondePoint[] = []
+
+export default function MissionMap({ station, monthLaunches, extraPoints = NO_POINTS, todayFlights, selected, chasePos, receiverPos, receiverName }: MissionMapProps) {
   const mapDivRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<any>(null)
   const leafletRef = useRef<any>(null)
@@ -58,6 +69,7 @@ export default function MissionMap({ station, monthLaunches, todayFlights, selec
   const chaseLayerRef = useRef<any>(null)
   const receiverLayerRef = useRef<any>(null)
   const [trajNote, setTrajNote] = useState<string | null>(null)
+  const [mapReady, setMapReady] = useState(false)
 
   // Inicialização única do Leaflet.
   useEffect(() => {
@@ -74,6 +86,7 @@ export default function MissionMap({ station, monthLaunches, todayFlights, selec
       chaseLayerRef.current = L.layerGroup().addTo(map)
       receiverLayerRef.current = L.layerGroup().addTo(map)
       map.setView([station.lat, station.lon], 9)
+      setMapReady(true)
       setTimeout(() => map.invalidateSize(), 50)
     }
     init()
@@ -118,36 +131,53 @@ export default function MissionMap({ station, monthLaunches, todayFlights, selec
       // Estação (marcador fixo discreto)
       L.circleMarker([station.lat, station.lon], {
         radius: 6, color: '#3b82f6', fillColor: '#3b82f6', fillOpacity: 0.6, weight: 2,
-      }).addTo(layer).bindPopup(`<b>${station.name}</b><br>STNM ${station.id}`)
+      }).addTo(layer).bindPopup(`<b>${escapeHtml(station.name)}</b><br>STNM ${escapeHtml(station.id)}`)
 
       // Pousos do mês corrente
       const todaySerials = new Set(todayFlights.map(f => f.sondeNumber))
+      const drawn = new Set<string>(todaySerials)
       for (const l of monthLaunches) {
         const pos = l.position
-        if (!pos) continue
-        if (todaySerials.has(pos.sondeNumber)) continue // sonda de hoje tem marcador próprio
+        if (!isValidPosition(pos)) continue
+        if (drawn.has(pos.sondeNumber)) continue // sonda de hoje tem marcador próprio
+        drawn.add(pos.sondeNumber)
         const instant = launchUtcInstant(l.year, l.month, l.day, l.time_utc, l.time_local)
         L.marker([pos.lat, pos.lon], {
           icon: buildBalloonIcon(L, statusColor(pos.status), BALLOON_SIZE, gmt3IconLabel(instant)),
         }).addTo(layer).bindPopup(
-          `<b>${pos.sondeNumber}</b><br>Status: ${pos.status}` +
+          `<b>${escapeHtml(pos.sondeNumber)}</b><br>Status: ${escapeHtml(pos.status)}` +
+          `<br>Lançamento: ${escapeHtml(l.date.split('-').reverse().join('/'))} ${escapeHtml(l.time_local)}` +
           (pos.altitude ? `<br>Altitude: ${Math.round(pos.altitude).toLocaleString('pt-BR')} m` : '')
         )
       }
 
+      // Sondas do mês vistas por alguma fonte mas sem lançamento casado
+      // (voos fora do horário sinótico, pouso só no SondeHub etc.).
+      for (const p of extraPoints) {
+        if (drawn.has(p.serial) || !isValidCoordinate(p.lat, p.lon)) continue
+        drawn.add(p.serial)
+        L.marker([p.lat, p.lon], {
+          icon: buildBalloonIcon(L, statusColor(p.status), BALLOON_SIZE, gmt3IconLabel(p.date)),
+        }).addTo(layer).bindPopup(sondePointPopup(p))
+      }
+
       // Sondas de hoje (em voo = paraquedas pulsante; pousada = balão destacado)
       for (const f of todayFlights) {
+        if (!isValidCoordinate(f.lat, f.lon)) continue
+        const reportDate = parseUtcDateStr(f.lastReportUtc)
+        const label = isNaN(reportDate.getTime()) ? undefined : gmt3IconLabel(reportDate)
         const icon = f.isLive
-          ? buildHighlightLiveBalloonIcon(L, LIVE_COLOR, BALLOON_SIZE)
-          : buildHighlightBalloonIcon(L, statusColor('UNKNOWN'), BALLOON_SIZE)
+          ? buildHighlightLiveBalloonIcon(L, LIVE_COLOR, BALLOON_SIZE, label)
+          : buildHighlightBalloonIcon(L, statusColor('UNKNOWN'), BALLOON_SIZE, label)
         L.marker([f.lat, f.lon], { icon, zIndexOffset: 1000 }).addTo(layer).bindPopup(
-          `<b>${f.sondeNumber}</b><br>${f.isLive ? 'Em voo' : 'Pousada'}` +
+          `<b>${escapeHtml(f.sondeNumber)}</b><br>${f.isLive ? 'Em voo' : 'Pousada'}` +
+          `<br>Último reporte: ${escapeHtml(formatGmt3(f.lastReportUtc))} GMT-3` +
           `<br>Altitude: ${Math.round(f.altitude).toLocaleString('pt-BR')} m` +
           (f.isLive ? `<br>Var. vertical: ${f.climbing.toFixed(1)} m/s` : '')
         )
       }
     }
-  }, [station, monthLaunches, todayFlights])
+  }, [station, monthLaunches, extraPoints, todayFlights, mapReady])
 
   // Trajetória do voo selecionado.
   useEffect(() => {
@@ -198,7 +228,7 @@ export default function MissionMap({ station, monthLaunches, todayFlights, selec
     }
     loadTrajectory()
     return () => { cancelled = true }
-  }, [selected, station.id])
+  }, [selected, station.id, mapReady])
 
   // Posição do caçador + linha até o alvo.
   useEffect(() => {
@@ -217,7 +247,7 @@ export default function MissionMap({ station, monthLaunches, todayFlights, selec
         color: '#3b82f6', weight: 2, dashArray: '8 6', opacity: 0.7,
       }).addTo(layer)
     }
-  }, [chasePos, selected])
+  }, [chasePos, selected, mapReady])
 
   // Posição do "meu receptor" (rxlat/rxlon publicado via MQTT) — ícone de
   // antena para diferenciar de "Você" (círculo azul, geolocalização do
@@ -238,8 +268,8 @@ export default function MissionMap({ station, monthLaunches, todayFlights, selec
         iconSize: [Math.max(size, (receiverName?.length ?? 12) * 6), size + labelH],
         iconAnchor: [size / 2, size - 1],
       }),
-    }).addTo(layer).bindPopup(`<b>${receiverName || 'Meu receptor'}</b>`)
-  }, [receiverPos, receiverName])
+    }).addTo(layer).bindPopup(`<b>${escapeHtml(receiverName || 'Meu receptor')}</b>`)
+  }, [receiverPos, receiverName, mapReady])
 
   return (
     <div className="panel overflow-hidden h-full flex flex-col">

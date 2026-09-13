@@ -1,6 +1,6 @@
 'use client'
 
-import { Wind, Loader2, Sun, Moon, Antenna } from 'lucide-react'
+import { Wind, Loader2, Sun, Moon, Antenna, MapPinOff } from 'lucide-react'
 import type { TodayFlight } from '@/app/lib/radiosondy'
 import { isDaytime, formatGmt3 } from '@/app/lib/launchUtils'
 import type { Launch } from '@/app/lib/types'
@@ -9,7 +9,7 @@ import type { SelectedTarget } from '../selection'
 interface LivePanelProps {
   todayFlights: TodayFlight[]
   liveFlightChecked: boolean
-  recentLaunches: Launch[] // últimos lançamentos com posição conhecida
+  recentLaunches: Launch[]
   selected: SelectedTarget | null
   onSelect: (t: SelectedTarget | null) => void
   mySerials?: Set<string> // serials sendo recebidos pelo receptor do usuário
@@ -40,6 +40,7 @@ export default function LivePanel({
                     serial: f.sondeNumber, lat: f.lat, lon: f.lon,
                     altitude: f.altitude, climbing: f.climbing,
                     isLive: f.isLive, lastReportUtc: f.lastReportUtc,
+                    source: f.source,
                   })}
                   className={`w-full text-left p-2.5 rounded border transition-all ${
                     isSelected ? 'border-blue-500/60 bg-blue-500/10' : 'border-border hover:border-border-strong bg-bg'
@@ -53,6 +54,10 @@ export default function LivePanel({
                       {f.isLive ? (f.climbing >= 0 ? 'Subindo' : 'Descendo') : 'Pousada'}
                     </span>
                     <span className="text-xs text-emerald-400 mono">{Math.round(f.altitude).toLocaleString('pt-BR')} m</span>
+                    <span className={`text-[9px] mono ${f.source === 'sondehub' || f.source === 'radiosondy-approx' ? 'text-yellow-400' : 'text-faint'}`}
+                      title={f.source === 'sondehub' || f.source === 'radiosondy-approx' ? 'Associação por proximidade; ainda não confirma a estação de lançamento' : 'Fonte vinculada à estação'}>
+                      {f.source === 'sondehub-site' ? 'S/site' : f.source === 'radiosondy' ? 'R' : '~geo'}
+                    </span>
                     {mySerials?.has(f.sondeNumber) && (
                       <span className="badge badge-info text-[9px] px-1.5 py-0 pulse-soft">
                         <Antenna size={9} /> RX local
@@ -71,20 +76,21 @@ export default function LivePanel({
       <div className="panel p-4">
         <p className="panel-title mb-3">Últimos lançamentos</p>
         {recentLaunches.length === 0 ? (
-          <p className="text-xs text-dim">Sem lançamentos recentes com posição.</p>
+          <p className="text-xs text-dim">Sem lançamentos recentes.</p>
         ) : (
           <div className="space-y-1">
             {recentLaunches.map((l, i) => {
-              const pos = l.position!
+              const pos = l.position
               const isSelected = selected?.launch != null &&
                 selected.launch.date === l.date && selected.launch.time_local === l.time_local
               return (
                 <button
                   key={i}
-                  onClick={() => onSelect(isSelected ? null : {
+                  onClick={() => pos && onSelect(isSelected ? null : {
                     serial: pos.sondeNumber, lat: pos.lat, lon: pos.lon,
                     altitude: pos.altitude, isLive: false, launch: l,
                   })}
+                  disabled={!pos}
                   className={`w-full text-left px-2.5 py-1.5 rounded border text-xs flex items-center gap-2 transition-all ${
                     isSelected ? 'border-blue-500/60 bg-blue-500/10' : 'border-transparent hover:border-border bg-transparent'
                   }`}
@@ -92,7 +98,11 @@ export default function LivePanel({
                   {isDaytime(l.time_local) ? <Sun size={10} className="text-day" /> : <Moon size={10} className="text-night" />}
                   <span className="mono text-white">{l.date.slice(8)}/{l.date.slice(5, 7)}</span>
                   <span className="mono text-dim">{l.time_local}</span>
-                  <span className="mono text-amber-400/80 truncate flex-1 text-right">{pos.sondeNumber}</span>
+                  {pos ? (
+                    <span className="mono text-amber-400/80 truncate flex-1 text-right">{pos.sondeNumber}</span>
+                  ) : (
+                    <span className="text-faint truncate flex-1 text-right flex items-center justify-end gap-1"><MapPinOff size={10} /> posição pendente</span>
+                  )}
                 </button>
               )
             })}

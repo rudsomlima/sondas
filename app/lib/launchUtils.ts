@@ -83,6 +83,14 @@ export function formatBytes(bytes: number): string {
 export function wyomingSoundingUrl(l: Launch, stationId: string): string {
   const pad = (n: number) => String(n).padStart(2, '0')
   const hourUtc = l.time_utc.slice(0, 2).padStart(2, '0')
-  const dt = `${l.year}-${pad(l.month)}-${pad(l.day)} ${hourUtc}:00:00`
-  return `https://weather.uwyo.edu/wsgi/sounding?src=FM35&datetime=${dt.replace(' ', '%20')}&id=${stationId}&type=TEXT:LIST`
+  // A data do Launch é local (GMT-3). Assim, 00Z normalmente pertence ao dia
+  // UTC seguinte ao exibido (21h local), inclusive em viradas de mês/ano.
+  const utc = new Date(Date.UTC(
+    l.year,
+    l.month - 1,
+    l.day + (hourUtc === '00' && l.time_local !== '00:00' ? 1 : 0),
+    Number(hourUtc),
+  ))
+  const dt = `${utc.getUTCFullYear()}-${pad(utc.getUTCMonth() + 1)}-${pad(utc.getUTCDate())} ${pad(utc.getUTCHours())}:00:00`
+  return `https://weather.uwyo.edu/wsgi/sounding?src=FM35&datetime=${dt.replace(' ', '%20')}&id=${encodeURIComponent(stationId)}&type=TEXT:LIST`
 }

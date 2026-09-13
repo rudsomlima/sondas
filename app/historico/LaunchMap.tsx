@@ -2,34 +2,57 @@
 
 import { useEffect, useRef, useState } from 'react'
 import 'leaflet/dist/leaflet.css'
-import { AlertCircle, Loader2, ExternalLink, AlertTriangle, X } from 'lucide-react'
+import { AlertCircle, Loader2, ExternalLink, AlertTriangle, RefreshCw, X } from 'lucide-react'
 import {
   externalRadiosondyUrl, launchUtcInstant, fetchRadiosondyFeatures,
   findRecoveredMatch, fetchLiveFlights, findLiveMatch, isWithinMatchWindow,
   statusColor, buildBalloonIcon,
   buildHighlightBalloonIcon, gmt3IconLabel, LEGEND_ITEMS,
-  RadiosondyFeature, roundToSynopticHour, sondeHubUrl,
+  RadiosondyFeature, radiosondyFeaturePopup, roundToSynopticHour, sondeHubUrl, parsePopupTelemetry,
 } from '@/app/lib/radiosondy'
-import { fetchSondeHubArchiveSondeForDay } from '@/app/lib/sondehub'
-import { getRadiosondyStartplace, DEFAULT_STATION } from '@/app/lib/stations'
-import type { Launch } from '@/app/lib/types'
+import { fetchSondeHubArchiveSondeForDay, SONDEHUB_RECENT_SECONDS } from '@/app/lib/sondehub'
+import { getRadiosondyStartplace, findStation, DEFAULT_STATION } from '@/app/lib/stations'
+import type { Launch, LaunchPosition } from '@/app/lib/types'
+import {
+  fetchRecentSondeHubPoints, findPointForLaunch, mergeSondePoints, pointToPosition, sondePointPopup,
+  type SondePoint,
+} from '@/app/lib/sondePoints'
 import { fetchLiveTrajectory, fetchArchiveTrajectory, analyzeTrajectory, FlightAnalysis } from '@/app/lib/trajectory'
 import { drawTrajectory } from '@/app/components/TrajectoryLayer'
 
 const BALLOON_SIZE = 15
 
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>'"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[c] ?? c))
+}
+
 interface LaunchMapProps {
   launch: Launch
   onClose: () => void
   onResult?: (found: boolean) => void
+  // Posição resolvida aqui (sem estar em launch.position), para a página guardar.
+  onPosition?: (launch: Launch, position: LaunchPosition) => void
+  // Sondas do mesmo mês vindas de outras fontes (SondeHub, cache), desenhadas
+  // como contexto e usadas para casar o pouso antes de desistir.
+  contextPoints?: SondePoint[]
   station?: string
 }
 
-export default function LaunchMap({ launch, onClose, onResult, station = DEFAULT_STATION.id }: LaunchMapProps) {
+const NO_POINTS: SondePoint[] = []
+
+export default function LaunchMap({ launch, onClose, onResult, onPosition, contextPoints = NO_POINTS, station = DEFAULT_STATION.id }: LaunchMapProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const mapDivRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<any>(null)
   const markersLayerRef = useRef<any>(null)
+  const contextLayerRef = useRef<any>(null)
+  // Seriais já desenhados pela camada principal (não repetir no contexto).
+  const drawnSerialsRef = useRef<Set<string>>(new Set())
+  const [drawTick, setDrawTick] = useState(0)
+  const contextPointsRef = useRef(contextPoints)
+  contextPointsRef.current = contextPoints
+  const onPositionRef = useRef(onPosition)
+  onPositionRef.current = onPosition
   // Leaflet L guardado após o primeiro import — reutilizado sem await nos switches.
   const leafletRef = useRef<any>(null)
   const featuresCacheRef = useRef<Map<string, RadiosondyFeature[]>>(new Map())
@@ -44,12 +67,14 @@ export default function LaunchMap({ launch, onClose, onResult, station = DEFAULT
   const [trajLoading, setTrajLoading] = useState(false)
   const [trajAnalysis, setTrajAnalysis] = useState<FlightAnalysis | null>(null)
   const [trajError, setTrajError] = useState<string | null>(null)
+  const [resolvedSerial, setResolvedSerial] = useState<string | null>(launch.position?.sondeNumber ?? null)
+  const [attempt, setAttempt] = useState(0)
 
   const startplace = getRadiosondyStartplace(station)
   const externalUrl = startplace ? externalRadiosondyUrl(launch.year, launch.month, startplace) : null
 
   // Serial conhecida (posição resolvida) habilita o botão de trajetória.
-  const serial = launch.position?.sondeNumber
+  const serial = resolvedSerial ?? launch.position?.sondeNumber
 
   async function toggleTrajectory() {
     const L = leafletRef.current
@@ -110,6 +135,7 @@ export default function LaunchMap({ launch, onClose, onResult, station = DEFAULT
     trajectoryLayerRef.current?.clearLayers()
     setTrajAnalysis(null)
     setTrajError(null)
+    setResolvedSerial(launch.position?.sondeNumber ?? null)
   }, [launch.year, launch.month, launch.day, launch.time_utc, launch.time_local])
 
   useEffect(() => {
@@ -118,8 +144,8 @@ export default function LaunchMap({ launch, onClose, onResult, station = DEFAULT
 
     function buildSourceUrl(): string {
       const pad = (n: number) => String(n).padStart(2, '0')
-      const hourUtc = launch.time_utc.slice(0, 2).padStart(2, '0')
-      const dt = `${launch.year}-${pad(launch.month)}-${pad(launch.day)} ${hourUtc}:00:00`
+      const utc = launchUtcInstant(launch.year, launch.month, launch.day, launch.time_utc, launch.time_local)
+      const dt = `${utc.getUTCFullYear()}-${pad(utc.getUTCMonth() + 1)}-${pad(utc.getUTCDate())} ${pad(utc.getUTCHours())}:00:00`
       return `https://weather.uwyo.edu/wsgi/sounding?src=FM35&datetime=${dt.replace(' ', '%20')}&id=${station}&type=TEXT:LIST`
     }
 
@@ -132,13 +158,15 @@ export default function LaunchMap({ launch, onClose, onResult, station = DEFAULT
       pos: NonNullable<Launch['position']>,
     ) {
       const { lat, lon, sondeNumber, status: posStatus } = pos
+      drawnSerialsRef.current = new Set([sondeNumber, ...contextFeatures.map(f => f.sondeNumber)])
+      setResolvedSerial(sondeNumber)
       const rdFeature = contextFeatures.find(f => f.sondeNumber === sondeNumber)
       const markerLat = rdFeature ? rdFeature.lat : lat
       const markerLon = rdFeature ? rdFeature.lon : lon
       const markerStatus = rdFeature ? rdFeature.status : posStatus
       const markerPopup = rdFeature
-        ? rdFeature.popupContent
-        : `<b>${sondeNumber}</b><br>Status: ${posStatus}` +
+        ? radiosondyFeaturePopup(rdFeature)
+        : `<b>${escapeHtml(sondeNumber)}</b><br>Status: ${escapeHtml(posStatus)}` +
           (pos.altitude ? `<br>Altitude: ${Math.round(pos.altitude).toLocaleString('pt-BR')} m` : '') +
           (pos.course ? `<br>Course: ${pos.course}°` : '')
 
@@ -148,7 +176,7 @@ export default function LaunchMap({ launch, onClose, onResult, station = DEFAULT
         if (Math.abs(f.lat - lat) < 0.0001 && Math.abs(f.lon - lon) < 0.0001) continue
         L.marker([f.lat, f.lon], { icon: buildBalloonIcon(L, statusColor(f.status), BALLOON_SIZE, gmt3IconLabel(f.date)) })
           .addTo(markersLayerRef.current)
-          .bindPopup(f.popupContent)
+          .bindPopup(radiosondyFeaturePopup(f))
       }
       L.marker([markerLat, markerLon], {
         icon: buildHighlightBalloonIcon(L, statusColor(markerStatus), BALLOON_SIZE,
@@ -162,20 +190,28 @@ export default function LaunchMap({ launch, onClose, onResult, station = DEFAULT
         mapRef.current.flyTo([markerLat, markerLon], 11, { duration: 0.8 })
       }
       setTimeout(() => mapRef.current?.invalidateSize(), 50)
+      setDrawTick(t => t + 1)
     }
 
     function applyFeaturesMarkers(L: any, features: RadiosondyFeature[], highlight: RadiosondyFeature) {
+      drawnSerialsRef.current = new Set(features.map(f => f.sondeNumber))
+      setResolvedSerial(highlight.sondeNumber)
+      const { altitude } = parsePopupTelemetry(highlight.popupContent)
+      onPositionRef.current?.(launch, {
+        lat: highlight.lat, lon: highlight.lon, sondeNumber: highlight.sondeNumber,
+        status: highlight.status, altitude: altitude || undefined,
+      })
       markersLayerRef.current.clearLayers()
       for (const f of features) {
         if (f === highlight) continue
         L.marker([f.lat, f.lon], { icon: buildBalloonIcon(L, statusColor(f.status), BALLOON_SIZE, gmt3IconLabel(f.date)) })
           .addTo(markersLayerRef.current)
-          .bindPopup(f.popupContent)
+          .bindPopup(radiosondyFeaturePopup(f))
       }
       L.marker([highlight.lat, highlight.lon], {
         icon: buildHighlightBalloonIcon(L, statusColor(highlight.status), BALLOON_SIZE, gmt3IconLabel(highlight.date)),
         zIndexOffset: 1000,
-      }).addTo(markersLayerRef.current).bindPopup(highlight.popupContent)
+      }).addTo(markersLayerRef.current).bindPopup(radiosondyFeaturePopup(highlight))
 
       if (isFirstLoad) {
         mapRef.current.setView([highlight.lat, highlight.lon], 11)
@@ -183,6 +219,7 @@ export default function LaunchMap({ launch, onClose, onResult, station = DEFAULT
         mapRef.current.panTo([highlight.lat, highlight.lon], { animate: true, duration: 0.25 })
       }
       setTimeout(() => mapRef.current?.invalidateSize(), 50)
+      setDrawTick(t => t + 1)
     }
 
     async function run() {
@@ -224,7 +261,7 @@ export default function LaunchMap({ launch, onClose, onResult, station = DEFAULT
         setStatus(null)
         setError(null)
         setSourceUrl(null)
-        setIsSondeHubPos(false)
+        setIsSondeHubPos(launch.source === 'sondehub' || launch.sources?.sondehub === true)
         setApprox(false)
 
         let contextFeatures: RadiosondyFeature[] = []
@@ -260,9 +297,7 @@ export default function LaunchMap({ launch, onClose, onResult, station = DEFAULT
       }
 
       if (!startplace) {
-        setStatus(null)
-        setError('Sem cobertura do radiosondy.info conhecida para esta estação.')
-        onResult?.(false)
+        await fallbackToSondeHub('no-radiosondy-coverage')
         return
       }
 
@@ -272,7 +307,7 @@ export default function LaunchMap({ launch, onClose, onResult, station = DEFAULT
       setIsSondeHubPos(false)
       setSondeHubMapUrl(null)
 
-      async function plotPosition(lat: number, lon: number, label: string, source: string) {
+      async function plotPosition(lat: number, lon: number, label: string, source: string, popupHtml?: string) {
         const L = leafletRef.current ?? (await import('leaflet')).default
         if (cancelled || !mapDivRef.current) return
         if (!mapRef.current) {
@@ -286,19 +321,20 @@ export default function LaunchMap({ launch, onClose, onResult, station = DEFAULT
           leafletRef.current = L
         }
         markersLayerRef.current.clearLayers()
+        drawnSerialsRef.current = new Set([label])
         const utcInstant = launchUtcInstant(launch.year, launch.month, launch.day, launch.time_utc, launch.time_local)
         L.marker([lat, lon], {
           icon: buildHighlightBalloonIcon(L, statusColor('UNKNOWN'), BALLOON_SIZE, gmt3IconLabel(utcInstant)),
           zIndexOffset: 1000,
-        }).addTo(markersLayerRef.current).bindPopup(`<b>${label}</b><br>Fonte: ${source}`)
+        }).addTo(markersLayerRef.current).bindPopup(popupHtml ?? `<b>${escapeHtml(label)}</b><br>Fonte: ${escapeHtml(source)}`)
         if (isFirstLoad) { mapRef.current.setView([lat, lon], 10) }
         else { mapRef.current.panTo([lat, lon], { animate: true, duration: 0.25 }) }
         setTimeout(() => mapRef.current?.invalidateSize(), 50)
+        setDrawTick(t => t + 1)
       }
 
       async function fallbackToSondeHub(_reason: string) {
         setSourceUrl(buildSourceUrl())
-        onResult?.(false)
         const launchInstant = launchUtcInstant(launch.year, launch.month, launch.day, launch.time_utc, launch.time_local)
         if (startplace && isWithinMatchWindow(launchInstant)) {
           setStatus('Consultando feed ao vivo do radiosondy.info…')
@@ -308,14 +344,43 @@ export default function LaunchMap({ launch, onClose, onResult, station = DEFAULT
             const match = findLiveMatch(live, startplace)
             if (match) {
               setStatus(null)
-              setIsSondeHubPos(true)
+              setIsSondeHubPos(false)
+              setResolvedSerial(match.sondeNumber)
               await plotPosition(match.lat, match.lon, match.sondeNumber, 'radiosondy.info (ao vivo)')
               setSondeHubMapUrl(sondeHubUrl(match.sondeNumber, match.lat, match.lon, 7))
+              onResult?.(true)
+              onPositionRef.current?.(launch, {
+                lat: match.lat, lon: match.lon, sondeNumber: match.sondeNumber, status: 'UNKNOWN',
+                altitude: match.altitude || undefined,
+              })
               return
             }
           } catch {}
           if (cancelled) return
         }
+
+        // Pouso já visto por outra fonte (SondeHub recente, arquivo) nas 4h
+        // seguintes ao lançamento. Pontos com 'cache' já pertencem a outro
+        // lançamento do mês e não são reaproveitados.
+        let candidates = contextPointsRef.current.filter(p => !p.sources.includes('cache'))
+        const stationInfo = findStation(station)
+        if (stationInfo && Date.now() - launchInstant.getTime() < SONDEHUB_RECENT_SECONDS * 1000) {
+          setStatus('Consultando telemetria recente do SondeHub…')
+          try { candidates = mergeSondePoints(candidates, await fetchRecentSondeHubPoints(stationInfo)) } catch {}
+          if (cancelled) return
+        }
+        const point = findPointForLaunch(launch, candidates)
+        if (point) {
+          setStatus(null)
+          setIsSondeHubPos(!point.sources.includes('radiosondy'))
+          setResolvedSerial(point.serial)
+          await plotPosition(point.lat, point.lon, point.serial, point.sources.join(' + '), sondePointPopup(point))
+          setSondeHubMapUrl(sondeHubUrl(point.serial, point.lat, point.lon, 7))
+          onResult?.(true)
+          onPositionRef.current?.(launch, pointToPosition(point))
+          return
+        }
+
         setStatus('Consultando sondehub.org…')
         let sonde: Awaited<ReturnType<typeof fetchSondeHubArchiveSondeForDay>> = null
         try { sonde = await fetchSondeHubArchiveSondeForDay(station, launch.year, launch.month, launch.day) } catch {}
@@ -323,11 +388,15 @@ export default function LaunchMap({ launch, onClose, onResult, station = DEFAULT
         if (sonde) {
           setStatus(null)
           setIsSondeHubPos(true)
+          setResolvedSerial(sonde.serial)
           await plotPosition(sonde.lat, sonde.lon, sonde.serial, 'sondehub.org')
           setSondeHubMapUrl(sondeHubUrl(sonde.serial, sonde.lat, sonde.lon, 7))
+          onResult?.(true)
+          onPositionRef.current?.(launch, { lat: sonde.lat, lon: sonde.lon, sondeNumber: sonde.serial, status: 'UNKNOWN' })
         } else {
           setStatus(null)
           setError('Sem dados no radiosondy.info ou sondehub.org para este lançamento.')
+          onResult?.(false)
         }
       }
 
@@ -374,13 +443,31 @@ export default function LaunchMap({ launch, onClose, onResult, station = DEFAULT
 
     run()
     return () => { cancelled = true }
-  }, [launch.year, launch.month, launch.day, launch.time_utc, launch.time_local, station])
+  }, [launch.year, launch.month, launch.day, launch.time_utc, launch.time_local, station, attempt])
+
+  // Contexto: sondas do mês vindas de outras fontes que a camada principal
+  // (radiosondy.info + destaque) não desenhou.
+  useEffect(() => {
+    const L = leafletRef.current
+    const map = mapRef.current
+    if (!L || !map) return
+    if (!contextLayerRef.current) contextLayerRef.current = L.layerGroup().addTo(map)
+    const layer = contextLayerRef.current
+    layer.clearLayers()
+    for (const p of contextPoints) {
+      if (drawnSerialsRef.current.has(p.serial)) continue
+      L.marker([p.lat, p.lon], { icon: buildBalloonIcon(L, statusColor(p.status), BALLOON_SIZE, gmt3IconLabel(p.date)) })
+        .addTo(layer)
+        .bindPopup(sondePointPopup(p))
+    }
+  }, [contextPoints, drawTick])
 
   useEffect(() => {
     return () => {
       mapRef.current?.remove()
       mapRef.current = null
       leafletRef.current = null
+      contextLayerRef.current = null
     }
   }, [])
 
@@ -460,6 +547,9 @@ export default function LaunchMap({ launch, onClose, onResult, station = DEFAULT
               <>
                 <AlertCircle className="text-red-400" size={26} />
                 <p className="text-sm text-red-400 px-6 text-center">{error}</p>
+                <button onClick={() => setAttempt(v => v + 1)} className="text-xs text-white border border-border rounded px-2.5 py-1.5 flex items-center gap-1.5 hover:border-blue-500/50">
+                  <RefreshCw size={11} /> Tentar todas as fontes novamente
+                </button>
                 {sourceUrl && (
                   <>
                     <a href={sourceUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-400 hover:underline">
