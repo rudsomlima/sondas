@@ -5,7 +5,7 @@ import 'leaflet/dist/leaflet.css'
 import {
   statusColor, buildBalloonIcon, buildHighlightBalloonIcon,
   buildHighlightLiveBalloonIcon, gmt3IconLabel, launchUtcInstant,
-  LIVE_COLOR, LEGEND_ITEMS,
+  LIVE_COLOR, LEGEND_ITEMS, flightStatus, FLIGHT_STATUS_LABEL,
 } from '@/app/lib/radiosondy'
 import { createBaseMap } from '@/app/lib/leafletBase'
 import { STATUS_COLORS } from '@/app/lib/tokens'
@@ -170,7 +170,7 @@ export default function MissionMap({ station, monthLaunches, extraPoints = NO_PO
           ? buildHighlightLiveBalloonIcon(L, LIVE_COLOR, BALLOON_SIZE, label)
           : buildHighlightBalloonIcon(L, statusColor('UNKNOWN'), BALLOON_SIZE, label)
         L.marker([f.lat, f.lon], { icon, zIndexOffset: 1000 }).addTo(layer).bindPopup(
-          `<b>${escapeHtml(f.sondeNumber)}</b><br>${f.isLive ? 'Em voo' : 'Pousada'}` +
+          `<b>${escapeHtml(f.sondeNumber)}</b><br>${f.isLive ? 'Em voo' : FLIGHT_STATUS_LABEL[flightStatus(f)]}` +
           `<br>Último reporte: ${escapeHtml(formatGmt3(f.lastReportUtc))} GMT-3` +
           `<br>Altitude: ${Math.round(f.altitude).toLocaleString('pt-BR')} m` +
           (f.isLive ? `<br>Var. vertical: ${f.climbing.toFixed(1)} m/s` : '')

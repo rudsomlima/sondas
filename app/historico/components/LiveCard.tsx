@@ -1,7 +1,7 @@
 'use client'
 
 import { CheckCircle2, XCircle, Clock, Wind, Sun, Moon, Loader2 } from 'lucide-react'
-import { sondeHubUrl, TodayFlight } from '@/app/lib/radiosondy'
+import { sondeHubUrl, flightStatus, FLIGHT_STATUS_LABEL, TodayFlight } from '@/app/lib/radiosondy'
 import { isDaytime, sameLaunch, formatGmt3 } from '@/app/lib/launchUtils'
 import type { Launch, TodayData } from '@/app/lib/types'
 
@@ -101,12 +101,12 @@ export default function LiveCard({
                   <div key={f.sondeNumber} className="flex flex-col">
                     <div className="flex items-center gap-1.5 flex-wrap">
                       <span className={`text-xs font-semibold flex items-center gap-1 ${
-                        f.isLive ? 'text-red-400' : 'text-green-400'
+                        f.isLive ? 'text-red-400' : flightStatus(f) === 'signal-lost' ? 'text-yellow-400' : 'text-green-400'
                       }`}>
                         <Wind size={11} />
                         {f.isLive
                           ? (f.climbing >= 0 ? 'Em voo (subindo)' : 'Em voo (descendo)')
-                          : 'Pousada'}
+                          : FLIGHT_STATUS_LABEL[flightStatus(f)]}
                       </span>
                       <span className="text-xs text-emerald-400 mono font-medium">
                         {Math.round(f.altitude).toLocaleString('pt-BR')} m

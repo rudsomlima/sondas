@@ -1,7 +1,7 @@
 'use client'
 
 import { Wind, Loader2, Sun, Moon, Antenna, MapPinOff } from 'lucide-react'
-import type { TodayFlight } from '@/app/lib/radiosondy'
+import { flightStatus, FLIGHT_STATUS_LABEL, type TodayFlight } from '@/app/lib/radiosondy'
 import { isDaytime, formatGmt3 } from '@/app/lib/launchUtils'
 import type { Launch } from '@/app/lib/types'
 import type { SelectedTarget } from '../selection'
@@ -33,6 +33,7 @@ export default function LivePanel({
           <div className="space-y-2">
             {todayFlights.map(f => {
               const isSelected = selected?.serial === f.sondeNumber
+              const status = flightStatus(f)
               return (
                 <button
                   key={f.sondeNumber}
@@ -48,10 +49,11 @@ export default function LivePanel({
                 >
                   <div className="flex items-center gap-1.5 flex-wrap">
                     <span className={`text-xs font-semibold flex items-center gap-1 ${
-                      f.isLive ? 'text-live pulse-soft' : 'text-green-400'
-                    }`}>
+                      f.isLive ? 'text-live pulse-soft' : status === 'signal-lost' ? 'text-yellow-400' : 'text-green-400'
+                    }`}
+                      title={status === 'signal-lost' ? 'Parou de transmitir ainda descendo, longe do chão — pouso não confirmado' : undefined}>
                       <Wind size={11} />
-                      {f.isLive ? (f.climbing >= 0 ? 'Subindo' : 'Descendo') : 'Pousada'}
+                      {FLIGHT_STATUS_LABEL[status]}
                     </span>
                     <span className="text-xs text-emerald-400 mono">{Math.round(f.altitude).toLocaleString('pt-BR')} m</span>
                     <span className={`text-[9px] mono ${f.source === 'sondehub' || f.source === 'radiosondy-approx' ? 'text-yellow-400' : 'text-faint'}`}

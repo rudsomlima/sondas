@@ -151,12 +151,38 @@ export interface TodayFlight {
   lat: number
   lon: number
   lastReportUtc: string // "YYYY-MM-DD HH:mm:ssz", igual ao formato do feed ao vivo
-  isLive: boolean // true = ainda em voo agora; false = já pousou
+  isLive: boolean // true = ainda em voo agora; false = parou de transmitir (ver flightStatus)
   // 'radiosondy' = startplace batendo exato (confiável sozinho); 'radiosondy-approx'
   // = só o fallback por bounding box da região casou (pode ser balão de outro
   // local sobrevoando a área — não confirma "teve voo" sozinho, ver LiveCard);
   // 'sondehub' = casado só por proximidade geográfica com a estação.
   source: 'radiosondy' | 'radiosondy-approx' | 'sondehub' | 'sondehub-site'
+}
+
+export type FlightStatus = 'climbing' | 'descending' | 'landed' | 'signal-lost'
+
+// isLive=false só diz "parou de transmitir", não "pousou": a sonda some do
+// SondeHub quando desce abaixo do horizonte dos receptores, às vezes ainda a
+// km do chão (ex.: W3770310, último frame a 1.249 m caindo a 6 m/s). Só chama
+// de pousada o que tem evidência disso — recuperação registrada no
+// radiosondy.info, último frame perto do chão ou já sem velocidade vertical.
+// Não usa só a altitude absoluta: em estações altas (La Paz ~4.000 m) uma
+// sonda no chão fica bem acima de qualquer limiar fixo.
+const LANDED_MAX_ALT_M = 500
+const LANDED_MAX_VSPEED_MS = 1.5
+
+export function flightStatus(f: TodayFlight): FlightStatus {
+  if (f.isLive) return f.climbing >= 0 ? 'climbing' : 'descending'
+  if (f.source === 'radiosondy') return 'landed'
+  if (f.altitude < LANDED_MAX_ALT_M || Math.abs(f.climbing) < LANDED_MAX_VSPEED_MS) return 'landed'
+  return 'signal-lost'
+}
+
+export const FLIGHT_STATUS_LABEL: Record<FlightStatus, string> = {
+  climbing: 'Subindo',
+  descending: 'Descendo',
+  landed: 'Pousada',
+  'signal-lost': 'Sinal perdido',
 }
 
 export function toReportStr(date: Date): string {
