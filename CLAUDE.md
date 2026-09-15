@@ -224,8 +224,9 @@ carregando o texto bruto de `screens1.txt` (não um mapa chave→valor) — ver
 
 O app funciona como servidor de atualização do próprio receptor
 (`RX_FSK/src/conn-ota.cpp` no firmware, `checkAutoOta`) — publique um
-`firmware.bin` aqui, o receptor baixa sozinho no próximo wake elegível (sem
-sonda em voo, bateria ok).
+`firmware.bin` aqui, o receptor baixa sozinho na primeira oportunidade de
+contato (desde `dev20260915.5`: logo que o WiFi conecta e a cada 10 min,
+**mesmo com sonda em voo**; só não com bateria abaixo de `power.vcrit`).
 
 - `GET/POST/DELETE /api/firmware/[receiver]/upload` — `POST` publica
   (`writeFirmwareBinary`, R2: `sondas/firmware/{key}/{meta.json,firmware.bin}`);

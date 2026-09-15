@@ -70,6 +70,10 @@ export const RDZ_CONFIG_SECTIONS: RdzConfigSectionMeta[] = [
     label: 'Receptor / decoders',
     fields: [
       f('freqofs', 'Offset de frequência RX (Hz)', 'int'),
+      f('rx.alternate', 'Alternar entre sondas em frequências diferentes: segundos em cada sonda antes de pular pra próxima (0=desligado, fica na 1ª). Perde quadros de cada uma — só pra campanha', 'int'),
+      f('rx.altscan', 'Alternância: segundos máximos esperando sinal num canal vazio antes de seguir (só durante campanha, ex. 4)', 'int'),
+      f('rx.landlock', 'Trava de pouso (m acima do receptor, 0=off): sonda descendo abaixo disso fixa a frequência até pousar — vence a alternância', 'int'),
+      f('rx.altframes', 'Alternância por quadros: N quadros completos de cada sonda e pula pra próxima (1 = um de cada, girando; 0 = usa os segundos acima). Tem prioridade', 'int'),
       f('rs41.agcbw', 'RS41 — banda AGC', 'int'),
       f('rs41.rxbw', 'RS41 — banda RX', 'int'),
       f('rs92.rxbw', 'RS92 — banda RX (e AGC)', 'int'),
