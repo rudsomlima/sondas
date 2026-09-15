@@ -6,6 +6,7 @@ import { Antenna, Loader2, BatteryMedium, Moon, Radio, Clock, Cpu, Wifi, WifiOff
 import { formatGmt3 } from '@/app/lib/launchUtils'
 import type { ReceiverStatus } from '@/app/lib/sondehub'
 import type { RdzPower } from '@/app/lib/mqtt'
+import { LEVEL_LABEL } from '@/app/lib/powerPlan'
 import type { MyReceiverSonde } from '../hooks/useReceiverStatus'
 import type { ReceiverSource } from '../hooks/useReceiver'
 import type { SelectedTarget } from '../selection'
@@ -39,12 +40,21 @@ const SLEEP_REASONS: Record<string, string> = {
   vpanic: 'proteção da bateria (opt-in)',
 }
 
-// Escuta estendida (lançamento atrasado): o receptor está ACORDADO ouvindo,
-// não dormindo. Cada modo tem uma postura de energia diferente.
+// Espera por lançamento atrasado: o receptor está ACORDADO ouvindo, não
+// dormindo. listen_wait é o atual (níveis de energia); os demais vêm de
+// firmwares antigos (escuta estendida por modo).
 const LISTEN_REASONS: Record<string, string> = {
+  listen_wait: 'aguardando lançamento atrasado',
   listen_extend: 'aguardando lançamento (WiFi economizado, ao vivo)',
   listen_wifioff: 'aguardando lançamento (WiFi desligado p/ economia)',
   listen_check: 'verificando sonda periodicamente (economia máxima)',
+}
+
+const PERIOD_LABEL: Record<string, string> = {
+  flight: 'acompanhando voo',
+  window: 'janela de lançamento',
+  wait: 'espera por atraso',
+  idle: 'fora da janela',
 }
 
 // Card "Meu receptor": estado do receptor local do usuário (rdzTTGOsonde/
@@ -144,6 +154,14 @@ export default function ReceiverPanel({
             ) : (
               <span className="badge text-[9px] px-1.5 py-0 text-dim border border-border">SondeHub ~20s</span>
             )}
+            {power?.boostUntil != null && power.boostUntil * 1000 > nowTick && (
+              <span
+                className="badge badge-warning text-[9px] px-1.5 py-0"
+                title={power.boost === 'auto' ? 'Turbo automático: sonda no ar por perto (SondeHub)' : 'Turbo pedido pelo app'}
+              >
+                ⚡ turbo até {formatGmt3(new Date(power.boostUntil * 1000).toISOString()).slice(11, 16)}
+              </span>
+            )}
             <span className="text-[10px] text-faint">
               {lastSeenMs != null
                 ? `Visto em ${formatGmt3(new Date(lastSeenMs).toISOString())}`
@@ -204,6 +222,12 @@ export default function ReceiverPanel({
             <div className="mb-3 rounded border border-border bg-bg p-2 space-y-1.5">
               <p className="text-[10px] text-dim font-semibold">
                 {liveOffline ? 'Última leitura conhecida' : 'Energia agora'}
+                {power.level !== undefined && (
+                  <span className="font-normal text-white">
+                    {' · '}{LEVEL_LABEL[power.level] ?? `nível ${power.level}`}
+                    {power.period && <span className="text-faint"> ({PERIOD_LABEL[power.period]})</span>}
+                  </span>
+                )}
               </p>
               <div className="flex items-center gap-3 text-[10px] mono flex-wrap">
                 <span
@@ -230,11 +254,20 @@ export default function ReceiverPanel({
                   display desligado — a decodificação de sondas continua funcionando normalmente.
                 </p>
               )}
-              {!sleeping && !waitingLate && (
+              {power.wifi === 'off' && (power.reportS ?? 0) > 0 && (
+                <p className="text-[10px] text-dim">
+                  WiFi religa a cada {Math.round(power.reportS! / 60)} min pra reportar —{' '}
+                  {power.level === 3
+                    ? 'entre uma coisa e outra ouve em pulsos curtos e cochila (sono leve)'
+                    : 'continua ouvindo sondas'}
+                  , e volta ao Pleno assim que aparecer uma.
+                </p>
+              )}
+              {!sleeping && !waitingLate && !(power.wifi === 'off' && (power.reportS ?? 0) > 0) && (
                 <p className="text-[10px] text-dim">
                   {power.wifi === 'on' && power.cpuMhz === 240 && !power.eco
                     ? 'Funcionamento normal, sem economias ativas.'
-                    : 'Receptor ligado e escutando — nenhuma janela de dormir prevista agora.'}
+                    : 'Receptor ligado e escutando sondas, economizando energia.'}
                 </p>
               )}
             </div>

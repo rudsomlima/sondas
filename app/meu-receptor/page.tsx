@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Antenna, Loader2, RotateCw, XCircle } from 'lucide-react'
 import { AppSettings, DEFAULT_SETTINGS, KnownReceiver, getSettings, setSettings } from '@/app/lib/settings'
 import { receiverKey } from '@/app/lib/receiverKey'
@@ -11,36 +11,23 @@ import FullConfigEditor from './components/FullConfigEditor'
 import PowerTimeline from './components/PowerTimeline'
 import BatteryChart from './components/BatteryChart'
 import FirmwareOtaPanel from './components/FirmwareOtaPanel'
+import PowerBoostPanel from './components/PowerBoostPanel'
 import type { RdzConfig } from '@/app/lib/rdzConfig'
 
 export default function MeuReceptorPage() {
   const [config, setConfigState] = useState<AppSettings>(DEFAULT_SETTINGS)
-  const [saved, setSaved] = useState(false)
-  const [importedToast, setImportedToast] = useState<string | null>(null)
-  const [sleepDraft, setSleepDraft] = useState<Record<string, string> | null>(null)
+  const [powerDraft, setPowerDraft] = useState<Record<string, string> | null>(null)
 
   useEffect(() => { setConfigState(getSettings()) }, [])
 
-  const setConfig = (updater: (c: AppSettings) => AppSettings) => setConfigState(updater)
-
-  // Garante que o receptor ativo (mqttTopicPrefix) também está na lista de
-  // conhecidos — só ao salvar explicitamente, não a cada tecla digitada no
-  // campo de prefixo (um useEffect ligado a config.mqttTopicPrefix rodava a
-  // cada onChange do input controlado, cadastrando cada valor PARCIAL
-  // digitado — "p", "pu", "pu7"… — como um receptor separado, poluindo a
-  // lista em vez de só adicionar o valor final).
-  const handleSave = () => {
-    const prefix = config.mqttTopicPrefix
-    const next = prefix && !config.knownReceivers.some(r => r.prefix === prefix)
-      ? { ...config, knownReceivers: [...config.knownReceivers, {
-          prefix, displayName: config.uploaderCallsign || prefix, addedAt: Date.now(),
-        }] }
-      : config
-    if (next !== config) setConfigState(next)
+  // Grava na hora (localStorage) — o painel "Meu receptor" não tem mais botão
+  // "Salvar", igual ao resto da página. Parte sempre do que está gravado, não
+  // do estado React, pra não sobrescrever o que outro trecho acabou de gravar.
+  const updateSettings = useCallback((updater: (s: AppSettings) => AppSettings) => {
+    const next = updater(getSettings())
     setSettings(next)
-    setSaved(true)
-    setTimeout(() => setSaved(false), 2500)
-  }
+    setConfigState(next)
+  }, [])
 
   const firmwareConfig = useFirmwareConfig()
   // Cadência real do receptor (mqtt.report_interval, ms) — quando a config já
@@ -51,34 +38,28 @@ export default function MeuReceptorPage() {
     : undefined
   const receiver = useReceiver(reportIntervalMs && isFinite(reportIntervalMs) ? reportIntervalMs : undefined)
 
-  // Auto-preenche callsign e posição de casa a partir da config do firmware
-  const autoFillDone = useRef(false)
+  // Callsign e posição têm uma fonte só: o firmware (sondehub.callsign,
+  // rxlat/rxlon). Sempre que a config dele carrega/muda, espelha nas
+  // preferências do app (que o /painel usa) — o painel "Meu receptor" só deixa
+  // editar esses campos quando o firmware não os informa.
   useEffect(() => {
-    if (!firmwareConfig.config || autoFillDone.current) return
-    autoFillDone.current = true
-    const fwCallsign = String(firmwareConfig.config['sondehub.callsign'] ?? '').trim()
-    const fwLat = parseFloat(String(firmwareConfig.config['rxlat'] ?? ''))
-    const fwLon = parseFloat(String(firmwareConfig.config['rxlon'] ?? ''))
-    setConfigState(prev => {
-      const next = { ...prev }
-      const msgs: string[] = []
-      if (fwCallsign && !prev.uploaderCallsign) {
-        next.uploaderCallsign = fwCallsign
-        msgs.push('callsign')
-      }
-      if (isFinite(fwLat) && isFinite(fwLon) && prev.homeLat === null) {
-        next.homeLat = fwLat
-        next.homeLon = fwLon
-        msgs.push('posição')
-      }
-      if (msgs.length > 0) {
-        setSettings(next)
-        setImportedToast(`${msgs.join(' e ')} importado${msgs.length > 1 ? 's' : ''} do firmware`)
-        setTimeout(() => setImportedToast(null), 3500)
-      }
-      return next
-    })
-  }, [firmwareConfig.config])
+    const fw = firmwareConfig.config
+    if (!fw) return
+    const fwCallsign = String(fw['sondehub.callsign'] ?? '').trim()
+    const fwLat = parseFloat(String(fw['rxlat'] ?? ''))
+    const fwLon = parseFloat(String(fw['rxlon'] ?? ''))
+    const fwHasPosition = isFinite(fwLat) && isFinite(fwLon) && !(fwLat === 0 && fwLon === 0)
+    const cur = getSettings()
+    const callsignDiffers = !!fwCallsign && fwCallsign !== cur.uploaderCallsign
+    const positionDiffers = fwHasPosition && (cur.homeLat !== fwLat || cur.homeLon !== fwLon)
+    if (!callsignDiffers && !positionDiffers) return
+    updateSettings(s => ({
+      ...s,
+      uploaderCallsign: callsignDiffers ? fwCallsign : s.uploaderCallsign,
+      homeLat: positionDiffers ? fwLat : s.homeLat,
+      homeLon: positionDiffers ? fwLon : s.homeLon,
+    }))
+  }, [firmwareConfig.config, updateSettings])
 
   // Auto-descoberta via reporte HTTP direto (/api/receiver-report) — QUALQUER
   // receptor que já tenha mqtt.siteurl configurado (necessário pro
@@ -145,8 +126,27 @@ export default function MeuReceptorPage() {
     fetch(`/api/known-receivers?prefix=${encodeURIComponent(prefix)}`, { method: 'DELETE' }).catch(() => {})
   }
 
+  // Cadastro manual (receptor que ainda não reportou): entra na lista e vira o
+  // ativo — recarrega, como a troca de receptor.
+  const addReceiver = (prefix: string) => {
+    const cur = getSettings()
+    const next: AppSettings = {
+      ...cur,
+      mqttTopicPrefix: prefix,
+      knownReceivers: cur.knownReceivers.some(r => r.prefix === prefix)
+        ? cur.knownReceivers
+        : [...cur.knownReceivers, { prefix, displayName: prefix, addedAt: Date.now() }],
+    }
+    setSettings(next)
+    window.location.reload()
+  }
+
+  const scrollToFirmwareConfig = () => {
+    document.getElementById('config-completa')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+
   const effectiveConfig: RdzConfig | null = firmwareConfig.config
-    ? (sleepDraft ? { ...firmwareConfig.config, ...sleepDraft } : firmwareConfig.config)
+    ? (powerDraft ? { ...firmwareConfig.config, ...powerDraft } : firmwareConfig.config)
     : null
 
   const activePrefix = config.mqttTopicPrefix
@@ -164,54 +164,16 @@ export default function MeuReceptorPage() {
         </p>
       </div>
 
-      {/* ── Seletor de receptor ─────────────────────────────────────── */}
-      {knownReceivers.length > 1 && (
-        <div className="mb-6 panel p-4">
-          <p className="text-[10px] text-faint uppercase tracking-wide mb-2">Receptores conhecidos</p>
-          <div className="flex flex-wrap gap-2">
-            {knownReceivers.map(kr => {
-              const isActive = kr.prefix === activePrefix
-              return (
-                <button
-                  key={kr.prefix}
-                  onClick={() => !isActive && switchReceiver(kr.prefix)}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md border text-xs transition-all ${
-                    isActive
-                      ? 'bg-blue-600/30 border-blue-500/60 text-blue-200 cursor-default'
-                      : 'border-border text-gray-400 hover:text-white hover:border-border-strong'
-                  }`}
-                  title={`prefix: ${kr.prefix}\nkey: ${receiverKey(kr.prefix)}`}
-                >
-                  {kr.displayName}
-                  {isActive && <span className="text-[9px] text-blue-400 ml-0.5">ativo</span>}
-                </button>
-              )
-            })}
-          </div>
-          {knownReceivers.length > 0 && (
-            <p className="text-[10px] text-faint mt-2">
-              Trocar de receptor recarrega a página para carregar os dados corretos.
-              Cada receptor mantém seu histórico separado (localStorage + R2).
-            </p>
-          )}
-        </div>
-      )}
-
-      {importedToast && (
-        <div className="mb-4 px-4 py-2.5 bg-emerald-900/40 border border-emerald-600/40 rounded-md text-xs text-emerald-300 flex items-center gap-2">
-          <span className="text-emerald-400">✓</span> {importedToast}
-        </div>
-      )}
-
       <ReceiverSettingsPanel
-        config={config}
-        setConfig={setConfig}
-        onSave={handleSave}
-        saved={saved}
+        settings={config}
+        updateSettings={updateSettings}
+        firmwareConfig={firmwareConfig.config}
         knownReceivers={knownReceivers}
         onRenameReceiver={renameReceiver}
         onForgetReceiver={forgetReceiver}
         onSwitchReceiver={switchReceiver}
+        onAddReceiver={addReceiver}
+        onEditFirmwareConfig={scrollToFirmwareConfig}
       />
 
       {firmwareConfig.loading && (
@@ -234,16 +196,25 @@ export default function MeuReceptorPage() {
         </div>
       )}
 
-      {firmwareConfig.config && (
-        <FullConfigEditor
-          config={firmwareConfig.config}
-          loadedAt={firmwareConfig.loadedAt}
-          applying={firmwareConfig.applying}
-          applyError={firmwareConfig.applyError}
-          applyResult={firmwareConfig.applyResult}
-          onApply={firmwareConfig.apply}
-          onSleepChanges={setSleepDraft}
+      {activePrefix && (
+        <PowerBoostPanel
+          power={receiver.power}
+          reportMin={firmwareConfig.config?.['power.report_min'] ? Number(firmwareConfig.config['power.report_min']) || null : null}
         />
+      )}
+
+      {firmwareConfig.config && (
+        <div id="config-completa" className="scroll-mt-4">
+          <FullConfigEditor
+            config={firmwareConfig.config}
+            loadedAt={firmwareConfig.loadedAt}
+            applying={firmwareConfig.applying}
+            applyError={firmwareConfig.applyError}
+            applyResult={firmwareConfig.applyResult}
+            onApply={firmwareConfig.apply}
+            onPowerChanges={setPowerDraft}
+          />
+        </div>
       )}
 
       <FirmwareOtaPanel receiverKey={receiverKey(activePrefix)} pollMs={reportIntervalMs} />
@@ -252,6 +223,8 @@ export default function MeuReceptorPage() {
         history={receiver.batteryHistory}
         config={effectiveConfig}
         onDeleteDay={receiver.deleteBatteryHistoryDay}
+        recording={receiver.historyRecording.batt}
+        onRecordingChange={v => receiver.setHistoryRecording({ batt: v })}
       />
 
       <PowerTimeline
@@ -259,6 +232,8 @@ export default function MeuReceptorPage() {
         config={effectiveConfig}
         mqttConnected={receiver.liveConnected}
         onDeleteDay={receiver.deletePowerHistoryDay}
+        recording={receiver.historyRecording.power}
+        onRecordingChange={v => receiver.setHistoryRecording({ power: v })}
       />
     </div>
   )

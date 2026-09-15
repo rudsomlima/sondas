@@ -10,6 +10,7 @@ import type { Launch } from '@/app/lib/types'
 import { useTodayData } from '../historico/hooks/useTodayData'
 import { useLiveFlights } from '../historico/hooks/useLiveFlights'
 import { useSondePoints } from '../historico/hooks/useSondePoints'
+import { useRecoveredLaunches } from '../historico/hooks/useRecoveredLaunches'
 import { attachPositions } from '@/app/lib/sondePoints'
 import { useReceiver } from './hooks/useReceiver'
 import { useReceiverAlerts } from './hooks/useReceiverAlerts'
@@ -57,7 +58,10 @@ export default function PainelPage() {
   const { points: monthPoints, refresh: refreshPoints } = useSondePoints(station, clock.getUTCFullYear(), clock.getUTCMonth() + 1)
   // Lançamentos sem posição ganham o pouso casado por horário (qualquer fonte),
   // e o mapa ainda recebe as sondas que não casaram com nenhum lançamento.
-  const positionedMonth = useMemo(() => attachPositions(monthLaunches, monthPoints).launches, [monthLaunches, monthPoints])
+  const attachedMonth = useMemo(() => attachPositions(monthLaunches, monthPoints).launches, [monthLaunches, monthPoints])
+  // Posições UNKNOWN (telemetria RF) ganham FOUND/LOST se alguém registrou a
+  // recuperação no SondeHub — em segundo plano, sem atrasar o mapa.
+  const positionedMonth = useRecoveredLaunches(attachedMonth)
 
   const loadMonth = useCallback(async () => {
     const request = ++monthRequestRef.current

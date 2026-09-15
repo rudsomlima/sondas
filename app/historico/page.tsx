@@ -8,7 +8,8 @@ import { Station, DEFAULT_STATION, getSelectedStation, setSelectedStation } from
 import type { Launch, LaunchPosition } from '@/app/lib/types'
 import { nowGMT3 } from '@/app/lib/types'
 import { isValidPosition, launchInstantMs, mergeLaunchCollections, sourceCounts } from '@/app/lib/launchData'
-import { launchKey } from '@/app/lib/launchUtils'
+import { launchKey, sameLaunch } from '@/app/lib/launchUtils'
+import { useRecoveredLaunches } from './hooks/useRecoveredLaunches'
 import { attachPositions, mergeSondePoints, pointsFromLaunches, type SondePoint } from '@/app/lib/sondePoints'
 import { useYearData } from './hooks/useYearData'
 import { useSondePoints } from './hooks/useSondePoints'
@@ -19,6 +20,8 @@ import LiveCard from './components/LiveCard'
 import SummaryCards from './components/SummaryCards'
 import MonthlyChart from './components/MonthlyChart'
 import MonthAccordion from './components/MonthAccordion'
+
+const NO_LAUNCHES: Launch[] = []
 
 export default function HistoricoPage() {
   const currentYear = nowGMT3().getUTCFullYear()
@@ -96,6 +99,9 @@ export default function HistoricoPage() {
   const clock = nowGMT3()
   const pointsMonth = expandedMonth ?? (year === clock.getUTCFullYear() ? clock.getUTCMonth() + 1 : null)
   const { points: sondePoints } = useSondePoints(station, year, pointsMonth)
+  // Status de recuperação do SondeHub nas posições UNKNOWN (só exibição; a
+  // rede é consultada só pro mês aberto/corrente, o cache vale pro ano todo).
+  const displayLaunches = useRecoveredLaunches(data?.launches ?? NO_LAUNCHES, pointsMonth)
   const dataRef = useRef(data)
   dataRef.current = data
 
@@ -141,8 +147,8 @@ export default function HistoricoPage() {
 
   const monthContextPoints = useMemo(() => {
     if (!data || expandedMonth == null) return sondePoints
-    return mergeSondePoints(pointsFromLaunches(data.launches.filter(l => l.month === expandedMonth)), sondePoints)
-  }, [data, expandedMonth, sondePoints])
+    return mergeSondePoints(pointsFromLaunches(displayLaunches.filter(l => l.month === expandedMonth)), sondePoints)
+  }, [data, displayLaunches, expandedMonth, sondePoints])
 
   const setNoMatchLaunches = useCallback((updater: (prev: Set<string>) => Set<string>) => {
     setNoMatchLaunchesState(updater)
@@ -196,10 +202,15 @@ export default function HistoricoPage() {
   // Agrupa por mês
   const byMonth: Record<number, Launch[]> = {}
   if (data) {
-    for (const l of data.launches) {
+    for (const l of displayLaunches) {
       (byMonth[l.month] ??= []).push(l)
     }
   }
+  // O lançamento selecionado é uma cópia de quando foi clicado: troca pela
+  // versão atual (ex.: ganhou status de recuperação depois) pro mapa refletir.
+  const liveSelectedLaunch = selectedLaunch
+    ? displayLaunches.find(l => sameLaunch(l, selectedLaunch)) ?? selectedLaunch
+    : null
 
   return (
     <div className="p-6 max-w-5xl mx-auto">
@@ -323,7 +334,7 @@ export default function HistoricoPage() {
             byMonth={byMonth}
             expandedMonth={expandedMonth}
             setExpandedMonth={setExpandedMonthByUser}
-            selectedLaunch={selectedLaunch}
+            selectedLaunch={liveSelectedLaunch}
             setSelectedLaunch={setSelectedLaunchByUser}
             noMatchLaunches={noMatchLaunches}
             setNoMatchLaunches={setNoMatchLaunches}

@@ -97,6 +97,14 @@ hardware do usuário; tudo mais é leitura de fontes públicas.
   (`sondas/receivers/{key}/...`, `sondas/firmware/{key}/...`). Vários
   receptores podem ser cadastrados (`knownReceivers`), cada um com seu
   próprio histórico separado; trocar o ativo recarrega a página.
+- **Painel "Meu receptor"** (`ReceiverSettingsPanel.tsx`): uma lista só de
+  receptores (auto-descobertos; cadastro manual recolhido), grava na hora
+  (`updateSettings`, sem botão Salvar). `uploaderCallsign` e
+  `homeLat/homeLon` têm **uma fonte só quando há firmware reportando**:
+  `sondehub.callsign` e `rxlat/rxlon` do snapshot, espelhados nas
+  preferências pela página e mostrados só pra leitura (link pra editar na
+  Configuração completa); editáveis aqui só sem esses valores no firmware
+  (ex.: auto_rx). Não reintroduza edição duplicada desses campos.
 
 #### Telemetria ao vivo (bateria, deep sleep, energia)
 
@@ -110,16 +118,48 @@ hardware do usuário; tudo mais é leitura de fontes públicas.
 - `app/lib/powerState.ts` — lógica pura (sem `'use client'`) compartilhada
   entre os hooks do navegador e `receiverCollect.ts`, pra não duplicar a
   regra de "o que conta como uma leitura nova". `deriveSleepState` distingue
-  sleep de verdade (`reason` sem prefixo `listen`) de escuta estendida
-  (`reason` começa com `listen_*` — acordado, aguardando lançamento
-  atrasado, ver `DEEP_SLEEP_V2_GUIDE.md` no repo do firmware); tolerância de
-  10 min sobre `sleepUntil` pro drift do RTC do TTGO.
+  sleep de verdade (`reason` sem prefixo `listen`) de espera por lançamento
+  atrasado (`reason` começa com `listen_*` — acordado; hoje `listen_wait`,
+  ver `POWER_MODES_GUIDE.md` no repo do firmware); tolerância de 10 min
+  sobre `sleepUntil` pro drift do RTC do TTGO.
+- **Níveis de energia** (`power.*` no firmware, substituíram `sleep.*` em
+  `dev20260914.4`): período do dia (voo/janela/espera/resto) × nível (0
+  Pleno, 1 Econômico, 2 Silencioso com WiFi desligado, 3 Pulsado — escuta em
+  pulsos com light sleep entre eles, desde `dev20260914.5` —, 4 Sono
+  profundo). Silencioso e Pulsado têm o mesmo cpu/wifi no reporte: só
+  `level` os distingue, por isso ele entra na chave de dedup do histórico
+  (`powerHistoryKey`).
+  `app/lib/powerPlan.ts` é a lógica pura compartilhada (segmentos do dia,
+  presets, estimativa de mAh/dia) — espelha `normLevel`/`currentPeriod` de
+  `sleep.cpp`, mantenha os dois em sincronia. O reporte `power` traz
+  `level`/`period`/`report_s`; `report_s` > 0 (Silencioso) estica a janela de
+  frescor em `useReceiver.ts`, senão o card acusa offline entre as religadas
+  do WiFi. Capacidade da bateria e mA por nível (calibração) moram só no app
+  (`AppSettings.powerEstimate`), o firmware não sabe disso.
+- **Turbo remoto** (`/api/receiver-power/boost`, `PowerBoostPanel.tsx`):
+  força Pleno até um horário. O firmware faz GET junto da config pendente —
+  a resposta tem chaves planas em string (`mReqId`/`mAuth`/`mUntil`,
+  `aUntil`/`aSerial`) porque o extrator JSON dele não entende aninhamento
+  nem número; o objeto `info` é só pro navegador e **não pode ter chaves com
+  esses nomes** (o extrator faz `strstr` no corpo inteiro). Manual = pedido
+  assinado no navegador com `computeCfgAuth(secret, reqId, String(until))`
+  (firmware verifica); automático = calculado no próprio GET (sem cron) a
+  partir do snapshot da config (`power.boost_auto/boost_km`, `rxlat/rxlon`)
+  e do SondeHub, com cache em memória de 2 min por receptor.
+- **Liga/desliga do registro** (botão "Gravando/Pausado" nos gráficos de
+  bateria e energia): preferência por receptor em
+  `sondas/receivers/{key}/history-settings.json`
+  (`/api/receiver-history/settings`, `useHistorySettings.ts`). Pausado =
+  `recordCollected` nem lê nem grava aquele histórico no R2 (economiza
+  operações — o receptor pode reportar a cada 10 s) e os hooks do navegador
+  param de acrescentar leituras locais; o live-status continua. A preferência
+  tem cache de 1 min por instância do servidor.
 - Hooks: `useReceiver.ts` (agregador principal, usado por `/meu-receptor` e
   `/painel`), `useReceiverStatus.ts`, `usePowerStateHistory.ts`,
   `useBatteryHistory.ts` — consumidos por `PowerTimeline.tsx`/
   `BatteryChart.tsx` (meu-receptor) e `ReceiverPanel.tsx` (painel).
 
-#### Config remota completa (`FullConfigEditor.tsx`, `SleepConfigEditor.tsx`)
+#### Config remota completa (`FullConfigEditor.tsx`, `PowerConfigEditor.tsx`)
 
 Mesmo padrão de fila em 3 partes, usado tanto para config quanto para telas
 (seção seguinte) — vale entender uma vez só:
@@ -148,9 +188,11 @@ Mesmo padrão de fila em 3 partes, usado tanto para config quanto para telas
   campo (int, string de tamanho N, lista, double) vivem em
   `rdzConfigSections.ts`, que também é onde uma chave de config nova do
   firmware precisa ser registrada pra aparecer no editor (ex.: `ota.auto`).
-- `SleepConfigEditor.tsx` é uma UI dedicada só pros campos `sleep.*` (janelas
-  de deep sleep) dentro do editor completo — ver
-  `docs/DEEP_SLEEP_V2_GUIDE.md` no repo do firmware pro que cada campo faz.
+- `PowerConfigEditor.tsx` é uma UI dedicada só pros campos `power.*` (seção
+  "Energia") dentro do editor completo: presets, prévia do dia por nível,
+  estimativa de autonomia com calibração, lançamentos, bateria — ver
+  `docs/POWER_MODES_GUIDE.md` no repo do firmware pro que cada campo faz.
+  `ota.auto` fica na seção própria "Firmware / auto-OTA".
 
 #### Editor visual de telas OLED (`OledScreenEditor.tsx`)
 
@@ -219,6 +261,35 @@ sonda em voo, bateria ok).
 - `app/configuracoes/page.tsx` — busca/seleção de estação (sem diferenciar acentos, via `searchStations`) e configurações de exibição (intervalo de auto-refresh). Não tem mais um ajuste de período parcial de extração — a extração sempre cobre o dia inteiro.
 - `app/api/cache/route.ts` — endpoint fino de status/info; a mutação do cache de fato acontece do lado do cliente via `localStorage` (essa rota só confirma a intenção pros fluxos de UI).
 - `app/meu-receptor/page.tsx` — dono do próprio rdzTTGOsonde: seletor de receptor (múltiplos cadastrados), config remota completa, editor de telas OLED, publicação de firmware, histórico de bateria/energia. Ver seção dedicada "Meu Receptor" acima — arquitetura própria, não compartilha nada com o resto do app além de `settings.ts`/`receiverKey.ts`.
+
+### Recuperações do SondeHub (`app/lib/sondehubRecovery.ts`)
+
+Posições vindas só de telemetria RF do SondeHub nascem `status: 'UNKNOWN'`.
+`https://api.v2.sondehub.org/recovered?serial=X` diz se alguém registrou a
+recuperação física (caso real: X2932841/X3043555, recuperadas por PS7BL em
+09/09/2026, apareciam UNKNOWN). Vira FOUND (achada, usando as coordenadas do
+relato) ou LOST (foi buscar e não achou); `planned` não muda nada.
+- **Só consulta por serial.** A busca por área (`lat/lon/distance` +
+  `datetime/duration`) é inconsistente — a mesma recuperação some ou aparece
+  conforme a data de referência (testado em 2026-09-15). Não troque por ela.
+- Cache em memória + `localStorage` (`sondas_recovery_v1`): achada 30 dias,
+  não achada 6 h, sem relato 3 h.
+- Aplicado em segundo plano, nunca bloqueando o desenho: `useSondePoints`
+  (pontos do mês), `useRecoveredLaunches` (lançamentos; no /historico só
+  consulta a rede pro mês aberto), `YearMap` (no fim) e o cron
+  `radiosondy-sync` (grava no R2; lançamentos dos últimos 60 dias, 40 seriais
+  por execução).
+- `mergePair` (`launchData.ts`): para a mesma sonda, FOUND/LOST sobrevive a
+  UNKNOWN da outra cópia, independente do rank da fonte.
+
+### Mapa do /painel: desenho progressivo
+
+`fetchMonthSondePoints` aceita `onProgress` e separa as duas buscas recentes do
+SondeHub (`fetchSondeHubRecentFramesSplit`): o endpoint `/sondes/site/{id}` já
+levou 14 s pra devolver `{}` (cache frio), enquanto a busca por raio responde
+em <1 s. `useSondePoints` desenha cada fonte assim que chega, abre com o último
+resultado salvo em `localStorage` (`sondas_points_v1_*`) e nunca encolhe a
+lista por um parcial menor.
 
 ### Invariantes importantes a preservar ao mexer neste código
 

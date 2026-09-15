@@ -1,61 +1,179 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { RadioTower, LocateFixed, Save, CheckCircle2, Pencil, Trash2 } from 'lucide-react'
+import { useEffect, useState, type ReactNode } from 'react'
+import { RadioTower, LocateFixed, Pencil, Trash2, Plus, KeyRound, Bell, BatteryMedium, ExternalLink, Wifi } from 'lucide-react'
 import type { AppSettings, KnownReceiver } from '@/app/lib/settings'
+import type { RdzConfig } from '@/app/lib/rdzConfig'
 import { receiverKey } from '@/app/lib/receiverKey'
 
 interface ReceiverSettingsPanelProps {
-  config: AppSettings
-  setConfig: (updater: (c: AppSettings) => AppSettings) => void
-  onSave: () => void
-  saved: boolean
-  rxPosition?: { lat: number; lon: number } | null
-  knownReceivers?: KnownReceiver[]
-  onRenameReceiver?: (prefix: string, name: string) => void
-  onForgetReceiver?: (prefix: string) => void
-  onSwitchReceiver?: (prefix: string) => void
+  settings: AppSettings
+  // Grava na hora (localStorage) — sem botão "Salvar".
+  updateSettings: (updater: (s: AppSettings) => AppSettings) => void
+  firmwareConfig: RdzConfig | null // último snapshot da config do receptor ativo
+  knownReceivers: KnownReceiver[]
+  onRenameReceiver: (prefix: string, name: string) => void
+  onForgetReceiver: (prefix: string) => void
+  onSwitchReceiver: (prefix: string) => void
+  onAddReceiver: (prefix: string) => void
+  onEditFirmwareConfig: () => void // rola até a "Configuração completa do firmware"
 }
 
-// Bloco "Meu receptor" — movido de app/configuracoes/page.tsx pra esta
-// página dedicada (callsign/posição/raio de alerta/notificações + MQTT de
-// status), sem mudança de comportamento, só de localização.
+interface ReceiverSummary {
+  lastSeenAt: number | null
+  battV: number | null
+  fwVersion: string | null
+  localIp: string | null
+  publicIp: string | null
+  rssi: number | null
+}
+
+// Estado ao vivo (bateria, visto há, IPs) muda a cada reporte; firmware quase
+// nunca — por isso o firmware é relido bem mais devagar.
+const LIVE_POLL_MS = 20_000
+const EMPTY_SUMMARY: ReceiverSummary = { lastSeenAt: null, battV: null, fwVersion: null, localIp: null, publicIp: null, rssi: null }
+const FW_POLL_MS = 5 * 60_000
+
+// Resumo de cada receptor da lista (visto há, bateria, firmware, IPs),
+// atualizado sozinho enquanto a página está aberta (pausa com a aba oculta).
+function useReceiverSummaries(receivers: KnownReceiver[]): Record<string, ReceiverSummary> {
+  const [summaries, setSummaries] = useState<Record<string, ReceiverSummary>>({})
+  const prefixesKey = receivers.map(r => r.prefix).join('|')
+  useEffect(() => {
+    let cancelled = false
+    const prefixes = prefixesKey ? prefixesKey.split('|') : []
+
+    const patch = (prefix: string, p: Partial<ReceiverSummary>) => {
+      if (cancelled) return
+      setSummaries(prev => ({
+        ...prev,
+        [prefix]: { ...EMPTY_SUMMARY, ...prev[prefix], ...p },
+      }))
+    }
+
+    const loadLive = () => {
+      if (document.hidden) return
+      for (const prefix of prefixes) {
+        fetch(`/api/receiver-live-status?receiver=${encodeURIComponent(receiverKey(prefix))}`)
+          .then(res => res.json())
+          .then(live => {
+            const s = live?.status
+            patch(prefix, {
+              lastSeenAt: s?.updatedAt ?? null,
+              battV: s?.pmu?.vBatt ?? null,
+              localIp: s?.net?.localIp ?? null,
+              publicIp: s?.net?.publicIp ?? null,
+              rssi: s?.net?.rssi ?? null,
+            })
+          })
+          .catch(() => {})
+      }
+    }
+    const loadFw = () => {
+      if (document.hidden) return
+      for (const prefix of prefixes) {
+        fetch(`/api/firmware/${encodeURIComponent(receiverKey(prefix))}/upload`)
+          .then(res => res.json())
+          .then(fw => patch(prefix, { fwVersion: fw?.installed?.version ?? null }))
+          .catch(() => {})
+      }
+    }
+
+    loadLive()
+    loadFw()
+    const liveId = setInterval(loadLive, LIVE_POLL_MS)
+    const fwId = setInterval(loadFw, FW_POLL_MS)
+    // Voltando pra aba: atualiza na hora em vez de esperar o próximo ciclo.
+    const onVisible = () => { if (!document.hidden) { loadLive(); loadFw() } }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      cancelled = true
+      clearInterval(liveId)
+      clearInterval(fwId)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
+  }, [prefixesKey])
+  return summaries
+}
+
+// Re-renderiza a cada `ms` — pro "visto há X" andar sozinho entre os polls.
+function useTick(ms: number) {
+  const [, setTick] = useState(0)
+  useEffect(() => {
+    const id = setInterval(() => setTick(t => t + 1), ms)
+    return () => clearInterval(id)
+  }, [ms])
+}
+
+function agoLabel(ms: number | null): string {
+  if (ms == null) return 'nunca reportou'
+  const s = Math.max(0, Math.round((Date.now() - ms) / 1000))
+  if (s < 90) return `visto há ${s} s`
+  const min = Math.round(s / 60)
+  if (min < 90) return `visto há ${min} min`
+  const h = Math.round(min / 60)
+  if (h < 36) return `visto há ${h} h`
+  return `visto há ${Math.round(h / 24)} dias`
+}
+
+function Section({ icon, title, children, first }: { icon: ReactNode; title: string; children: ReactNode; first?: boolean }) {
+  return (
+    <div className={first ? '' : 'mt-5 pt-5 border-t border-border'}>
+      <h3 className="text-xs font-semibold text-white flex items-center gap-1.5 mb-2">{icon}{title}</h3>
+      {children}
+    </div>
+  )
+}
+
+const inputCls = 'bg-bg border border-border rounded-md text-sm text-white mono px-3 py-2 outline-none focus:border-blue-500'
+
+/**
+ * Bloco "Meu receptor": qual receptor está ativo, de onde vêm callsign e
+ * posição, segredo de gravação e alertas do painel. Callsign/posição saem do
+ * firmware (sondehub.callsign, rxlat/rxlon) quando ele reporta a config — só
+ * ficam editáveis aqui sem firmware reportando (ex.: auto_rx), pra não haver
+ * dois lugares pro mesmo dado.
+ */
 export default function ReceiverSettingsPanel({
-  config, setConfig, onSave, saved, rxPosition,
-  knownReceivers, onRenameReceiver, onForgetReceiver, onSwitchReceiver,
+  settings, updateSettings, firmwareConfig, knownReceivers,
+  onRenameReceiver, onForgetReceiver, onSwitchReceiver, onAddReceiver, onEditFirmwareConfig,
 }: ReceiverSettingsPanelProps) {
   const [editingPrefix, setEditingPrefix] = useState<string | null>(null)
   const [editName, setEditName] = useState('')
-  // Lido só no efeito (não no useState inicial): Notification não existe no
-  // servidor, então calcular isso direto na primeira renderização faz o HTML
-  // do server ('unsupported') divergir do primeiro render do client (valor
-  // real) e quebra a hidratação. Mesmo padrão do configuracoes/page.tsx original.
+  const [adding, setAdding] = useState(false)
+  const [newPrefix, setNewPrefix] = useState('')
+  const [locating, setLocating] = useState(false)
+  // Lido só no efeito: Notification não existe no servidor (hidratação).
   const [notifPermission, setNotifPermission] = useState<NotificationPermission | 'unsupported'>('default')
   useEffect(() => {
     setNotifPermission(typeof Notification !== 'undefined' ? Notification.permission : 'unsupported')
   }, [])
-  const [locating, setLocating] = useState(false)
+
+  const summaries = useReceiverSummaries(knownReceivers)
+  useTick(5_000)
+
+  // Valores do firmware (só contam se válidos — double vazio vem "nan").
+  const fwCallsign = String(firmwareConfig?.['sondehub.callsign'] ?? '').trim()
+  const fwLat = parseFloat(String(firmwareConfig?.['rxlat'] ?? ''))
+  const fwLon = parseFloat(String(firmwareConfig?.['rxlon'] ?? ''))
+  const fwHasPosition = isFinite(fwLat) && isFinite(fwLon) && !(fwLat === 0 && fwLon === 0)
 
   const useMyLocation = () => {
     if (!navigator.geolocation) return
     setLocating(true)
     navigator.geolocation.getCurrentPosition(
       pos => {
-        setConfig(c => ({
-          ...c,
-          homeLat: Number(pos.coords.latitude.toFixed(5)),
-          homeLon: Number(pos.coords.longitude.toFixed(5)),
-        }))
+        updateSettings(s => ({ ...s, homeLat: Number(pos.coords.latitude.toFixed(5)), homeLon: Number(pos.coords.longitude.toFixed(5)) }))
         setLocating(false)
       },
       () => setLocating(false),
-      { enableHighAccuracy: true, timeout: 15000 }
+      { enableHighAccuracy: true, timeout: 15000 },
     )
   }
 
   const toggleAlerts = async () => {
-    if (config.receiverAlertsEnabled) {
-      setConfig(c => ({ ...c, receiverAlertsEnabled: false }))
+    if (settings.receiverAlertsEnabled) {
+      updateSettings(s => ({ ...s, receiverAlertsEnabled: false }))
       return
     }
     if (typeof Notification === 'undefined') return
@@ -64,247 +182,233 @@ export default function ReceiverSettingsPanel({
       try { permission = await Notification.requestPermission() } catch { permission = 'denied' }
     }
     setNotifPermission(permission)
-    if (permission === 'granted') setConfig(c => ({ ...c, receiverAlertsEnabled: true }))
+    if (permission === 'granted') updateSettings(s => ({ ...s, receiverAlertsEnabled: true }))
   }
+
+  const submitNewPrefix = () => {
+    const p = newPrefix.trim()
+    if (!p) return
+    onAddReceiver(p)
+  }
+
+  const fromFirmware = (label: string, value: string) => (
+    <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-xs">
+      <span className="text-gray-400 w-32 flex-shrink-0">{label}</span>
+      <span className="mono text-white">{value}</span>
+      <button type="button" onClick={onEditFirmwareConfig} className="text-[11px] text-blue-400 hover:underline flex items-center gap-0.5">
+        do firmware · editar <ExternalLink size={10} />
+      </button>
+    </div>
+  )
 
   return (
     <div className="panel p-5 mb-6">
-      <h2 className="text-sm font-semibold text-white flex items-center gap-2 mb-1">
+      <h2 className="text-sm font-semibold text-white flex items-center gap-2 mb-4">
         <RadioTower size={14} className="text-blue-400" />
         Meu receptor
       </h2>
-      <p className="text-[11px] text-faint mb-4">
-        Se você tem um receptor (rdzTTGOsonde, auto_rx) enviando ao SondeHub, informe o
-        callsign de uploader para acompanhar no painel as sondas que ELE está decodificando.
-      </p>
 
-      <label className="block text-xs text-gray-400 mb-1.5">Callsign de uploader no SondeHub</label>
-      <input
-        type="text"
-        value={config.uploaderCallsign}
-        onChange={e => setConfig(c => ({ ...c, uploaderCallsign: e.target.value }))}
-        placeholder="ex.: PU7ABC ou MEU-RDZ"
-        className="w-full max-w-xs bg-bg border border-border rounded-md text-sm text-white mono px-3 py-2 outline-none focus:border-blue-500"
-      />
-      <p className="text-[11px] text-faint mt-1.5 mb-4">
-        Exatamente como configurado no firmware (campo &quot;SondeHub callsign&quot;) — é como
-        seus frames aparecem em sondehub.org.
-      </p>
+      {/* ── Receptor ativo ── */}
+      <Section first icon={null} title="Receptores">
+        {knownReceivers.length === 0 && !adding && (
+          <p className="text-[11px] text-faint mb-2">
+            Nenhum receptor ainda. Ele aparece aqui sozinho quando reportar pela primeira vez
+            (firmware com <span className="mono">mqtt.siteurl</span> apontando pra este app).
+          </p>
+        )}
+        <div className="space-y-1.5">
+          {knownReceivers.map(kr => {
+            const isActive = kr.prefix === settings.mqttTopicPrefix
+            const sum = summaries[kr.prefix]
+            return (
+              <div key={kr.prefix} className={`flex items-center gap-2 p-2 rounded border text-xs ${
+                isActive ? 'border-blue-500/50 bg-blue-600/10' : 'border-border bg-bg'
+              }`}>
+                <span className={`w-2 h-2 rounded-full flex-shrink-0 ${isActive ? 'bg-blue-400' : 'bg-gray-600'}`} />
+                {editingPrefix === kr.prefix ? (
+                  <>
+                    <input
+                      autoFocus
+                      value={editName}
+                      onChange={e => setEditName(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') { onRenameReceiver(kr.prefix, editName.trim() || kr.prefix); setEditingPrefix(null) }
+                        if (e.key === 'Escape') setEditingPrefix(null)
+                      }}
+                      className="flex-1 bg-surface border border-border rounded px-2 py-0.5 text-white text-xs outline-none focus:border-blue-500"
+                    />
+                    <button onClick={() => { onRenameReceiver(kr.prefix, editName.trim() || kr.prefix); setEditingPrefix(null) }}
+                      className="text-blue-400 hover:text-blue-300 text-[10px]">ok</button>
+                    <button onClick={() => setEditingPrefix(null)} className="text-gray-500 hover:text-white text-[10px]">×</button>
+                  </>
+                ) : (
+                  <>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-white truncate">{kr.displayName}</span>
+                        {kr.displayName !== kr.prefix && <span className="text-faint mono text-[10px]">{kr.prefix}</span>}
+                        {isActive && <span className="text-blue-400 text-[10px]">ativo</span>}
+                      </div>
+                      <div className="text-[10px] text-faint flex items-center gap-2 flex-wrap mt-0.5">
+                        <span>{sum ? agoLabel(sum.lastSeenAt) : '…'}</span>
+                        {sum?.fwVersion && <span className="mono">fw {sum.fwVersion}</span>}
+                        {sum?.battV != null && (
+                          <span className="flex items-center gap-0.5 mono"><BatteryMedium size={10} /> {sum.battV.toFixed(2)} V</span>
+                        )}
+                      </div>
+                      {(sum?.localIp || sum?.publicIp) && (
+                        <div className="text-[10px] text-faint flex items-center gap-2 flex-wrap mt-0.5">
+                          {sum.localIp && (
+                            <a
+                              href={`http://${sum.localIp}/`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="flex items-center gap-0.5 mono text-blue-400 hover:underline"
+                              title="Abre a página de configuração do receptor — só funciona conectado à mesma rede WiFi dele"
+                            >
+                              <Wifi size={10} /> {sum.localIp} <ExternalLink size={9} />
+                            </a>
+                          )}
+                          {sum.publicIp && (
+                            <span className="mono" title="IP público da internet onde o receptor está">
+                              público {sum.publicIp}
+                            </span>
+                          )}
+                          {sum.rssi != null && (
+                            <span className="mono" title="Sinal do WiFi no receptor (quanto mais perto de 0, melhor)">{sum.rssi} dBm</span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                    {!isActive && (
+                      <button onClick={() => onSwitchReceiver(kr.prefix)}
+                        className="px-2 py-0.5 rounded border border-border text-[10px] text-cyan-300 hover:text-white hover:border-border-strong"
+                        title="Usar este receptor (recarrega a página)">
+                        usar
+                      </button>
+                    )}
+                    <button onClick={() => { setEditingPrefix(kr.prefix); setEditName(kr.displayName) }}
+                      className="text-gray-500 hover:text-gray-200" title="Renomear">
+                      <Pencil size={11} />
+                    </button>
+                    <button onClick={() => onForgetReceiver(kr.prefix)}
+                      className="text-gray-500 hover:text-red-400"
+                      title="Tirar da lista (não apaga o histórico no servidor; volta se ele reportar de novo)">
+                      <Trash2 size={11} />
+                    </button>
+                  </>
+                )}
+              </div>
+            )
+          })}
+        </div>
 
-      <label className="block text-xs text-gray-400 mb-1.5">
-        Posição de casa (centro da busca por sondas próximas) — <strong>obrigatória</strong> junto
-        com o callsign para a via SondeHub funcionar (o MQTT abaixo não depende disso)
-      </label>
-      <div className="flex flex-wrap items-center gap-2">
-        <input
-          type="number"
-          step="0.00001"
-          value={config.homeLat ?? ''}
-          onChange={e => setConfig(c => ({ ...c, homeLat: e.target.value === '' ? null : Number(e.target.value) }))}
-          placeholder="Latitude"
-          className="w-32 bg-bg border border-border rounded-md text-sm text-white mono px-3 py-2 outline-none focus:border-blue-500"
-        />
-        <input
-          type="number"
-          step="0.00001"
-          value={config.homeLon ?? ''}
-          onChange={e => setConfig(c => ({ ...c, homeLon: e.target.value === '' ? null : Number(e.target.value) }))}
-          placeholder="Longitude"
-          className="w-32 bg-bg border border-border rounded-md text-sm text-white mono px-3 py-2 outline-none focus:border-blue-500"
-        />
-        <button
-          onClick={useMyLocation}
-          disabled={locating}
-          className="flex items-center gap-1.5 px-3 py-2 bg-surface border border-border rounded-md text-xs text-gray-400 hover:text-white transition-all disabled:opacity-60"
-        >
-          <LocateFixed size={13} />
-          {locating ? 'Localizando…' : 'Usar minha localização'}
-        </button>
-        {rxPosition && (
-          <button
-            onClick={() => setConfig(c => ({
-              ...c,
-              homeLat: Number(rxPosition.lat.toFixed(5)),
-              homeLon: Number(rxPosition.lon.toFixed(5)),
-            }))}
-            className="flex items-center gap-1.5 px-3 py-2 bg-surface border border-border rounded-md text-xs text-gray-400 hover:text-white transition-all"
-            title={`${rxPosition.lat.toFixed(5)}, ${rxPosition.lon.toFixed(5)}`}
-          >
-            Usar posição do receptor
+        {adding ? (
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <input
+              autoFocus
+              value={newPrefix}
+              onChange={e => setNewPrefix(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') submitNewPrefix(); if (e.key === 'Escape') setAdding(false) }}
+              placeholder="mqtt.prefix do receptor (ex.: pu7iol)"
+              className={`w-64 ${inputCls}`}
+            />
+            <button onClick={submitNewPrefix} disabled={!newPrefix.trim()}
+              className="px-3 py-2 bg-blue-600 rounded-md text-xs text-white hover:bg-blue-700 disabled:opacity-50">
+              Adicionar e usar
+            </button>
+            <button onClick={() => setAdding(false)} className="text-xs text-gray-400 hover:text-white">cancelar</button>
+            <p className="w-full text-[11px] text-faint">Precisa ser idêntico ao <span className="mono">mqtt.prefix</span> configurado no receptor.</p>
+          </div>
+        ) : (
+          <button onClick={() => setAdding(true)} className="mt-2 flex items-center gap-1 text-[11px] text-gray-400 hover:text-white">
+            <Plus size={11} /> Adicionar manualmente
           </button>
         )}
-      </div>
 
-      <label className="block text-xs text-gray-400 mt-4 mb-1.5">Alertar sonda nova só até esta distância de casa</label>
-      <select
-        value={config.alertRadiusKm}
-        onChange={e => setConfig(c => ({ ...c, alertRadiusKm: Number(e.target.value) }))}
-        className="bg-bg border border-border rounded-md text-sm text-white px-3 py-2 outline-none focus:border-blue-500 cursor-pointer"
-      >
-        <option value={0}>Sem filtro de distância</option>
-        <option value={50}>Até 50 km</option>
-        <option value={100}>Até 100 km</option>
-        <option value={200}>Até 200 km</option>
-        <option value={300}>Até 300 km</option>
-      </select>
-
-      <div className="flex items-center gap-3 mt-4">
-        <button
-          onClick={toggleAlerts}
-          className={`flex items-center gap-2 px-3 py-2 rounded-md text-xs border transition-all ${
-            config.receiverAlertsEnabled
-              ? 'bg-blue-600 border-blue-600 text-white'
-              : 'bg-surface border-border text-gray-400 hover:text-white'
-          }`}
-        >
-          {config.receiverAlertsEnabled ? 'Notificações ativadas' : 'Ativar notificações de sonda nova'}
-        </button>
-        {notifPermission === 'denied' && (
-          <span className="text-[11px] text-amber-400">
-            Permissão negada no navegador — libere nas configurações do site.
-          </span>
-        )}
-        {notifPermission === 'unsupported' && (
-          <span className="text-[11px] text-faint">Este navegador não suporta notificações.</span>
-        )}
-      </div>
-      <p className="text-[11px] text-faint mt-2">
-        Avisa quando o seu receptor começar a decodificar uma sonda nova. Funciona com a
-        aba do painel aberta (mesmo em segundo plano). Lembre de salvar depois de alterar.
-      </p>
-
-      {/* Identidade do receptor + canais HTTP diretos */}
-      <div className="mt-5 pt-5 border-t border-border">
-        <h3 className="text-xs font-semibold text-white mb-1">Receptor — identidade e config remota</h3>
-        <p className="text-[11px] text-faint mb-3">
-          Bateria/sleep/economia/auto-OTA chegam via reporte HTTP direto do firmware — configure só
-          <span className="mono"> mqtt.siteurl</span> nele (endereço deste app; um campo só serve
-          report, config remota e auto-OTA). O prefixo abaixo identifica qual receptor é este.
-        </p>
-
-        <div>
-          <label className="block text-xs text-gray-400 mb-1.5">Prefixo (identidade do receptor)</label>
-          <div className="flex flex-wrap items-center gap-2">
-            <input
-              type="text"
-              value={config.mqttTopicPrefix}
-              onChange={e => setConfig(c => ({ ...c, mqttTopicPrefix: e.target.value }))}
-              placeholder="ex.: pu7iol (igual ao mqtt.prefix do TTGO)"
-              className="w-64 bg-bg border border-border rounded-md text-sm text-white mono px-3 py-2 outline-none focus:border-blue-500"
-            />
-            <button
-              onClick={() => setConfig(c => ({
-                ...c,
-                // Sugestão = exatamente o callsign, sem barras — é o que a
-                // maioria dos firmwares reais usa em mqtt.prefix (ex.:
-                // "pu7iol", não "rdz/pu7iol/"). Precisa bater com o valor
-                // configurado no TTGO, seja lá qual for.
-                mqttTopicPrefix: c.uploaderCallsign.trim().toLowerCase().replace(/[^a-z0-9_/-]/g, ''),
-              }))}
-              disabled={!config.uploaderCallsign.trim()}
-              className="px-3 py-2 bg-surface border border-border rounded-md text-xs text-gray-400 hover:text-white transition-all disabled:opacity-50"
-            >
-              Sugerir
-            </button>
+        {settings.mqttTopicPrefix && (
+          <div className="mt-4 space-y-2">
+            {fwCallsign ? fromFirmware('Callsign SondeHub', fwCallsign) : (
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                <span className="text-gray-400 w-32 flex-shrink-0" title="Como seus frames aparecem no sondehub.org — usado pro painel achar as sondas que ESTE receptor decodifica">
+                  Callsign SondeHub
+                </span>
+                <input
+                  type="text"
+                  value={settings.uploaderCallsign}
+                  onChange={e => updateSettings(s => ({ ...s, uploaderCallsign: e.target.value }))}
+                  placeholder="ex.: PU7ABC"
+                  className={`w-40 ${inputCls}`}
+                />
+              </div>
+            )}
+            {fwHasPosition ? fromFirmware('Posição', `${fwLat.toFixed(5)}, ${fwLon.toFixed(5)}`) : (
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                <span className="text-gray-400 w-32 flex-shrink-0" title="Centro da busca por sondas próximas e do raio de alerta">Posição</span>
+                <input type="number" step="0.00001" value={settings.homeLat ?? ''}
+                  onChange={e => updateSettings(s => ({ ...s, homeLat: e.target.value === '' ? null : Number(e.target.value) }))}
+                  placeholder="Latitude" className={`w-28 ${inputCls}`} />
+                <input type="number" step="0.00001" value={settings.homeLon ?? ''}
+                  onChange={e => updateSettings(s => ({ ...s, homeLon: e.target.value === '' ? null : Number(e.target.value) }))}
+                  placeholder="Longitude" className={`w-28 ${inputCls}`} />
+                <button onClick={useMyLocation} disabled={locating}
+                  className="flex items-center gap-1.5 px-3 py-2 bg-surface border border-border rounded-md text-xs text-gray-400 hover:text-white disabled:opacity-60">
+                  <LocateFixed size={13} /> {locating ? 'Localizando…' : 'Minha localização'}
+                </button>
+              </div>
+            )}
           </div>
-          <p className="text-[11px] text-faint mt-2 leading-relaxed">
-            Precisa ser <strong>idêntico</strong> ao <span className="mono">mqtt.prefix</span> já
-            configurado no seu TTGO (Config → mqtt.prefix na web UI dele) — não adivinhe, copie
-            o valor de lá. É a chave usada em toda URL/endpoint dos canais HTTP diretos (report,
-            OTA, config remota, live status). <strong>Não</strong> precisa ser igual ao callsign de
-            uploader do SondeHub acima — são identidades independentes (o botão &quot;Sugerir&quot; só
-            preenche um a partir do outro por conveniência).
-          </p>
+        )}
+      </Section>
 
-          <label className="block text-xs text-gray-400 mt-4 mb-1.5">Segredo de gravação remota da config (mqtt.cfgsecret)</label>
+      {/* ── Acesso ── */}
+      {settings.mqttTopicPrefix && (
+        <Section icon={<KeyRound size={12} className="text-amber-400" />} title="Segredo de gravação">
           <input
             type="password"
-            value={config.rdzConfigSecret}
-            onChange={e => setConfig(c => ({ ...c, rdzConfigSecret: e.target.value }))}
-            placeholder="idêntico ao mqtt.cfgsecret configurado no receptor"
-            className="w-64 bg-bg border border-border rounded-md text-sm text-white mono px-3 py-2 outline-none focus:border-blue-500"
+            value={settings.rdzConfigSecret}
+            onChange={e => updateSettings(s => ({ ...s, rdzConfigSecret: e.target.value }))}
+            placeholder="igual ao mqtt.cfgsecret do receptor"
+            className={`w-64 ${inputCls}`}
           />
           <p className="text-[11px] text-faint mt-1.5">
-            Só necessário pra gravar mudanças de config remotamente (seção &quot;Configuração completa
-            do firmware&quot; abaixo) — configure primeiro no receptor (Config → mqtt.cfgsecret, via
-            HTTP local) e copie o mesmo valor aqui. Vazio = leitura funciona, gravação fica bloqueada.
+            Necessário pra aplicar config e usar o turbo. Fica só neste navegador. Vazio = só leitura.
           </p>
-        </div>
-
-        <div className="mt-4 pt-4 border-t border-border">
-          <button
-            onClick={onSave}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-600 rounded-md text-sm text-white hover:bg-blue-700 transition-all"
-          >
-            {saved ? <CheckCircle2 size={14} /> : <Save size={14} />}
-            {saved ? 'Salvo!' : 'Salvar "Meu receptor"'}
-          </button>
-        </div>
-      </div>
-
-      {/* Lista de receptores conhecidos */}
-      {knownReceivers && knownReceivers.length > 0 && (
-        <div className="mt-5 pt-5 border-t border-border">
-          <h3 className="text-xs font-semibold text-white mb-2">Receptores cadastrados</h3>
-          <div className="space-y-1.5">
-            {knownReceivers.map(kr => {
-              const isActive = kr.prefix === config.mqttTopicPrefix
-              const rKey = receiverKey(kr.prefix)
-              return (
-                <div key={kr.prefix} className={`flex items-center gap-2 p-2 rounded border text-xs ${
-                  isActive ? 'border-blue-500/40 bg-blue-600/10' : 'border-border bg-bg'
-                }`}>
-                  {editingPrefix === kr.prefix ? (
-                    <>
-                      <input
-                        autoFocus
-                        value={editName}
-                        onChange={e => setEditName(e.target.value)}
-                        onKeyDown={e => {
-                          if (e.key === 'Enter') { onRenameReceiver?.(kr.prefix, editName.trim() || kr.prefix); setEditingPrefix(null) }
-                          if (e.key === 'Escape') setEditingPrefix(null)
-                        }}
-                        className="flex-1 bg-surface border border-border rounded px-2 py-0.5 text-white text-xs outline-none focus:border-blue-500"
-                      />
-                      <button onClick={() => { onRenameReceiver?.(kr.prefix, editName.trim() || kr.prefix); setEditingPrefix(null) }}
-                        className="text-blue-400 hover:text-blue-300 text-[10px]">ok</button>
-                      <button onClick={() => setEditingPrefix(null)} className="text-gray-500 hover:text-white text-[10px]">×</button>
-                    </>
-                  ) : (
-                    <>
-                      <span className="flex-1 text-gray-300 truncate">
-                        {kr.displayName}
-                        <span className="text-faint font-mono text-[9px] ml-1.5">({rKey})</span>
-                        {isActive && <span className="text-blue-400 text-[9px] ml-1.5">ativo</span>}
-                      </span>
-                      <button onClick={() => { setEditingPrefix(kr.prefix); setEditName(kr.displayName) }}
-                        className="text-gray-600 hover:text-gray-300 transition-colors" title="Renomear">
-                        <Pencil size={11} />
-                      </button>
-                      {!isActive && onSwitchReceiver && (
-                        <button onClick={() => onSwitchReceiver(kr.prefix)}
-                          className="text-[10px] text-cyan-400 hover:text-cyan-300 transition-colors" title="Usar este receptor">
-                          usar
-                        </button>
-                      )}
-                      {onForgetReceiver && (
-                        <button onClick={() => onForgetReceiver(kr.prefix)}
-                          className="text-gray-600 hover:text-red-400 transition-colors" title="Remover da lista">
-                          <Trash2 size={11} />
-                        </button>
-                      )}
-                    </>
-                  )}
-                </div>
-              )
-            })}
-          </div>
-          <p className="text-[10px] text-faint mt-1.5">
-            Remover da lista tira o receptor da auto-descoberta, mas não apaga o histórico dele no R2.
-            Gerencie o armazenamento em Configurações → Armazenamento no servidor.
-          </p>
-        </div>
+        </Section>
       )}
+
+      {/* ── Alertas do painel ── */}
+      <Section icon={<Bell size={12} className="text-blue-400" />} title="Alertas no painel">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={toggleAlerts}
+            className={`px-3 py-2 rounded-md text-xs border transition-all ${
+              settings.receiverAlertsEnabled ? 'bg-blue-600 border-blue-600 text-white' : 'bg-surface border-border text-gray-400 hover:text-white'
+            }`}
+          >
+            {settings.receiverAlertsEnabled ? 'Notificações ativadas' : 'Avisar quando decodificar sonda nova'}
+          </button>
+          <select
+            value={settings.alertRadiusKm}
+            onChange={e => updateSettings(s => ({ ...s, alertRadiusKm: Number(e.target.value) }))}
+            disabled={!settings.receiverAlertsEnabled}
+            className="bg-bg border border-border rounded-md text-xs text-white px-2 py-2 outline-none focus:border-blue-500 cursor-pointer disabled:opacity-50"
+          >
+            <option value={0}>qualquer distância</option>
+            <option value={50}>até 50 km</option>
+            <option value={100}>até 100 km</option>
+            <option value={200}>até 200 km</option>
+            <option value={300}>até 300 km</option>
+          </select>
+        </div>
+        {notifPermission === 'denied' && (
+          <p className="text-[11px] text-amber-400 mt-1.5">Permissão negada no navegador — libere nas configurações do site.</p>
+        )}
+        {notifPermission === 'unsupported' && (
+          <p className="text-[11px] text-faint mt-1.5">Este navegador não suporta notificações.</p>
+        )}
+        <p className="text-[11px] text-faint mt-1.5">Funciona com a aba do painel aberta (mesmo em segundo plano).</p>
+      </Section>
     </div>
   )
 }

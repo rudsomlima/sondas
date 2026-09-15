@@ -79,7 +79,12 @@ export function useFirmwareConfig(): FirmwareConfigState {
     setChannel('http')
     if (!silent) { setLoading(true); setError(null) }
     fetch(`/api/receiver-config/snapshot?prefix=${encodeURIComponent(s.mqttTopicPrefix)}`)
-      .then(r => r.json())
+      .then(async r => {
+        // Sem isso qualquer erro virava só "Falha ao carregar" — ex.: o
+        // servidor de dev recompilando devolve HTML 500, e r.json() quebrava.
+        if (!r.ok) throw new Error(`o servidor respondeu ${r.status}`)
+        try { return await r.json() } catch { throw new Error('resposta inválida do servidor') }
+      })
       .then((d: { snapshot?: { config: Record<string, string>; updatedAt: number } | null }) => {
         if (!d.snapshot) {
           if (!silent) setError('O receptor ainda não reportou a configuração — precisa acordar pelo menos uma vez com mqtt.siteurl configurado.')
@@ -94,7 +99,11 @@ export function useFirmwareConfig(): FirmwareConfigState {
         setConfig(cfg)
         setLoadedAt(d.snapshot.updatedAt)
       })
-      .catch(() => { if (!silent) setError('Falha ao carregar a configuração') })
+      .catch((e: unknown) => {
+        if (silent) return
+        const detail = e instanceof Error && e.message && e.message !== 'Failed to fetch' ? e.message : 'sem conexão com o servidor'
+        setError(`Falha ao carregar a configuração (${detail})`)
+      })
       .finally(() => { if (!silent) setLoading(false) })
   }, [])
 

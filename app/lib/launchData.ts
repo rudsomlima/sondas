@@ -50,9 +50,16 @@ function mergeSources(a?: LaunchSources, b?: LaunchSources): LaunchSources | und
 function mergePair(a: Launch, b: Launch): Launch {
   const preferred = sourceRank(b) > sourceRank(a) ? b : a
   const other = preferred === a ? b : a
-  const position = isValidPosition(preferred.position)
+  let position = isValidPosition(preferred.position)
     ? preferred.position
     : isValidPosition(other.position) ? other.position : undefined
+  // Mesma sonda: FOUND/LOST (recuperação do radiosondy.info ou do SondeHub)
+  // sobrevive a um UNKNOWN da outra cópia — senão um YearStore antigo do
+  // servidor desfazia a recuperação já conhecida no cache local.
+  if (position && position.status === 'UNKNOWN' && isValidPosition(other.position) &&
+      other.position.sondeNumber === position.sondeNumber && other.position.status !== 'UNKNOWN') {
+    position = other.position
+  }
   return {
     ...other,
     ...preferred,

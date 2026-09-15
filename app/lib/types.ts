@@ -20,6 +20,10 @@ export interface LaunchPosition {
   status: string
   altitude?: number
   course?: string
+  // Relato de recuperação do SondeHub (sondehubRecovery.ts) — opcionais,
+  // YearStores antigos não têm.
+  recoveredBy?: string
+  recoveryNote?: string
 }
 
 // Estatísticas do voo, calculadas a partir dos frames de trajetória do

@@ -11,6 +11,7 @@ import {
   RadiosondyFeature, radiosondyFeaturePopup, roundToSynopticHour, sondeHubUrl, parsePopupTelemetry,
 } from '@/app/lib/radiosondy'
 import { fetchSondeHubArchiveSondeForDay, SONDEHUB_RECENT_SECONDS } from '@/app/lib/sondehub'
+import { recoveryPopupHtml } from '@/app/lib/sondehubRecovery'
 import { getRadiosondyStartplace, findStation, DEFAULT_STATION } from '@/app/lib/stations'
 import type { Launch, LaunchPosition } from '@/app/lib/types'
 import {
@@ -167,6 +168,7 @@ export default function LaunchMap({ launch, onClose, onResult, onPosition, conte
       const markerPopup = rdFeature
         ? radiosondyFeaturePopup(rdFeature)
         : `<b>${escapeHtml(sondeNumber)}</b><br>Status: ${escapeHtml(posStatus)}` +
+          recoveryPopupHtml(pos.recoveredBy, pos.recoveryNote) +
           (pos.altitude ? `<br>Altitude: ${Math.round(pos.altitude).toLocaleString('pt-BR')} m` : '') +
           (pos.course ? `<br>Course: ${pos.course}°` : '')
 
@@ -443,7 +445,9 @@ export default function LaunchMap({ launch, onClose, onResult, onPosition, conte
 
     run()
     return () => { cancelled = true }
-  }, [launch.year, launch.month, launch.day, launch.time_utc, launch.time_local, station, attempt])
+  // position.status: redesenha quando a posição ganha o status de recuperação
+  // do SondeHub em segundo plano (UNKNOWN → FOUND/LOST, useRecoveredLaunches).
+  }, [launch.year, launch.month, launch.day, launch.time_utc, launch.time_local, launch.position?.status, station, attempt])
 
   // Contexto: sondas do mês vindas de outras fontes que a camada principal
   // (radiosondy.info + destaque) não desenhou.

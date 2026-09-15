@@ -10,7 +10,7 @@ import { nowGMT3 } from '@/app/lib/types'
 import type { Launch } from '@/app/lib/types'
 import {
   attachPositions, fetchArchiveMonthPoints, fetchRadiosondyMonthPoints, fetchRecentSondeHubPoints,
-  mergeSondePoints, monthOverlapsRecentWindow, pointsFromLaunches, sondePointPopup,
+  mergeSondePoints, monthOverlapsRecentWindow, pointsFromLaunches, sondePointPopup, enrichPointsWithRecoveries,
   type SondePoint,
 } from '@/app/lib/sondePoints'
 
@@ -162,6 +162,14 @@ export default function YearMap({ year, station, launches, onClose, onPoints }: 
       setSources([...used])
       setStatus(null)
       onPointsRef.current?.(points)
+
+      // Recuperações registradas no SondeHub pros pontos ainda UNKNOWN — por
+      // último e sem status na tela: o mapa já está completo, isto só recolore.
+      enrichPointsWithRecoveries(points).then(enriched => {
+        if (cancelled || enriched === points) return
+        points = enriched
+        draw()
+      }).catch(() => {})
       if (points.length === 0) {
         setError('Nenhuma posição foi encontrada no cache, radiosondy.info ou SondeHub.')
       } else if (failed > 0) {

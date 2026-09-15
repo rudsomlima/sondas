@@ -580,12 +580,13 @@ export async function writeInstalledFirmware(key: string, version: string): Prom
 // conhecido", sobrescrito a cada report, merge por campo (um report só de
 // pmu não apaga o sleep/power já conhecidos).
 // ──────────────────────────────────────────────────────────────────────────────
-import type { RdzPmu, RdzSleep, RdzPower } from './mqtt'
+import type { RdzPmu, RdzSleep, RdzPower, RdzNet } from './mqtt'
 
 export interface ReceiverLiveStatus {
   pmu?:       RdzPmu
   sleep?:     RdzSleep
   power?:     RdzPower
+  net?:       RdzNet
   updatedAt:  number
 }
 
@@ -607,7 +608,7 @@ export async function readReceiverLiveStatus(key: string): Promise<ReceiverLiveS
 
 export async function writeReceiverLiveStatus(
   key: string,
-  data: { pmu?: RdzPmu; sleep?: RdzSleep; power?: RdzPower }
+  data: { pmu?: RdzPmu; sleep?: RdzSleep; power?: RdzPower; net?: RdzNet }
 ): Promise<void> {
   const client = getClient()
   if (!client) return
@@ -617,6 +618,8 @@ export async function writeReceiverLiveStatus(
       pmu:   data.pmu   ?? prev?.pmu,
       sleep: data.sleep ?? prev?.sleep,
       power: data.power ?? prev?.power,
+      // IP público vazio no report (ainda não descobriu) não apaga o já conhecido.
+      net:   data.net ? { ...data.net, publicIp: data.net.publicIp ?? prev?.net?.publicIp } : prev?.net,
       updatedAt: Date.now(),
     }
     await client.send(new PutObjectCommand({
@@ -704,6 +707,40 @@ export const readConfigRequest = (key: string) => readJsonKey<ConfigRequest>(con
 export const writeConfigRequest = (key: string, req: Omit<ConfigRequest, 'createdAt'>) =>
   writeJsonKey(configRequestPath(key), { ...req, createdAt: Date.now() } as ConfigRequest)
 export const deleteConfigRequest = (key: string) => deleteJsonKey(configRequestPath(key))
+
+// Liga/desliga do registro de histórico por receptor (gráficos "Tensão da
+// bateria" e "Deep Sleep / Power" em /meu-receptor). Desligado = o servidor
+// nem lê nem grava power-history.json/batt-history.json a cada reporte
+// (receiverCollect.ts) — o estado "agora" (live-status) continua gravando.
+// Ausente = tudo ligado (comportamento de antes).
+export interface HistorySettings {
+  batt:  boolean
+  power: boolean
+}
+export const DEFAULT_HISTORY_SETTINGS: HistorySettings = { batt: true, power: true }
+function historySettingsPath(key: string) { return `sondas/receivers/${key}/history-settings.json` }
+export async function readHistorySettings(key: string): Promise<HistorySettings> {
+  const raw = await readJsonKey<Partial<HistorySettings>>(historySettingsPath(key))
+  return {
+    batt: raw?.batt !== false,
+    power: raw?.power !== false,
+  }
+}
+export const writeHistorySettings = (key: string, s: HistorySettings) => writeJsonKey(historySettingsPath(key), s)
+
+// Turbo remoto manual (ver app/api/receiver-power/boost): um pedido por
+// receptor, o mais recente vence. auth = HMAC(mqtt.cfgsecret, reqId+"|"+until),
+// verificado pelo firmware (o servidor não tem o segredo).
+export interface PowerBoostRequest {
+  reqId:     string
+  auth:      string
+  until:     number // epoch s; 0 = cancelar
+  createdAt: number
+}
+function powerBoostPath(key: string) { return `sondas/receivers/${key}/power-boost.json` }
+export const readPowerBoostRequest = (key: string) => readJsonKey<PowerBoostRequest>(powerBoostPath(key))
+export const writePowerBoostRequest = (key: string, req: Omit<PowerBoostRequest, 'createdAt'>) =>
+  writeJsonKey(powerBoostPath(key), { ...req, createdAt: Date.now() } as PowerBoostRequest)
 
 export const readConfigResult = (key: string) => readJsonKey<ConfigResult>(configResultPath(key))
 export const writeConfigResult = (key: string, result: Omit<ConfigResult, 'resolvedAt'>) =>

@@ -18,8 +18,13 @@ a cada ciclo de wake, com corpos como:
 ```json
 {"prefix": "pu7iol", "pmu": {"V_Batt": 3.987}}
 {"prefix": "pu7iol", "sleep": {"sleep_until": 1783166700, "reason": "out_of_window", "V_Batt": 3.812, "boot": 42}}
-{"prefix": "pu7iol", "power": {"eco": true, "cpu_mhz": 80, "wifi": "modem_sleep"}}
+{"prefix": "pu7iol", "power": {"eco": false, "cpu_mhz": 80, "wifi": "off", "level": 2, "period": "idle", "report_s": 900}}
 ```
+
+> Desde `dev20260914.4` o deep sleep virou **níveis de energia** (`power.*`):
+> a espera por lançamento atrasado reporta `reason: "listen_wait"`, e os
+> motivos `listen_extend`/`listen_wifioff`/`listen_check` abaixo só aparecem
+> em firmwares antigos. Ver `docs/POWER_MODES_GUIDE.md` no repo do firmware.
 
 (o nome do campo de config `mqtt.siteurl` é histórico — é só a URL base do
 app, nada depende de broker; ver nota equivalente em `AUTO_OTA_GUIDE.md` no

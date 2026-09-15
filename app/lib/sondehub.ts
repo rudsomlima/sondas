@@ -130,6 +130,21 @@ export interface SondeHubRecentFrame {
  * enquanto a busca por raio tinha 16 sondas na mesma semana), e são essas
  * sondas que faltavam nos mapas quando o radiosondy.info não registrou o pouso.
  */
+/** As duas buscas de fetchSondeHubRecentFrames separadas, pra quem quiser
+ * desenhar cada uma assim que chega: o endpoint do site às vezes leva >10 s
+ * pra devolver vazio (cache frio do SondeHub, medido em 2026-09-15), enquanto
+ * a busca por raio responde em <1 s com as sondas de verdade. */
+export function fetchSondeHubRecentFramesSplit(
+  stationId: string, stationLat: number, stationLon: number, radiusKm = 300,
+): { nearby: Promise<SondeHubRecentFrame[]>; site: Promise<SondeHubRecentFrame[]> } {
+  const toList = (m: Map<string, SondeHubLastFrame>, association: SondeHubRecentFrame['association']) =>
+    [...m].map(([serial, frame]) => ({ serial, frame, association }))
+  return {
+    nearby: fetchSondeHubNearbyFrames(stationLat, stationLon, radiusKm, SONDEHUB_RECENT_SECONDS).then(m => toList(m, 'geographic')),
+    site: fetchSondeHubSiteFrames(stationId, SONDEHUB_RECENT_SECONDS).then(m => toList(m, 'station')),
+  }
+}
+
 export async function fetchSondeHubRecentFrames(
   stationId: string, stationLat: number, stationLon: number, radiusKm = 300
 ): Promise<SondeHubRecentFrame[]> {

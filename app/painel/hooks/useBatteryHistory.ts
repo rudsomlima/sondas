@@ -72,6 +72,9 @@ export function useBatteryHistory(
   ttgoBattV:     number | null,
   mqttConnected: boolean,
   receiverKey:   string,
+  // false = registro desligado pelo usuário: não acrescenta leituras novas
+  // (nem no cache local); o que já existe continua exibido.
+  recording = true,
 ): UseBatteryHistoryResult {
   // Inicializa sempre vazio para evitar mismatch de hidratação (SSR não tem localStorage).
   // O useEffect abaixo carrega do localStorage / R2 logo após o mount.
@@ -103,7 +106,7 @@ export function useBatteryHistory(
 
   // Gravação de nova leitura (cache local — o R2 é escrito pelo poller do servidor)
   useEffect(() => {
-    if (!mqttConnected || ttgoBattV === null) return
+    if (!recording || !mqttConnected || ttgoBattV === null) return
     const now  = Date.now()
     const last = lastRef.current
     if (!shouldRecordBattReading(last, ttgoBattV, now)) return
@@ -113,7 +116,7 @@ export function useBatteryHistory(
       writeLocalHistory(receiverKey, next)
       return next
     })
-  }, [ttgoBattV, mqttConnected, receiverKey])
+  }, [ttgoBattV, mqttConnected, receiverKey, recording])
 
   const deleteDay = useCallback((dayKey: string) => {
     setHistory(prev => {

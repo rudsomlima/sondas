@@ -5,8 +5,9 @@ import { Battery, Info, Trash2, ZoomIn, ZoomOut, RotateCcw } from 'lucide-react'
 import { GMT3 } from '@/app/lib/types'
 import { HEARTBEAT_MS, type PowerHistoryEntry, type PowerHistoryState } from '@/app/painel/hooks/usePowerStateHistory'
 import type { RdzConfig } from '@/app/lib/rdzConfig'
-import { parseSleepWindows } from '@/app/lib/sleepWindows'
+import { parsePowerPlan, planDaySegments, LVL_DEEP } from '@/app/lib/powerPlan'
 import { POWER_COLORS } from '@/app/lib/powerColors'
+import HistoryRecordingToggle, { RecordingPausedNote } from './HistoryRecordingToggle'
 
 // Um estado só é "assumido" contínuo até aqui além de sua última observação
 // (heartbeat ou transição). Além disso, tratamos como lacuna sem dado (ver
@@ -20,6 +21,8 @@ interface PowerTimelineProps {
   config: RdzConfig | null
   mqttConnected: boolean
   onDeleteDay: (dayKey: string) => void
+  recording: boolean
+  onRecordingChange: (v: boolean) => void
 }
 
 const DAYS   = 7
@@ -34,15 +37,17 @@ type DetailState =
   | 'listening'      // escuta estendida, WiFi normal
   | 'listen_wifips'  // escuta estendida, WiFi modem_sleep
   | 'listen_nowifi'  // escuta estendida, WiFi off
+  | 'awake_pulse'    // Pulsado (escuta em pulsos, sono leve entre eles)
   | 'awake_nowifi'   // acordado sem WiFi
   | 'awake_wifips'   // acordado WiFi modem_sleep
   | 'awake_cpu80'    // acordado CPU 80 MHz
   | 'awake'          // potência total
 
 function entryDetailState(e: PowerHistoryEntry): DetailState {
-  const { state, cpuMhz, wifi } = e
+  const { state, cpuMhz, wifi, level } = e
   if (state === 'sleeping') return 'sleeping'
   if (state === 'eco') return 'eco'
+  if (level === 3 && state === 'awake') return 'awake_pulse'
   if (state === 'listening') {
     if (wifi === 'off') return 'listen_nowifi'
     if (wifi === 'modem_sleep') return 'listen_wifips'
@@ -54,21 +59,25 @@ function entryDetailState(e: PowerHistoryEntry): DetailState {
   return 'awake'
 }
 
-const COLORS: Record<DetailState | 'awakePred' | 'listeningPred' | 'sleepingPred' | 'noData', string> = POWER_COLORS
+type PredState = 'awakePred' | 'listeningPred' | 'idlePred' | 'sleepingPred'
 
-const LABELS: Record<DetailState | 'awakePred' | 'listeningPred' | 'sleepingPred' | 'noData', string> = {
-  sleeping:      'Deep sleep',
-  eco:           'Economia (bat. crítica)',
-  listening:     'Escuta estendida',
-  listen_wifips: 'Escuta ext. WiFi economia',
-  listen_nowifi: 'Escuta ext. sem WiFi',
-  awake_nowifi:  'Acordado sem WiFi',
-  awake_wifips:  'Acordado WiFi economia',
+const COLORS: Record<DetailState | PredState | 'noData', string> = POWER_COLORS
+
+const LABELS: Record<DetailState | PredState | 'noData', string> = {
+  sleeping:      'Sono profundo',
+  eco:           'Bateria crítica',
+  listening:     'Espera por atraso (Pleno)',
+  listen_wifips: 'Espera por atraso (Econômico)',
+  listen_nowifi: 'Espera por atraso (Silencioso)',
+  awake_nowifi:  'Silencioso (WiFi desligado)',
+  awake_pulse:   'Pulsado (escuta em pulsos)',
+  awake_wifips:  'Econômico (WiFi economia)',
   awake_cpu80:   'Acordado CPU 80 MHz',
-  awake:         'Acordado (potência total)',
-  awakePred:     'Acordado (previsto config)',
-  listeningPred: 'Escuta extra (previsto config)',
-  sleepingPred:  'Dormindo (previsto config)',
+  awake:         'Pleno',
+  awakePred:     'Janela (previsto)',
+  listeningPred: 'Espera por atraso (previsto)',
+  idlePred:      'Ligado fora da janela (previsto)',
+  sleepingPred:  'Sono profundo (previsto)',
   noData:        'Sem dados',
 }
 
@@ -101,7 +110,7 @@ function lastNDayKeys(n: number): string[] {
 // ──────────────────────────────────────────────────────────────
 // Segmentos posicionados no tempo (nova estrutura)
 // ──────────────────────────────────────────────────────────────
-type SegState = DetailState | 'awakePred' | 'listeningPred' | 'sleepingPred' | 'noData'
+type SegState = DetailState | PredState | 'noData'
 
 interface DaySegment {
   startFrac: number  // 0.0–1.0 da meia-noite local
@@ -125,7 +134,18 @@ function computeDailyTimelines(
   mqttConnected: boolean,
 ): DayTimeline[] {
   const dayKeys    = lastNDayKeys(days)
-  const windows    = config ? parseSleepWindows(config) : null
+  const plan       = config ? parsePowerPlan(config) : null
+  // Plano do dia em estados "previstos" — janela, espera, e o resto do dia
+  // dormindo (Sono profundo) ou ligado (níveis 0-2).
+  const predSegs   = plan
+    ? planDaySegments(plan).map(s => ({
+        startMin: s.startMin,
+        endMin: s.endMin,
+        state: (s.period === 'window' ? 'awakePred'
+          : s.period === 'wait' ? 'listeningPred'
+          : s.level === LVL_DEEP ? 'sleepingPred' : 'idlePred') as PredState,
+      }))
+    : null
   const now        = Date.now()
   const rangeStart = localDayStartUtcMs(dayKeys[0])
 
@@ -170,33 +190,15 @@ function computeDailyTimelines(
 
     const fillGap = (gapStart: number, gapEnd: number) => {
       if (gapEnd <= gapStart) return
-      if (windows) {
-        // Calcula interseções das janelas de recepção com o gap, ordenadas
-        // Cada janela vira até 2 intervalos: a janela "core" (awakePred) e,
-        // se sleep.extend > 0, a escuta extra logo em seguida (listeningPred)
-        // — separados pra ficar visível, não escondida dentro do bloco todo.
-        const wIvs: { start: number; end: number; kind: 'awakePred' | 'listeningPred' }[] = []
-        for (const w of windows) {
-          const wStart  = dayStart + w.startMin * 60000
-          const coreEnd = wStart + w.durMin * 60000
-          const extEnd  = coreEnd + w.extendMin * 60000
-          const cs = Math.max(gapStart, wStart)
-          const ce = Math.min(gapEnd, coreEnd)
-          if (ce > cs) wIvs.push({ start: cs, end: ce, kind: 'awakePred' })
-          if (w.extendMin > 0) {
-            const es = Math.max(gapStart, coreEnd)
-            const ee = Math.min(gapEnd, extEnd)
-            if (ee > es) wIvs.push({ start: es, end: ee, kind: 'listeningPred' })
-          }
+      if (predSegs) {
+        // Recorta o plano do dia (minutos locais) na lacuna.
+        for (const ps of predSegs) {
+          pushSeg(
+            Math.max(gapStart, dayStart + ps.startMin * 60000),
+            Math.min(gapEnd, dayStart + ps.endMin * 60000),
+            ps.state,
+          )
         }
-        wIvs.sort((a, b) => a.start - b.start)
-        let cursor = gapStart
-        for (const wiv of wIvs) {
-          if (wiv.start > cursor) pushSeg(cursor, wiv.start, 'sleepingPred')
-          pushSeg(wiv.start, wiv.end, wiv.kind)
-          cursor = wiv.end
-        }
-        if (cursor < gapEnd) pushSeg(cursor, gapEnd, 'sleepingPred')
       } else {
         pushSeg(gapStart, gapEnd, 'noData')
       }
@@ -239,7 +241,7 @@ function formatDuration(ms: number): string {
 }
 
 const ALL_DETAIL_STATES: DetailState[] = [
-  'awake','awake_cpu80','awake_wifips','awake_nowifi',
+  'awake','awake_cpu80','awake_wifips','awake_nowifi','awake_pulse',
   'listen_nowifi','listen_wifips','listening',
   'eco','sleeping',
 ]
@@ -291,7 +293,7 @@ function computeTicks(range: HourRange): { hour: number; label: string }[] {
 // ──────────────────────────────────────────────────────────────
 // Componente
 // ──────────────────────────────────────────────────────────────
-export default function PowerTimeline({ history, config, mqttConnected, onDeleteDay }: PowerTimelineProps) {
+export default function PowerTimeline({ history, config, mqttConnected, onDeleteDay, recording, onRecordingChange }: PowerTimelineProps) {
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
   const [tooltip, setTooltip] = useState<{ seg: DaySegment; clientX: number; clientY: number } | null>(null)
   const [view, setView] = useState<HourRange>(FULL_RANGE)
@@ -361,7 +363,7 @@ export default function PowerTimeline({ history, config, mqttConnected, onDelete
   }, [dragHour !== null]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const timelines = computeDailyTimelines(history, DAYS, config, mqttConnected)
-  const hasConfig = !!(config && parseSleepWindows(config))
+  const hasConfig = !!(config && parsePowerPlan(config))
   const hasSomeObserved = timelines.some(t => t.hasData)
 
   const span = view.end - view.start
@@ -376,6 +378,7 @@ export default function PowerTimeline({ history, config, mqttConnected, onDelete
           Deep Sleep / Power — últimos {DAYS} dias
         </h2>
         <div className="flex items-center gap-1 flex-shrink-0">
+          <HistoryRecordingToggle recording={recording} onChange={onRecordingChange} />
           <button
             onClick={() => zoomBy(1 / 1.6)}
             title="Mais zoom"
@@ -401,6 +404,7 @@ export default function PowerTimeline({ history, config, mqttConnected, onDelete
           )}
         </div>
       </div>
+      {!recording && <RecordingPausedNote />}
       <p className="text-[11px] text-faint mb-4 flex items-start gap-1.5">
         <Info size={11} className="flex-shrink-0 mt-0.5" />
         {hasConfig
@@ -548,7 +552,7 @@ export default function PowerTimeline({ history, config, mqttConnected, onDelete
           <div>
             <p className="text-[10px] text-faint uppercase tracking-wide mb-1">Previsto / estimado</p>
             <div className="flex flex-wrap gap-x-3 gap-y-1">
-              {(['awakePred','listeningPred','sleepingPred'] as const).map(s => (
+              {(['awakePred','listeningPred','idlePred','sleepingPred'] as const).map(s => (
                 <div key={s} className="flex items-center gap-1.5 text-[10px] text-gray-300">
                   <span className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ background: COLORS[s] }} />
                   {LABELS[s]}

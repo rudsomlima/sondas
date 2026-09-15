@@ -37,8 +37,10 @@ export function derivePowerHistoryState(
   return { state, reason }
 }
 
-export function powerHistoryKey(state: PowerHistoryState, reason?: string): string {
-  return `${state}|${reason ?? ''}`
+// level entra na chave: Silencioso e Pulsado têm o mesmo cpu/wifi, então só
+// o nível distingue uma transição entre os dois.
+export function powerHistoryKey(state: PowerHistoryState, reason?: string, level?: number): string {
+  return `${state}|${reason ?? ''}|${level ?? ''}`
 }
 
 // Formato gravado em R2/localStorage (sondas/receivers/{key}/power-history.json
@@ -51,6 +53,7 @@ export interface PowerHistoryEntry {
   reason?: string
   cpuMhz?: number
   wifi?: string
+  level?: number // nível de energia (power.*); ausente em entradas antigas
 }
 
 export interface BattVoltageEntry {

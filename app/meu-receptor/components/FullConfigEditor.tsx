@@ -5,18 +5,15 @@ import { AlertTriangle, Save, RotateCw, Loader2, CheckCircle2, XCircle, Download
 import type { RdzConfig } from '@/app/lib/rdzConfig'
 import { isSensitiveKey, parseConfigTxt, configTxtFromChanges } from '@/app/lib/rdzConfig'
 import { RDZ_CONFIG_SECTIONS } from '@/app/lib/rdzConfigSections'
-import SleepConfigEditor from './SleepConfigEditor'
+import PowerConfigEditor from './PowerConfigEditor'
 import OledScreenEditor from './OledScreenEditor'
 
-const SLEEP_SECTION_LABEL = 'Deep Sleep / Energia'
+const POWER_SECTION_LABEL = 'Energia'
 const DISPLAY_SECTION_LABEL = 'Display (OLED/TFT)'
 
-const SLEEP_KEYS = new Set([
-  'sleep.mode','sleep.w1start','sleep.w1dur','sleep.w2start','sleep.w2dur',
-  'sleep.extend','sleep.cpu80','sleep.wifips','sleep.gmtoff',
-  'sleep.holdoff','sleep.wakemargin','sleep.driftpct','sleep.vlow','sleep.vcrit','sleep.vpanic',
-  'sleep.extendmode','sleep.extendsleep','sleep.extendsniff','sleep.crituploadmult',
-])
+const POWER_KEYS = new Set(
+  RDZ_CONFIG_SECTIONS.find(s => s.label === POWER_SECTION_LABEL)?.fields.map(f => f.key) ?? []
+)
 
 interface FullConfigEditorProps {
   config: RdzConfig
@@ -25,7 +22,9 @@ interface FullConfigEditorProps {
   applyError: string | null
   applyResult: { ok: boolean; rebooting?: boolean; pending?: boolean } | null
   onApply: (changes: Record<string, string>, mode: 'live' | 'reboot') => void
-  onSleepChanges?: (sleepDraft: Record<string, string>) => void
+  // Rascunho dos campos power.* (valor atual ou alterado), pra os gráficos da
+  // página (PowerTimeline/BatteryChart) refletirem a config antes de aplicar.
+  onPowerChanges?: (powerDraft: Record<string, string>) => void
 }
 
 const REDACTED = '***'
@@ -36,7 +35,7 @@ const REDACTED = '***'
 // compile-time simplesmente não aparecem). `changes` é um diff local contra
 // o baseline `config`; zera sozinho quando `config` muda de referência (novo
 // carregamento, ou depois de aplicar com sucesso).
-export default function FullConfigEditor({ config, loadedAt, applying, applyError, applyResult, onApply, onSleepChanges }: FullConfigEditorProps) {
+export default function FullConfigEditor({ config, loadedAt, applying, applyError, applyResult, onApply, onPowerChanges }: FullConfigEditorProps) {
   const [changes, setChanges] = useState<Record<string, string>>({})
   const uploadRef = useRef<HTMLInputElement>(null)
 
@@ -65,14 +64,7 @@ export default function FullConfigEditor({ config, loadedAt, applying, applyErro
         if (config[k] !== v) diff[k] = v
       }
       setChanges(diff)
-      if (onSleepChanges) {
-        const sleepDraft: Record<string, string> = {}
-        for (const k of SLEEP_KEYS) {
-          const v = diff[k] ?? config[k]
-          if (v !== undefined) sleepDraft[k] = v
-        }
-        onSleepChanges(sleepDraft)
-      }
+      if (onPowerChanges) onPowerChanges(powerDraftOf(diff))
     }
     reader.readAsText(file)
     // Limpa o valor para permitir re-upload do mesmo arquivo
@@ -81,17 +73,19 @@ export default function FullConfigEditor({ config, loadedAt, applying, applyErro
 
   useEffect(() => { setChanges({}) }, [config])
 
+  function powerDraftOf(pending: Record<string, string>): Record<string, string> {
+    const draft: Record<string, string> = {}
+    for (const k of POWER_KEYS) {
+      const v = pending[k] ?? config[k]
+      if (v !== undefined) draft[k] = v
+    }
+    return draft
+  }
+
   const setField = (key: string, value: string) => {
     setChanges(c => {
       const next = { ...c, [key]: value }
-      if (onSleepChanges && SLEEP_KEYS.has(key)) {
-        const sleepDraft: Record<string, string> = {}
-        for (const k of SLEEP_KEYS) {
-          const v = next[k] ?? config[k]
-          if (v !== undefined) sleepDraft[k] = v
-        }
-        onSleepChanges(sleepDraft)
-      }
+      if (onPowerChanges && POWER_KEYS.has(key)) onPowerChanges(powerDraftOf(next))
       return next
     })
   }
@@ -144,8 +138,25 @@ export default function FullConfigEditor({ config, loadedAt, applying, applyErro
 
       {RDZ_CONFIG_SECTIONS.map(section => {
         const present = section.fields.filter(f => f.key in config)
+        // Firmware anterior aos níveis de energia (dev20260914.4) só manda os
+        // campos sleep.* antigos — sem isto a seção sumia sem explicação.
+        if (present.length === 0 && section.label === POWER_SECTION_LABEL && 'sleep.mode' in config) {
+          return (
+            <div key={section.label} className="mb-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3">
+              <p className="text-xs font-medium text-amber-300 mb-1">Energia — o receptor está com firmware antigo</p>
+              <p className="text-[11px] text-gray-300">
+                A configuração de energia nova (níveis Pleno/Econômico/Silencioso/Pulsado/Sono profundo,
+                estimativa de autonomia, turbo) só aparece depois que o receptor rodar o firmware
+                <span className="mono"> dev20260914.4</span> ou mais novo e reportar a config. Grave por USB ou
+                publique o <span className="mono">firmware.bin</span> novo no painel de firmware abaixo.
+                Ao atualizar, os campos antigos <span className="mono">sleep.*</span> são descartados e a energia
+                volta ao padrão (sempre ligado, econômico) — reconfigure aqui depois.
+              </p>
+            </div>
+          )
+        }
         if (present.length === 0) return null
-        if (section.label === SLEEP_SECTION_LABEL) {
+        if (section.label === POWER_SECTION_LABEL) {
           return (
             <details key={section.label} open className="mb-2 group">
               <summary className="cursor-pointer select-none text-xs font-medium text-white py-2 px-1 hover:text-blue-400 transition-colors">
@@ -153,7 +164,7 @@ export default function FullConfigEditor({ config, loadedAt, applying, applyErro
                 <span className="text-faint font-normal"> · {present.length} campo(s)</span>
               </summary>
               <div className="pl-1 pb-2">
-                <SleepConfigEditor config={config} changes={changes} setField={setField} />
+                <PowerConfigEditor config={config} changes={changes} setField={setField} />
               </div>
             </details>
           )

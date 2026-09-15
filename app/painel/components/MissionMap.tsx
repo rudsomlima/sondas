@@ -18,6 +18,7 @@ import type { SelectedTarget } from '../selection'
 import { isValidCoordinate, isValidPosition } from '@/app/lib/launchData'
 import { formatGmt3, parseUtcDateStr } from '@/app/lib/launchUtils'
 import { sondePointPopup, type SondePoint } from '@/app/lib/sondePoints'
+import { recoveryPopupHtml } from '@/app/lib/sondehubRecovery'
 
 const BALLOON_SIZE = 15
 
@@ -146,7 +147,8 @@ export default function MissionMap({ station, monthLaunches, extraPoints = NO_PO
           icon: buildBalloonIcon(L, statusColor(pos.status), BALLOON_SIZE, gmt3IconLabel(instant)),
         }).addTo(layer).bindPopup(
           `<b>${escapeHtml(pos.sondeNumber)}</b><br>Status: ${escapeHtml(pos.status)}` +
-          `<br>Lançamento: ${escapeHtml(l.date.split('-').reverse().join('/'))} ${escapeHtml(l.time_local)}` +
+          (recoveryPopupHtml(pos.recoveredBy, pos.recoveryNote) || '<br>') +
+          `Lançamento: ${escapeHtml(l.date.split('-').reverse().join('/'))} ${escapeHtml(l.time_local)}` +
           (pos.altitude ? `<br>Altitude: ${Math.round(pos.altitude).toLocaleString('pt-BR')} m` : '')
         )
       }

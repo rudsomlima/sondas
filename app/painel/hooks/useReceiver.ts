@@ -10,6 +10,7 @@ import { receiverKey as toReceiverKey } from '@/app/lib/receiverKey'
 import { usePowerStateHistory, PowerHistoryEntry } from './usePowerStateHistory'
 import { useBatteryHistory, BattVoltageEntry } from './useBatteryHistory'
 import { deriveSleepState } from '@/app/lib/powerState'
+import { useHistorySettings, type HistoryRecording } from './useHistorySettings'
 
 export type { PowerHistoryEntry, BattVoltageEntry }
 
@@ -44,6 +45,9 @@ export interface ReceiverState {
   deletePowerHistoryDay: (dayKey: string) => void
   batteryHistory: BattVoltageEntry[]
   deleteBatteryHistoryDay: (dayKey: string) => void
+  // Liga/desliga do registro de histórico no servidor (R2), por gráfico.
+  historyRecording: HistoryRecording
+  setHistoryRecording: (patch: Partial<HistoryRecording>) => void
 }
 
 // Report HTTP chega no cadenciamento de mqtt.report_interval (default 60s),
@@ -51,6 +55,10 @@ export interface ReceiverState {
 // heartbeat já usada por powerState.ts) evita marcar "sondehub" à toa entre
 // dois reports.
 const LIVE_FRESH_MS = 5 * 60_000
+// No nível Silencioso o receptor desliga o WiFi e só religa a cada
+// power.report_min minutos (report_s no estado de energia) — sem esticar a
+// janela de frescor, o card acusaria "offline" entre duas religadas.
+const SILENT_SLACK_MS = 3 * 60_000
 
 /**
  * Composição híbrida do "meu receptor": reporte HTTP direto do firmware
@@ -80,13 +88,16 @@ export function useReceiver(reportIntervalMs?: number): ReceiverState {
     () => deriveSleepState(live.sleepState, Date.now()),
     [live.sleepState]
   )
-  const { history: powerHistory, deleteDay: deletePowerHistoryDay } = usePowerStateHistory(sleeping, waitingLate, live.powerState, live.connected, rKey)
-  const { history: batteryHistory, deleteDay: deleteBatteryHistoryDay } = useBatteryHistory(live.ttgoBattV, live.connected, rKey)
+  const { recording: historyRecording, setRecording: setHistoryRecording } = useHistorySettings(rKey)
+  const { history: powerHistory, deleteDay: deletePowerHistoryDay } = usePowerStateHistory(sleeping, waitingLate, live.powerState, live.connected, rKey, historyRecording.power)
+  const { history: batteryHistory, deleteDay: deleteBatteryHistoryDay } = useBatteryHistory(live.ttgoBattV, live.connected, rKey, historyRecording.batt)
 
   return useMemo(() => {
     const now = Date.now()
+    const silentGapMs = (live.powerState?.reportS ?? 0) * 1000
+    const freshMs = Math.max(LIVE_FRESH_MS, silentGapMs > 0 ? silentGapMs + SILENT_SLACK_MS : 0)
     const liveFresh = live.connected && live.lastLiveMessageAt != null &&
-      now - live.lastLiveMessageAt < LIVE_FRESH_MS
+      now - live.lastLiveMessageAt < freshMs
 
     const mySondes = sondehub.mySondes
 
@@ -108,6 +119,8 @@ export function useReceiver(reportIntervalMs?: number): ReceiverState {
       deletePowerHistoryDay,
       batteryHistory,
       deleteBatteryHistoryDay,
+      historyRecording,
+      setHistoryRecording,
     }
-  }, [sondehub, live, rKey, sleeping, waitingLate, powerHistory, deletePowerHistoryDay, batteryHistory, deleteBatteryHistoryDay])
+  }, [sondehub, live, rKey, sleeping, waitingLate, powerHistory, deletePowerHistoryDay, batteryHistory, deleteBatteryHistoryDay, historyRecording, setHistoryRecording])
 }

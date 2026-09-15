@@ -91,6 +91,9 @@ export function usePowerStateHistory(
   power:         RdzPower | null,
   mqttConnected: boolean,
   receiverKey:   string,
+  // false = registro desligado pelo usuário: sem transições nem heartbeat
+  // novos (nem no cache local); o que já existe continua exibido.
+  recording = true,
 ): UsePowerStateHistoryResult {
   // Inicializa sempre vazio — evita mismatch de hidratação (SSR ≠ cliente com localStorage).
   const [history, setHistory] = useState<PowerHistoryEntry[]>([])
@@ -119,19 +122,19 @@ export function usePowerStateHistory(
   }, []) // só no mount — receiverKey não muda sem reload de página
 
   useEffect(() => {
-    if (!mqttConnected) return
+    if (!recording || !mqttConnected) return
     const { state, reason } = derivePowerHistoryState(sleeping, waitingLate, power)
-    const key = powerHistoryKey(state, reason)
+    const key = powerHistoryKey(state, reason, power?.level)
 
     setHistory(prev => {
       const last = prev[prev.length - 1]
-      const lastKey = last ? powerHistoryKey(last.state, last.reason) : null
+      const lastKey = last ? powerHistoryKey(last.state, last.reason, last.level) : null
       if (lastKey === key) return prev
-      const next = pruneHistory([...prev, { at: Date.now(), state, reason, cpuMhz: power?.cpuMhz, wifi: power?.wifi }])
+      const next = pruneHistory([...prev, { at: Date.now(), state, reason, cpuMhz: power?.cpuMhz, wifi: power?.wifi, level: power?.level }])
       writeLocalHistory(receiverKey, next)
       return next
     })
-  }, [sleeping, waitingLate, power, mqttConnected, receiverKey])
+  }, [sleeping, waitingLate, power, mqttConnected, receiverKey, recording])
 
   // Heartbeat: refs sempre atualizadas pra não recriar o setInterval a cada
   // mudança de props (o que reiniciaria a cadência).
@@ -139,18 +142,18 @@ export function usePowerStateHistory(
   useEffect(() => { liveRef.current = { sleeping, waitingLate, power } })
 
   useEffect(() => {
-    if (!mqttConnected) return
+    if (!recording || !mqttConnected) return
     const id = setInterval(() => {
       const { sleeping, waitingLate, power } = liveRef.current
       const { state, reason } = derivePowerHistoryState(sleeping, waitingLate, power)
       setHistory(prev => {
-        const next = pruneHistory([...prev, { at: Date.now(), state, reason, cpuMhz: power?.cpuMhz, wifi: power?.wifi }])
+        const next = pruneHistory([...prev, { at: Date.now(), state, reason, cpuMhz: power?.cpuMhz, wifi: power?.wifi, level: power?.level }])
         writeLocalHistory(receiverKey, next)
         return next
       })
     }, HEARTBEAT_MS)
     return () => clearInterval(id)
-  }, [mqttConnected, receiverKey])
+  }, [mqttConnected, receiverKey, recording])
 
   const deleteDay = useCallback((dayKey: string) => {
     setHistory(prev => {

@@ -10,11 +10,14 @@ import { CHART } from '@/app/lib/tokens'
 import { GMT3 } from '@/app/lib/types'
 import { type BattVoltageEntry, localBattDayKey, MAX_SILENT_MS } from '@/app/painel/hooks/useBatteryHistory'
 import type { RdzConfig } from '@/app/lib/rdzConfig'
+import HistoryRecordingToggle, { RecordingPausedNote } from './HistoryRecordingToggle'
 
 interface BatteryChartProps {
   history:     BattVoltageEntry[]
   config:      RdzConfig | null
   onDeleteDay: (dayKey: string) => void
+  recording:   boolean
+  onRecordingChange: (v: boolean) => void
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000
@@ -91,7 +94,7 @@ function tickStep(spanMs: number): number {
   return 2 * 3600_000                                // >6h   → a cada 2h
 }
 
-export default function BatteryChart({ history, config, onDeleteDay }: BatteryChartProps) {
+export default function BatteryChart({ history, config, onDeleteDay, recording, onRecordingChange }: BatteryChartProps) {
   const [selectedDayKey, setSelectedDayKey] = useState<string | null>(null)
   const [confirmDelete,  setConfirmDelete]  = useState(false)
 
@@ -101,9 +104,9 @@ export default function BatteryChart({ history, config, onDeleteDay }: BatteryCh
   const [dragRight,    setDragRight]    = useState<number | null>(null)
   const [isDragging,   setIsDragging]   = useState(false)
 
-  const vcrit  = config?.['sleep.vcrit']  ? parseFloat(config['sleep.vcrit'])  : undefined
-  const vlow   = config?.['sleep.vlow']   ? parseFloat(config['sleep.vlow'])   : undefined
-  const vpanic = config?.['sleep.vpanic'] ? parseFloat(config['sleep.vpanic']) : undefined
+  const vcrit  = config?.['power.vcrit']  ? parseFloat(config['power.vcrit'])  : undefined
+  const vlow   = config?.['power.vlow']   ? parseFloat(config['power.vlow'])   : undefined
+  const vpanic = config?.['power.vpanic'] ? parseFloat(config['power.vpanic']) : undefined
 
   const sortedDays = useMemo(
     () => [...new Set(history.map(e => localBattDayKey(e.at)))].sort(),
@@ -172,11 +175,16 @@ export default function BatteryChart({ history, config, onDeleteDay }: BatteryCh
   if (history.length === 0) {
     return (
       <div className="panel p-5 mb-6">
-        <h2 className="text-sm font-semibold text-white flex items-center gap-2 mb-2">
-          <Battery size={14} className="text-emerald-400" />
-          Tensão da bateria — últimos 7 dias
-        </h2>
-        <p className="text-xs text-faint">Sem dados — aguardando leituras via MQTT.</p>
+        <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
+          <h2 className="text-sm font-semibold text-white flex items-center gap-2">
+            <Battery size={14} className="text-emerald-400" />
+            Tensão da bateria — últimos 7 dias
+          </h2>
+          <HistoryRecordingToggle recording={recording} onChange={onRecordingChange} />
+        </div>
+        <p className="text-xs text-faint">
+          {recording ? 'Sem dados — aguardando leituras do receptor.' : 'Sem dados — registro pausado.'}
+        </p>
       </div>
     )
   }
@@ -208,8 +216,10 @@ export default function BatteryChart({ history, config, onDeleteDay }: BatteryCh
               {latest.v.toFixed(3)} V
             </span>
           )}
+          <HistoryRecordingToggle recording={recording} onChange={onRecordingChange} />
         </div>
       </div>
+      {!recording && <RecordingPausedNote />}
 
       {/* Navegação de dia */}
       <div className="flex items-center gap-2 mb-3">

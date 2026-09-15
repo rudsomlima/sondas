@@ -9,8 +9,17 @@ import { fetchRecentSondeHubPoints, findPointForLaunch, type SondePoint } from '
 import { SOUTH_AMERICA_STATIONS, type Station } from '@/app/lib/stations'
 import { nowGMT3, SyncStationStatus } from '@/app/lib/types'
 import { analyzeTrajectory, pointsFromFrames } from '@/app/lib/trajectory'
+import { applyRecoveriesToLaunches, fetchRecoveries } from '@/app/lib/sondehubRecovery'
+import { launchInstantMs } from '@/app/lib/launchData'
 
 export const maxDuration = 60
+
+// Recuperações do SondeHub (posições UNKNOWN → FOUND/LOST): só lançamentos
+// recentes (relatos chegam em dias) e com orçamento por execução, pra não
+// estourar maxDuration nem martelar a API.
+const RECOVERY_MAX_AGE_MS = 60 * 24 * 3600_000
+const RECOVERY_BUDGET_PER_RUN = 40
+const RECOVERY_TIME_LIMIT_MS = 35_000
 
 /**
  * Checagem em segundo plano de correspondência no radiosondy.info, pra não
@@ -59,11 +68,32 @@ export async function GET() {
   }
 
   const summary: Record<string, SyncStationStatus> = {}
+  let recoveryBudget = RECOVERY_BUDGET_PER_RUN
 
   for (const station of stations) {
     const startplace = station.radiosondyStartplace!
     const store = await readYearStore(station.id, currentYear)
     if (!store || store.launches.length === 0) continue
+
+    // Posições que vieram só de telemetria RF (UNKNOWN): pergunta ao SondeHub
+    // se alguém registrou a recuperação física.
+    let recoveredChanged = false
+    if (recoveryBudget > 0 && Date.now() - startedAt < RECOVERY_TIME_LIMIT_MS) {
+      const serials = [...new Set(store.launches
+        .filter(l => l.position?.status === 'UNKNOWN' && Date.now() - launchInstantMs(l) < RECOVERY_MAX_AGE_MS)
+        .map(l => l.position!.sondeNumber)
+        .filter(s => s && s !== '?'))]
+        .slice(0, recoveryBudget)
+      if (serials.length > 0) {
+        recoveryBudget -= serials.length
+        const recoveries = await fetchRecoveries(serials).catch(() => new Map())
+        const result = applyRecoveriesToLaunches(store.launches, recoveries)
+        if (result.changed.length > 0) {
+          store.launches = result.launches
+          recoveredChanged = true
+        }
+      }
+    }
 
     // Reprocessa por posição OU `sources` ausentes — não só por posição. Isso
     // também revisita lançamentos gravados por uma versão anterior do código
@@ -81,9 +111,15 @@ export async function GET() {
       list.push(l)
       byMonth.set(l.month, list)
     }
-    if (byMonth.size === 0) continue
+    if (byMonth.size === 0) {
+      if (recoveredChanged) {
+        store.updatedAt = Date.now()
+        await writeYearStore(station.id, store)
+      }
+      continue
+    }
 
-    let changed = false
+    let changed = recoveredChanged
     let checked = 0, yes = 0, no = 0, pending = 0
     const usedSerials = new Set(store.launches.flatMap(l => l.position ? [l.position.sondeNumber] : []))
 

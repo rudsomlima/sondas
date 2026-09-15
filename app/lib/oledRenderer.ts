@@ -142,8 +142,8 @@ function formatEntry(entry: OledEntry, data: typeof MOCK_TELEMETRY = MOCK_TELEME
       // sleep — ver sleepCountdownS em RX_FSK/src/sleep.cpp); extra[1]
       // escolhe o formato (4=h:mm, 6=h:mm:ss, m=min:seg sem limite de 60min,
       // default=segundos crus). 0xffff = sem valor (mostra em branco).
-      // No receptor real, se a origem for "s" e sleep.mode estiver desligado
-      // (deep sleep desativado na config), o firmware mostra "OFF" em vez de
+      // No receptor real, se a origem for "s" e o resto do dia não usar Sono
+      // profundo (power.lvl_idle != 4), o firmware mostra "OFF" em vez de
       // branco — esse preview usa dado mock e não simula esse estado.
       const sub = extra[0]
       const value = sub === 'l' ? M.launchKT : sub === 'b' ? M.burstKT : sub === 'c' ? M.countKT : sub === 's' ? M.sleepS : undefined

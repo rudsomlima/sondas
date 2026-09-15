@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { recordCollected } from '@/app/lib/receiverCollect'
-import { parseRdzPmu, parseRdzSleep, parseRdzPower } from '@/app/lib/mqtt'
+import { parseRdzPmu, parseRdzSleep, parseRdzPower, parseRdzNet } from '@/app/lib/mqtt'
 import { writeInstalledFirmware, upsertKnownReceiver, writeReceiverLiveStatus } from '@/app/lib/blobStore'
 import { receiverKey } from '@/app/lib/receiverKey'
 
@@ -25,17 +25,18 @@ export async function POST(req: NextRequest) {
     const pmu   = body?.pmu   ? parseRdzPmu(JSON.stringify(body.pmu))     : null
     const sleep = body?.sleep ? parseRdzSleep(JSON.stringify(body.sleep)) : null
     const power = body?.power ? parseRdzPower(JSON.stringify(body.power)) : null
+    const net   = body?.net   ? parseRdzNet(JSON.stringify(body.net))     : null
     const fwVersion = typeof body?.fw?.version === 'string' ? body.fw.version.trim() : ''
 
-    if (!pmu && !sleep && !power && !fwVersion) {
-      return NextResponse.json({ ok: false, error: 'nenhum dado reconhecido em pmu/sleep/power/fw' }, { status: 400 })
+    if (!pmu && !sleep && !power && !net && !fwVersion) {
+      return NextResponse.json({ ok: false, error: 'nenhum dado reconhecido em pmu/sleep/power/net/fw' }, { status: 400 })
     }
 
     const key = receiverKey(prefix)
     if (fwVersion) await writeInstalledFirmware(key, fwVersion)
     await upsertKnownReceiver(prefix)
-    if (pmu || sleep || power) {
-      await writeReceiverLiveStatus(key, { pmu: pmu ?? undefined, sleep: sleep ?? undefined, power: power ?? undefined })
+    if (pmu || sleep || power || net) {
+      await writeReceiverLiveStatus(key, { pmu: pmu ?? undefined, sleep: sleep ?? undefined, power: power ?? undefined, net: net ?? undefined })
     }
 
     const updated = await recordCollected(prefix, { pmu: pmu ?? undefined, sleep: sleep ?? undefined, power: power ?? undefined }, Date.now())

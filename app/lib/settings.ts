@@ -35,6 +35,47 @@ export interface AppSettings {
   // mqtt.cfgsecret configurado no firmware (só necessário pra gravar;
   // leitura não exige segredo).
   rdzConfigSecret: string
+  // Estimativa de autonomia no editor de energia (PowerConfigEditor) — só
+  // existe no app, o firmware não sabe nada disso. Valores em mA medidos pelo
+  // usuário (medidor USB, sem bateria) substituem os padrões chutados.
+  powerEstimate: PowerEstimateSettings
+}
+
+export interface PowerEstimateSettings {
+  capacityMah: number
+  fullMa: number   // nível 0 Pleno
+  ecoMa: number    // nível 1 Econômico
+  silentMa: number // nível 2 Silencioso (WiFi desligado) — também a escuta do Pulsado
+  lightSleepMa: number // nível 3 Pulsado, durante o cochilo (sono leve)
+  deepMa: number   // nível 4 Sono profundo
+  channels: number // frequências ativas (o Pulsado escuta cada uma por ciclo)
+}
+
+export const DEFAULT_POWER_ESTIMATE: PowerEstimateSettings = {
+  capacityMah: 3000,
+  fullMa: 115,
+  ecoMa: 50,
+  silentMa: 35,
+  lightSleepMa: 3,
+  deepMa: 2,
+  channels: 1,
+}
+
+function parsePowerEstimate(raw: unknown): PowerEstimateSettings {
+  const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
+  const pick = (k: keyof PowerEstimateSettings) => {
+    const n = Number(r[k])
+    return isFinite(n) && n >= 0 ? n : DEFAULT_POWER_ESTIMATE[k]
+  }
+  return {
+    capacityMah: pick('capacityMah'),
+    fullMa: pick('fullMa'),
+    ecoMa: pick('ecoMa'),
+    silentMa: pick('silentMa'),
+    lightSleepMa: pick('lightSleepMa'),
+    deepMa: pick('deepMa'),
+    channels: Math.max(1, Math.round(pick('channels'))),
+  }
 }
 
 const SETTINGS_KEY = 'sondas_settings'
@@ -48,6 +89,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   alertRadiusKm: 0,
   mqttTopicPrefix: '',
   rdzConfigSecret: '',
+  powerEstimate: DEFAULT_POWER_ESTIMATE,
 }
 
 export function getSettings(): AppSettings {
@@ -74,6 +116,7 @@ export function getSettings(): AppSettings {
         : DEFAULT_SETTINGS.knownReceivers,
       mqttTopicPrefix: typeof parsed.mqttTopicPrefix === 'string' ? parsed.mqttTopicPrefix.trim() : DEFAULT_SETTINGS.mqttTopicPrefix,
       rdzConfigSecret: typeof parsed.rdzConfigSecret === 'string' ? parsed.rdzConfigSecret : DEFAULT_SETTINGS.rdzConfigSecret,
+      powerEstimate: parsePowerEstimate(parsed.powerEstimate),
     }
   } catch {
     return DEFAULT_SETTINGS
