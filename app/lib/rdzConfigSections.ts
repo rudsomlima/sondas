@@ -70,10 +70,6 @@ export const RDZ_CONFIG_SECTIONS: RdzConfigSectionMeta[] = [
     label: 'Receptor / decoders',
     fields: [
       f('freqofs', 'Offset de frequência RX (Hz)', 'int'),
-      f('rx.alternate', 'Alternar entre sondas em frequências diferentes: segundos em cada sonda antes de pular pra próxima (0=desligado, fica na 1ª). Perde quadros de cada uma — só pra campanha', 'int'),
-      f('rx.altscan', 'Alternância: segundos máximos esperando sinal num canal vazio antes de seguir (só durante campanha, ex. 4)', 'int'),
-      f('rx.landlock', 'Trava de pouso (m acima do receptor, 0=off): sonda descendo abaixo disso fixa a frequência até pousar — vence a alternância', 'int'),
-      f('rx.altframes', 'Alternância por quadros: N quadros completos de cada sonda e pula pra próxima (1 = um de cada, girando; 0 = usa os segundos acima). Tem prioridade', 'int'),
       f('rs41.agcbw', 'RS41 — banda AGC', 'int'),
       f('rs41.rxbw', 'RS41 — banda RX', 'int'),
       f('rs92.rxbw', 'RS92 — banda RX (e AGC)', 'int'),
@@ -155,6 +151,17 @@ export const RDZ_CONFIG_SECTIONS: RdzConfigSectionMeta[] = [
       f('sd.sync', 'SD — intervalo de sync [s]', 'int'),
       f('sd.name', 'SD — nomeação (0=plano, 1=pastas AAMM)', 'int'),
       f('sd.speed', 'SD — velocidade SPI (Hz, 0=padrão)', 'int'),
+    ],
+  },
+  {
+    // Renderizada pelo MultiFreqConfigEditor (não campo a campo) — ver
+    // FullConfigEditor e docs/MULTI_QRG_GUIDE.md no repo do firmware.
+    label: 'Várias frequências',
+    fields: [
+      f('rx.alternate', 'Revezar por tempo: segundos em cada sonda (0=off)', 'int'),
+      f('rx.altframes', 'Revezar por quadros: quadros de cada sonda (0=off; tem prioridade)', 'int'),
+      f('rx.altscan', 'Revezamento: segundos esperando sinal num canal vazio', 'int'),
+      f('rx.landlock', 'Trava de pouso: metros acima do receptor (0=off)', 'int'),
     ],
   },
   {

@@ -188,6 +188,10 @@ Mesmo padrão de fila em 3 partes, usado tanto para config quanto para telas
   campo (int, string de tamanho N, lista, double) vivem em
   `rdzConfigSections.ts`, que também é onde uma chave de config nova do
   firmware precisa ser registrada pra aparecer no editor (ex.: `ota.auto`).
+- `MultiFreqConfigEditor.tsx`: seção "Várias frequências" (campos `rx.alternate`,
+  `rx.altframes`, `rx.altscan`, `rx.landlock`) — modo ficar na primeira /
+  revezar por tempo / por quadros, prévia do revezamento e trava de pouso. Ver
+  `docs/MULTI_QRG_GUIDE.md` no repo do firmware.
 - `PowerConfigEditor.tsx` é uma UI dedicada só pros campos `power.*` (seção
   "Energia") dentro do editor completo: presets, prévia do dia por nível,
   estimativa de autonomia com calibração, lançamentos, bateria — ver

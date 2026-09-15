@@ -6,9 +6,11 @@ import type { RdzConfig } from '@/app/lib/rdzConfig'
 import { isSensitiveKey, parseConfigTxt, configTxtFromChanges } from '@/app/lib/rdzConfig'
 import { RDZ_CONFIG_SECTIONS } from '@/app/lib/rdzConfigSections'
 import PowerConfigEditor from './PowerConfigEditor'
+import MultiFreqConfigEditor from './MultiFreqConfigEditor'
 import OledScreenEditor from './OledScreenEditor'
 
 const POWER_SECTION_LABEL = 'Energia'
+const MULTIFREQ_SECTION_LABEL = 'Várias frequências'
 const DISPLAY_SECTION_LABEL = 'Display (OLED/TFT)'
 
 const POWER_KEYS = new Set(
@@ -156,6 +158,19 @@ export default function FullConfigEditor({ config, loadedAt, applying, applyErro
           )
         }
         if (present.length === 0) return null
+        if (section.label === MULTIFREQ_SECTION_LABEL) {
+          return (
+            <details key={section.label} className="mb-2 group">
+              <summary className="cursor-pointer select-none text-xs font-medium text-white py-2 px-1 hover:text-blue-400 transition-colors">
+                {section.label}
+                <span className="text-faint font-normal"> · revezamento e trava de pouso</span>
+              </summary>
+              <div className="pl-1 pb-2">
+                <MultiFreqConfigEditor config={config} changes={changes} setField={setField} />
+              </div>
+            </details>
+          )
+        }
         if (section.label === POWER_SECTION_LABEL) {
           return (
             <details key={section.label} open className="mb-2 group">
