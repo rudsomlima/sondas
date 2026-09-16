@@ -159,6 +159,15 @@ hardware do usuário; tudo mais é leitura de fontes públicas.
   `MAX_SILENT_MS` regravava a mesma tensão a cada 5 min e o gráfico parecia
   atualizado de minuto em minuto com o receptor em silêncio (Silencioso/
   Pulsado só reportam a cada `power.report_min`).
+- `writeReceiverLiveStatus`/`recordCollected` (mesma requisição em
+  `/api/receiver-report`) usam o MESMO `Date.now()`, calculado uma vez na
+  rota — sem isso, cada gravação tinha seu próprio carimbo (a poucos ms/s
+  de distância) e a mesma leitura virava dois pontos no gráfico ao mesclar
+  o cache local (carimbo do live-status) com o R2 (carimbo do
+  `recordCollected`). No firmware, `reportPmu()` também passou a rodar só
+  uma vez por religada do WiFi no Silencioso/Pulsado (não mais uma vez por
+  `mqtt.report_interval` enquanto a rajada dura) — ver
+  `docs/POWER_MODES_GUIDE.md` no repo do firmware.
 - Hooks: `useReceiver.ts` (agregador principal, usado por `/meu-receptor` e
   `/painel`), `useReceiverStatus.ts`, `usePowerStateHistory.ts`,
   `useBatteryHistory.ts` — consumidos por `PowerTimeline.tsx`/

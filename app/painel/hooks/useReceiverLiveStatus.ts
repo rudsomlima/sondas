@@ -62,7 +62,18 @@ export function useReceiverLiveStatus(receiverKey: string, reportIntervalMs?: nu
     }
     poll()
     const id = setInterval(poll, pollMs)
-    return () => { cancelled = true; clearInterval(id) }
+    // Volta pra aba depois de minutos em segundo plano: navegadores
+    // (Chrome) reduzem setInterval de abas ocultas a ~1x/min, então o
+    // gráfico de bateria podia ficar minutos "atrasado" (o último ponto
+    // real já existia no servidor, só não tinha sido buscado ainda).
+    // Ao reabrir a aba, consulta na hora em vez de esperar o próximo tick.
+    const onVisible = () => { if (!document.hidden) poll() }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      cancelled = true
+      clearInterval(id)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
   }, [receiverKey, pollMs])
 
   return state
