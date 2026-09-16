@@ -32,14 +32,17 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: 'nenhum dado reconhecido em pmu/sleep/power/net/fw' }, { status: 400 })
     }
 
+    // Um só instante pros dois escritos abaixo — ver comentário em
+    // writeReceiverLiveStatus (blobStore.ts).
+    const now = Date.now()
     const key = receiverKey(prefix)
     if (fwVersion) await writeInstalledFirmware(key, fwVersion)
     await upsertKnownReceiver(prefix)
     if (pmu || sleep || power || net) {
-      await writeReceiverLiveStatus(key, { pmu: pmu ?? undefined, sleep: sleep ?? undefined, power: power ?? undefined, net: net ?? undefined })
+      await writeReceiverLiveStatus(key, { pmu: pmu ?? undefined, sleep: sleep ?? undefined, power: power ?? undefined, net: net ?? undefined }, now)
     }
 
-    const updated = await recordCollected(prefix, { pmu: pmu ?? undefined, sleep: sleep ?? undefined, power: power ?? undefined }, Date.now())
+    const updated = await recordCollected(prefix, { pmu: pmu ?? undefined, sleep: sleep ?? undefined, power: power ?? undefined }, now)
     return NextResponse.json({ ok: true, updated })
   } catch {
     return NextResponse.json({ ok: false, error: 'Erro ao processar reporte' }, { status: 500 })

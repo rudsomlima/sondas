@@ -608,7 +608,15 @@ export async function readReceiverLiveStatus(key: string): Promise<ReceiverLiveS
 
 export async function writeReceiverLiveStatus(
   key: string,
-  data: { pmu?: RdzPmu; sleep?: RdzSleep; power?: RdzPower; net?: RdzNet }
+  data: { pmu?: RdzPmu; sleep?: RdzSleep; power?: RdzPower; net?: RdzNet },
+  // Mesmo instante usado por recordCollected (receiverCollect.ts) pro mesmo
+  // reporte — sem isso, o live-status (lido pelo navegador, "reportedAt" em
+  // useBatteryHistory) e o ponto gravado no histórico (R2) tinham cada um seu
+  // próprio Date.now(), a poucos ms/s de distância: a mesma leitura de
+  // bateria aparecia como DOIS pontos no gráfico quando o cache local
+  // (gravado com o carimbo do live-status) se mesclava com o R2 (gravado com
+  // este outro carimbo).
+  now: number = Date.now(),
 ): Promise<void> {
   const client = getClient()
   if (!client) return
@@ -620,7 +628,7 @@ export async function writeReceiverLiveStatus(
       power: data.power ?? prev?.power,
       // IP público vazio no report (ainda não descobriu) não apaga o já conhecido.
       net:   data.net ? { ...data.net, publicIp: data.net.publicIp ?? prev?.net?.publicIp } : prev?.net,
-      updatedAt: Date.now(),
+      updatedAt: now,
     }
     await client.send(new PutObjectCommand({
       Bucket: bucket(), Key: liveStatusPath(key), Body: JSON.stringify(next), ContentType: 'application/json',
