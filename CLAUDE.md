@@ -154,6 +154,11 @@ hardware do usuário; tudo mais é leitura de fontes públicas.
   operações — o receptor pode reportar a cada 10 s) e os hooks do navegador
   param de acrescentar leituras locais; o live-status continua. A preferência
   tem cache de 1 min por instância do servidor.
+- O gráfico de bateria grava cada ponto com o **carimbo do reporte**
+  (`live.lastLiveMessageAt`), não com `Date.now()`: sem isso o heartbeat de
+  `MAX_SILENT_MS` regravava a mesma tensão a cada 5 min e o gráfico parecia
+  atualizado de minuto em minuto com o receptor em silêncio (Silencioso/
+  Pulsado só reportam a cada `power.report_min`).
 - Hooks: `useReceiver.ts` (agregador principal, usado por `/meu-receptor` e
   `/painel`), `useReceiverStatus.ts`, `usePowerStateHistory.ts`,
   `useBatteryHistory.ts` — consumidos por `PowerTimeline.tsx`/

@@ -90,7 +90,7 @@ export function useReceiver(reportIntervalMs?: number): ReceiverState {
   )
   const { recording: historyRecording, setRecording: setHistoryRecording } = useHistorySettings(rKey)
   const { history: powerHistory, deleteDay: deletePowerHistoryDay } = usePowerStateHistory(sleeping, waitingLate, live.powerState, live.connected, rKey, historyRecording.power)
-  const { history: batteryHistory, deleteDay: deleteBatteryHistoryDay } = useBatteryHistory(live.ttgoBattV, live.connected, rKey, historyRecording.batt)
+  const { history: batteryHistory, deleteDay: deleteBatteryHistoryDay } = useBatteryHistory(live.ttgoBattV, live.connected, rKey, historyRecording.batt, live.lastLiveMessageAt)
 
   return useMemo(() => {
     const now = Date.now()

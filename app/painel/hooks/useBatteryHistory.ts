@@ -75,6 +75,11 @@ export function useBatteryHistory(
   // false = registro desligado pelo usuário: não acrescenta leituras novas
   // (nem no cache local); o que já existe continua exibido.
   recording = true,
+  // epoch ms do reporte a que a leitura pertence (live status). Sem isso o
+  // hook regravava a MESMA tensao com carimbo novo a cada MAX_SILENT_MS: o
+  // grafico parecia atualizado de minuto em minuto mesmo com o receptor em
+  // silencio (Silencioso/Pulsado so reportam a cada power.report_min).
+  reportedAt: number | null = null,
 ): UseBatteryHistoryResult {
   // Inicializa sempre vazio para evitar mismatch de hidratação (SSR não tem localStorage).
   // O useEffect abaixo carrega do localStorage / R2 logo após o mount.
@@ -106,17 +111,19 @@ export function useBatteryHistory(
 
   // Gravação de nova leitura (cache local — o R2 é escrito pelo poller do servidor)
   useEffect(() => {
-    if (!recording || !mqttConnected || ttgoBattV === null) return
-    const now  = Date.now()
+    if (!recording || !mqttConnected || ttgoBattV === null || reportedAt === null) return
     const last = lastRef.current
-    if (!shouldRecordBattReading(last, ttgoBattV, now)) return
-    lastRef.current = { at: now, v: ttgoBattV }
+    // Mesmo reporte de novo (polling entre dois reportes do receptor): nada
+    // a gravar - o ponto vale pelo instante em que o RECEPTOR mediu.
+    if (last && last.at === reportedAt) return
+    if (!shouldRecordBattReading(last, ttgoBattV, reportedAt)) return
+    lastRef.current = { at: reportedAt, v: ttgoBattV }
     setHistory(prev => {
-      const next = pruneHistory([...prev, { at: now, v: ttgoBattV }])
+      const next = pruneHistory([...prev, { at: reportedAt, v: ttgoBattV }])
       writeLocalHistory(receiverKey, next)
       return next
     })
-  }, [ttgoBattV, mqttConnected, receiverKey, recording])
+  }, [ttgoBattV, mqttConnected, receiverKey, recording, reportedAt])
 
   const deleteDay = useCallback((dayKey: string) => {
     setHistory(prev => {
