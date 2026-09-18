@@ -7,10 +7,12 @@ import {
   externalRadiosondyUrl, launchUtcInstant, fetchRadiosondyFeatures,
   findRecoveredMatch, fetchLiveFlights, findLiveMatch, isWithinMatchWindow,
   statusColor, buildBalloonIcon,
-  buildHighlightBalloonIcon, gmt3IconLabel, LEGEND_ITEMS,
+  buildHighlightBalloonIcon, buildHighlightLiveBalloonIcon, LIVE_COLOR,
+  gmt3IconLabel, LEGEND_ITEMS,
   RadiosondyFeature, radiosondyFeaturePopup, roundToSynopticHour, sondeHubUrl, parsePopupTelemetry,
 } from '@/app/lib/radiosondy'
 import { fetchSondeHubArchiveSondeForDay, SONDEHUB_RECENT_SECONDS } from '@/app/lib/sondehub'
+import { launchDisplayTime } from '@/app/lib/launchUtils'
 import { recoveryPopupHtml } from '@/app/lib/sondehubRecovery'
 import { getRadiosondyStartplace, findStation, DEFAULT_STATION } from '@/app/lib/stations'
 import type { Launch, LaunchPosition } from '@/app/lib/types'
@@ -309,7 +311,9 @@ export default function LaunchMap({ launch, onClose, onResult, onPosition, conte
       setIsSondeHubPos(false)
       setSondeHubMapUrl(null)
 
-      async function plotPosition(lat: number, lon: number, label: string, source: string, popupHtml?: string) {
+      // `live` = sonda ainda em voo: usa o ícone de paraquedas (mesmo desenho
+      // do sondehub.org) em vez do cilindro de posição já pousada/recuperada.
+      async function plotPosition(lat: number, lon: number, label: string, source: string, popupHtml?: string, live = false) {
         const L = leafletRef.current ?? (await import('leaflet')).default
         if (cancelled || !mapDivRef.current) return
         if (!mapRef.current) {
@@ -326,7 +330,9 @@ export default function LaunchMap({ launch, onClose, onResult, onPosition, conte
         drawnSerialsRef.current = new Set([label])
         const utcInstant = launchUtcInstant(launch.year, launch.month, launch.day, launch.time_utc, launch.time_local)
         L.marker([lat, lon], {
-          icon: buildHighlightBalloonIcon(L, statusColor('UNKNOWN'), BALLOON_SIZE, gmt3IconLabel(utcInstant)),
+          icon: live
+            ? buildHighlightLiveBalloonIcon(L, LIVE_COLOR, BALLOON_SIZE, gmt3IconLabel(utcInstant))
+            : buildHighlightBalloonIcon(L, statusColor('UNKNOWN'), BALLOON_SIZE, gmt3IconLabel(utcInstant)),
           zIndexOffset: 1000,
         }).addTo(markersLayerRef.current).bindPopup(popupHtml ?? `<b>${escapeHtml(label)}</b><br>Fonte: ${escapeHtml(source)}`)
         if (isFirstLoad) { mapRef.current.setView([lat, lon], 10) }
@@ -348,7 +354,7 @@ export default function LaunchMap({ launch, onClose, onResult, onPosition, conte
               setStatus(null)
               setIsSondeHubPos(false)
               setResolvedSerial(match.sondeNumber)
-              await plotPosition(match.lat, match.lon, match.sondeNumber, 'radiosondy.info (ao vivo)')
+              await plotPosition(match.lat, match.lon, match.sondeNumber, 'radiosondy.info (ao vivo)', undefined, true)
               setSondeHubMapUrl(sondeHubUrl(match.sondeNumber, match.lat, match.lon, 7))
               onResult?.(true)
               onPositionRef.current?.(launch, {
@@ -479,7 +485,7 @@ export default function LaunchMap({ launch, onClose, onResult, onPosition, conte
     <div ref={containerRef} className="mt-3 border border-border rounded overflow-hidden">
       <div className="px-3 py-2 bg-surface border-b border-border flex items-center gap-3 flex-wrap">
         <span className="text-xs text-gray-300">
-          Lançamento {String(launch.day).padStart(2, '0')}/{String(launch.month).padStart(2, '0')}/{launch.year} às {launch.time_local} (GMT-3)
+          Lançamento {String(launch.day).padStart(2, '0')}/{String(launch.month).padStart(2, '0')}/{launch.year} às {launchDisplayTime(launch).exact ? '' : '~'}{launchDisplayTime(launch).time} (GMT-3)
         </span>
         {approx && !isSondeHubPos && (
           <span className="text-xs text-yellow-400 flex items-center gap-1">

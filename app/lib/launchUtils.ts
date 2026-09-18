@@ -43,6 +43,21 @@ export function gmt3DateWithMonthGuard(utcMs: number): Date {
   return localDate
 }
 
+// Horário de lançamento a exibir. Desde que o app passou a ler o primeiro
+// quadro recebido de cada sonda (app/lib/sondeArchive.ts), é esse o horário
+// mostrado; `time_local` (slot sinótico da Wyoming, 00Z/12Z) fica como
+// identidade interna e como fallback quando a sonda não tem página no
+// radiosondy.info. `exact` = veio do primeiro quadro de verdade.
+export function launchDisplayTime(l: Launch): { time: string; exact: boolean } {
+  const first = l.firstFrameUtc
+    ? new Date(l.firstFrameUtc.replace(' ', 'T').replace(/z$/i, '') + 'Z')
+    : null
+  if (!first || isNaN(first.getTime())) return { time: l.time_local, exact: false }
+  const local = new Date(first.getTime() + GMT3)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return { time: `${pad(local.getUTCHours())}:${pad(local.getUTCMinutes())}`, exact: true }
+}
+
 // Mesmo lançamento clicado de novo: fecha o mapa em vez de reabrir
 export function sameLaunch(a: Launch | null, b: Launch): boolean {
   return !!a && a.date === b.date && a.time_local === b.time_local

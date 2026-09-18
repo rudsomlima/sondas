@@ -12,6 +12,7 @@ import PowerTimeline from './components/PowerTimeline'
 import BatteryChart from './components/BatteryChart'
 import FirmwareOtaPanel from './components/FirmwareOtaPanel'
 import PowerBoostPanel from './components/PowerBoostPanel'
+import ReceptionQualityPanel from './components/ReceptionQualityPanel'
 import type { RdzConfig } from '@/app/lib/rdzConfig'
 
 export default function MeuReceptorPage() {
@@ -216,6 +217,15 @@ export default function MeuReceptorPage() {
           />
         </div>
       )}
+
+      {/* Diagnóstico de antena/recepção: posição e callsign vêm do firmware
+          (espelhados nas preferências acima); rxalt é a altitude do receptor. */}
+      <ReceptionQualityPanel
+        callsign={config.uploaderCallsign}
+        rxLat={config.homeLat ?? null}
+        rxLon={config.homeLon ?? null}
+        rxAltM={Number(firmwareConfig.config?.['rxalt'] ?? 0) || 0}
+      />
 
       <FirmwareOtaPanel receiverKey={receiverKey(activePrefix)} pollMs={reportIntervalMs} />
 

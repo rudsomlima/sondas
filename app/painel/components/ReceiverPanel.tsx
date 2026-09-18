@@ -50,6 +50,18 @@ const LISTEN_REASONS: Record<string, string> = {
   listen_check: 'verificando sonda periodicamente (economia máxima)',
 }
 
+// "há 5m 23s" em vez de "há 323s": com Silencioso/Pulsado (uma religada a
+// cada power.report_min) o contador chega fácil a centenas/milhares de
+// segundos, que ninguém converte de cabeça.
+function fmtAgo(totalS: number): string {
+  if (totalS < 60) return `${totalS}s`
+  const m = Math.floor(totalS / 60)
+  const s = totalS % 60
+  if (m < 60) return `${m}m ${String(s).padStart(2, '0')}s`
+  const h = Math.floor(m / 60)
+  return `${h}h ${String(m % 60).padStart(2, '0')}m ${String(s).padStart(2, '0')}s`
+}
+
 const PERIOD_LABEL: Record<string, string> = {
   flight: 'acompanhando voo',
   window: 'janela de lançamento',
@@ -142,7 +154,7 @@ export default function ReceiverPanel({
                 title="Reporte HTTP direto do firmware (bateria/sleep/power) a cada ciclo de wake"
               >
                 <Radio size={9} /> Direto
-                {liveAgoS != null && ` · última msg há ${liveAgoS}s`}
+                {liveAgoS != null && ` · última msg há ${fmtAgo(liveAgoS)}`}
               </span>
             ) : liveConfigured && !liveConnected ? (
               <span

@@ -11,7 +11,9 @@ import { useTodayData } from '../historico/hooks/useTodayData'
 import { useLiveFlights } from '../historico/hooks/useLiveFlights'
 import { useSondePoints } from '../historico/hooks/useSondePoints'
 import { useRecoveredLaunches } from '../historico/hooks/useRecoveredLaunches'
+import { useSondeLaunches } from '../historico/hooks/useSondeLaunches'
 import { attachPositions } from '@/app/lib/sondePoints'
+import { launchSortMs } from '@/app/lib/sondeLaunches'
 import { useReceiver } from './hooks/useReceiver'
 import { useReceiverAlerts } from './hooks/useReceiverAlerts'
 import { getSettings } from '@/app/lib/settings'
@@ -62,6 +64,9 @@ export default function PainelPage() {
   // Posições UNKNOWN (telemetria RF) ganham FOUND/LOST se alguém registrou a
   // recuperação no SondeHub — em segundo plano, sem atrasar o mapa.
   const positionedMonth = useRecoveredLaunches(attachedMonth)
+  // Uma entrada por sonda (inclusive as que não casaram com nenhum slot da
+  // Wyoming) e horário do primeiro quadro recebido — ver sondeLaunches.ts.
+  const sondeLaunches = useSondeLaunches(positionedMonth, monthPoints)
 
   const loadMonth = useCallback(async () => {
     const request = ++monthRequestRef.current
@@ -123,9 +128,9 @@ export default function PainelPage() {
     setShowStationPicker(false)
   }, [])
 
-  const recentLaunches = useMemo(() => [...positionedMonth]
-    .sort((a, b) => (b.date + b.time_local).localeCompare(a.date + a.time_local))
-    .slice(0, 8), [positionedMonth])
+  const recentLaunches = useMemo(() => [...sondeLaunches]
+    .sort((a, b) => launchSortMs(b) - launchSortMs(a))
+    .slice(0, 8), [sondeLaunches])
 
   const refreshAll = useCallback(() => {
     refreshToday()

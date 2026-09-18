@@ -10,6 +10,7 @@ import { nowGMT3 } from '@/app/lib/types'
 import { isValidPosition, launchInstantMs, mergeLaunchCollections, sourceCounts } from '@/app/lib/launchData'
 import { launchKey, sameLaunch } from '@/app/lib/launchUtils'
 import { useRecoveredLaunches } from './hooks/useRecoveredLaunches'
+import { useSondeLaunches } from './hooks/useSondeLaunches'
 import { attachPositions, mergeSondePoints, pointsFromLaunches, type SondePoint } from '@/app/lib/sondePoints'
 import { useYearData } from './hooks/useYearData'
 import { useSondePoints } from './hooks/useSondePoints'
@@ -101,7 +102,10 @@ export default function HistoricoPage() {
   const { points: sondePoints } = useSondePoints(station, year, pointsMonth)
   // Status de recuperação do SondeHub nas posições UNKNOWN (só exibição; a
   // rede é consultada só pro mês aberto/corrente, o cache vale pro ano todo).
-  const displayLaunches = useRecoveredLaunches(data?.launches ?? NO_LAUNCHES, pointsMonth)
+  const recoveredLaunches = useRecoveredLaunches(data?.launches ?? NO_LAUNCHES, pointsMonth)
+  // Uma entrada por sonda + horário do primeiro quadro recebido (só exibição:
+  // o YearStore/cache do ano continuam sendo a verdade da Wyoming).
+  const displayLaunches = useSondeLaunches(recoveredLaunches, sondePoints)
   const dataRef = useRef(data)
   dataRef.current = data
 

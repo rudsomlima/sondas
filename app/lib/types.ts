@@ -70,6 +70,12 @@ export interface Launch {
   // da Wyoming); ausente = ainda não verificado (launches persistidos antes
   // desta checagem existir, ou verificação falhou por erro de rede/timeout).
   wyomingDataOk?: boolean
+  // Primeiro quadro recebido desta sonda (radiosondy.info sonde_archive.php,
+  // via app/lib/sondeArchive.ts), "YYYY-MM-DD HH:mm:ssz" em UTC. Quando
+  // presente é ELE o horário de lançamento mostrado na interface — `time_local`
+  // segue sendo o slot sinótico nominal da Wyoming (e a identidade do
+  // lançamento em caches/merges). Ver launchDisplayTime em launchUtils.ts.
+  firstFrameUtc?: string
   // Novos campos opcionais (reformulação mission control):
   sources?: LaunchSources
   flightStats?: FlightStats

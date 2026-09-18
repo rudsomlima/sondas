@@ -2,7 +2,7 @@
 
 import { Wind, Loader2, Sun, Moon, Antenna, MapPinOff } from 'lucide-react'
 import { flightStatus, FLIGHT_STATUS_LABEL, type TodayFlight } from '@/app/lib/radiosondy'
-import { isDaytime, formatGmt3 } from '@/app/lib/launchUtils'
+import { isDaytime, formatGmt3, launchDisplayTime } from '@/app/lib/launchUtils'
 import type { Launch } from '@/app/lib/types'
 import type { SelectedTarget } from '../selection'
 
@@ -83,6 +83,9 @@ export default function LivePanel({
           <div className="space-y-1">
             {recentLaunches.map((l, i) => {
               const pos = l.position
+              // Horário do primeiro quadro recebido da sonda; '~' = ainda sem
+              // esse dado, mostrando o slot sinótico nominal.
+              const { time, exact } = launchDisplayTime(l)
               const isSelected = selected?.launch != null &&
                 selected.launch.date === l.date && selected.launch.time_local === l.time_local
               return (
@@ -97,9 +100,11 @@ export default function LivePanel({
                     isSelected ? 'border-blue-500/60 bg-blue-500/10' : 'border-transparent hover:border-border bg-transparent'
                   }`}
                 >
-                  {isDaytime(l.time_local) ? <Sun size={10} className="text-day" /> : <Moon size={10} className="text-night" />}
+                  {isDaytime(time) ? <Sun size={10} className="text-day" /> : <Moon size={10} className="text-night" />}
                   <span className="mono text-white">{l.date.slice(8)}/{l.date.slice(5, 7)}</span>
-                  <span className="mono text-dim">{l.time_local}</span>
+                  <span className="mono text-dim" title={exact ? 'Primeiro dado recebido da sonda (radiosondy.info)' : 'Horário sinótico nominal — sonda ainda sem primeiro quadro conhecido'}>
+                    {exact ? '' : '~'}{time}
+                  </span>
                   {pos ? (
                     <span className="mono text-amber-400/80 truncate flex-1 text-right">{pos.sondeNumber}</span>
                   ) : (

@@ -238,6 +238,37 @@ carregando o texto bruto de `screens1.txt` (não um mapa chave→valor) — ver
   teclado (setas movem, Delete remove) — o drag-and-drop HTML5 nem sempre
   funciona em touch/todo navegador.
 
+#### Diagnóstico de recepção por ângulo de elevação (`ReceptionQualityPanel.tsx`)
+
+Seção "Qualidade de recepção": quanto de cada voo recente o receptor do usuário
+ouviu **em cada faixa de ângulo de elevação**, com as outras estações que
+ouviram a mesma sonda ao lado. Existe porque contagem de pacotes sozinha não
+diagnostica nada — o ângulo separa problema de antena de problema de sinal.
+
+- `app/lib/receptionAnalysis.ts` (puro) — `analyzeReception(frames, rxLat,
+  rxLon, rxAltM, myCallsign)`. Faixas 0-15/15-30/30-45/45-60/60-90°, elevação
+  com desconto da curvatura da Terra. `diagnose()` procura o **teto de
+  elevação** (última faixa bem ouvida com tudo acima ruim) em vez de usar um
+  corte fixo: voos que derivam rápido nunca chegam a ângulos altos e um corte
+  fixo os classificava como "fraco em geral".
+- `fetchSondeHubRawFrames(serial)` (`sondehub.ts`) — `GET /sonde/{serial}` sem
+  descartar `uploader_callsign`/`rssi` (o que `fetchLiveTrajectory` faz). Só
+  funciona na janela ao vivo do SondeHub (~3 dias); o arquivo S3 não guarda o
+  uploader por quadro.
+- `useReceptionQuality` (`app/meu-receptor/hooks/`) — lista voos recentes num
+  raio de 300 km e guarda o relatório já calculado em `localStorage`
+  (`sondas_reception_v1_*`), porque os quadros crus de um voo passam de 1 MB.
+- ⚠️ **O SondeHub deduplica telemetria**: cada quadro fica atribuído a um único
+  uploader (quem subiu primeiro), então contagem de quadros por estação é um
+  limite inferior e não serve pra comparar recepção. Por isso a cobertura é
+  medida **por minuto** (o minuto é seu se ao menos um dos ~60 quadros dele veio
+  do seu callsign). Não troque isso por contagem de quadros.
+- Caso real que originou o painel (PU7IOL, 2026-09): teto entre 15° e 60° em
+  todos os voos da semana — ground plane vertical tem nulo no zênite, enquanto
+  a estação vizinha (PU7KZI, Eggbeater-UHF) acompanhava até 32 km de altitude.
+  Nos dias em que a sonda derivava longe e baixa o PU7IOL tinha RSSI melhor que
+  o vizinho: não era sensibilidade, era geometria.
+
 #### Auto-OTA (`FirmwareOtaPanel.tsx`)
 
 O app funciona como servidor de atualização do próprio receptor
@@ -281,6 +312,43 @@ contato (desde `dev20260915.5`: logo que o WiFi conecta e a cada 10 min,
 - `app/api/cache/route.ts` — endpoint fino de status/info; a mutação do cache de fato acontece do lado do cliente via `localStorage` (essa rota só confirma a intenção pros fluxos de UI).
 - `app/meu-receptor/page.tsx` — dono do próprio rdzTTGOsonde: seletor de receptor (múltiplos cadastrados), config remota completa, editor de telas OLED, publicação de firmware, histórico de bateria/energia. Ver seção dedicada "Meu Receptor" acima — arquitetura própria, não compartilha nada com o resto do app além de `settings.ts`/`receiverKey.ts`.
 
+### Horário de lançamento = primeiro quadro recebido (`app/lib/sondeArchive.ts`, `sondeLaunches.ts`)
+
+O histórico nasceu modelado pela Wyoming: dois horários nominais por dia
+(00Z/12Z), cada um com no máximo **uma** sonda casada. Em Natal isso escondia
+voos reais — 15/09/2026 teve 5 sondas no SondeHub e o app listava 2
+lançamentos (as outras 3 só apareciam como pontos no mapa).
+
+- **`/api/sonde-archive?serials=A,B`** — proxy de
+  `radiosondy.info/sonde_archive.php?sondenumber=X`, que é a única fonte do
+  **primeiro quadro recebido** de cada sonda (`First Frame [UTC]`). Tem que ser
+  server-side: a página devolve **403** sem User-Agent de navegador e é HTML
+  puro sem CORS. Cache em memória por instância (24 h pra voo encerrado, 10 min
+  pra voo recente, 1 h pra "sem página").
+- **`app/lib/sondeArchive.ts`** — cliente com cache em memória +
+  `localStorage` (`sondas_sonde_archive_v1`), lotes de 8 serials por
+  requisição, no máximo 40 por chamada.
+- **`app/lib/sondeLaunches.ts`** (puro) — `pointToLaunch` transforma um
+  `SondePoint` em `Launch`; `launchesWithSondes` devolve os lançamentos da
+  Wyoming **mais uma entrada por sonda** que não casou com nenhum deles.
+  `launchSortMs` ordena pelo primeiro quadro (tem minutos; `launchInstantMs`
+  só conhece a hora sinótica cheia).
+- **`useSondeLaunches`** (`app/historico/hooks/`) — junta tudo em segundo
+  plano, no mesmo estilo do `useRecoveredLaunches`: devolve o cache na hora e
+  completa depois, sem atrasar o desenho. Usado por `/painel` ("Últimos
+  lançamentos") e `/historico` (`byMonth` → acordeão e gráfico mensal).
+- **Exibição**: `launchDisplayTime(l)` (`launchUtils.ts`) devolve
+  `{ time, exact }` — `firstFrameUtc` convertido pra GMT-3 quando existe,
+  senão o `time_local` nominal prefixado por `~`. `Launch.time_local`/`time_utc`
+  **continuam sendo a identidade** do lançamento (chave de cache, merge,
+  `radiosondyMatch`): nunca sobrescreva com o primeiro quadro.
+- Sondas sem página no radiosondy.info (só SondeHub) ficam com o horário
+  sinótico aproximado: o `/sonde/{serial}` do SondeHub **não** serve como
+  fallback de "primeiro dado" — a janela ao vivo é truncada e o primeiro frame
+  dela pode estar a 11 km de altitude (caso real: W3770721, 15/09/2026).
+- As entradas extras são **só exibição**: não entram no YearStore do R2 nem no
+  cache local do ano, que seguem sendo a verdade da Wyoming.
+
 ### Recuperações do SondeHub (`app/lib/sondehubRecovery.ts`)
 
 Posições vindas só de telemetria RF do SondeHub nascem `status: 'UNKNOWN'`.
@@ -318,6 +386,7 @@ lista por um parcial menor.
 - O cache em memória do servidor, o cache localStorage do cliente e o Blob store são três camadas independentes; uma correção numa não se propaga pras outras.
 - O feed ao vivo do radiosondy.info (`export_map.php?live_map=1`) retorna timestamps `report` com um `z` minúsculo no final (ex.: `"2026-06-23 12:57:32z"`) — acrescentar outro `Z` pro `Date` parsear produz uma data inválida silenciosamente. Sempre remova o `z`/`Z` existente antes de reacrescentar um (ver o padrão correto em `gmt3DateStr`/`formatGmt3`).
 - `TodayFlight.isLive === false` significa só "parou de transmitir", **não** "pousou" — a sonda some do SondeHub quando desce abaixo do horizonte dos receptores, às vezes ainda a km do chão (caso real: W3770310, último frame a 1.249 m caindo a 6 m/s). Nunca rotule `!isLive` direto como "Pousada": use `flightStatus()`/`FLIGHT_STATUS_LABEL` (`app/lib/radiosondy.ts`), que só diz pousada com evidência (recuperação no radiosondy.info, último frame < 500 m ou velocidade vertical ~0) e cai em "Sinal perdido" no resto. Não troque isso por um limiar só de altitude absoluta — estações altas (La Paz ~4.000 m) quebrariam.
+- O horário mostrado de um lançamento vem de `launchDisplayTime()`, não de `l.time_local` direto — ver a seção do primeiro quadro recebido. `time_local`/`time_utc` são identidade interna; sobrescrevê-los com o horário real quebra caches, merges e `radiosondyMatch`.
 - `Launch` mora em `app/lib/types.ts` (import compartilhado) — ao adicionar um campo, deixe-o opcional pra que os YearStores já persistidos no R2 continuem válidos.
 - Não amplie `MAX_MATCH_WINDOW_MS` (`app/lib/radiosondy.ts`, atualmente 4h) sem reverificar contra dados reais do radiosondy.info — uma janela larga demais produz silenciosamente matches *errados mas plausíveis* (roubando a recuperação do próximo lançamento) em vez de um honesto "sem match".
 - O auto-OTA do firmware (`/api/firmware/[receiver]/upload`) atualiza quando a versão é **DIFERENTE**, não "mais nova" — nunca deixe um `.bin` desatualizado publicado depois de uma correção no firmware, ou o receptor se reverte pra ele a cada boot. Ver `docs/AUTO_OTA_GUIDE.md` no repo do firmware.

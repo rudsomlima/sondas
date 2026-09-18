@@ -2,7 +2,7 @@
 
 import { sondeHubUrl } from '@/app/lib/radiosondy'
 import { ExternalLink } from 'lucide-react'
-import { formatGmt3 } from '@/app/lib/launchUtils'
+import { formatGmt3, launchDisplayTime } from '@/app/lib/launchUtils'
 import type { SelectedTarget } from '../selection'
 
 // Painel direito: telemetria da sonda selecionada.
@@ -76,7 +76,7 @@ export default function TelemetryPanel({ selected }: { selected: SelectedTarget 
             <div className="flex justify-between gap-2">
               <span className="label-xs">Lançamento</span>
               <span className="mono text-white">
-                {selected.launch.date.split('-').reverse().join('/')} {selected.launch.time_local}
+                {selected.launch.date.split('-').reverse().join('/')} {launchDisplayTime(selected.launch).exact ? '' : '~'}{launchDisplayTime(selected.launch).time}
               </span>
             </div>
           )}

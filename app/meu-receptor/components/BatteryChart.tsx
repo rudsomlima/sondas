@@ -30,18 +30,27 @@ const DAY_MS = 24 * 60 * 60 * 1000
 // lacuna — a mesma lógica já aplicada no gráfico "Deep Sleep / Power".
 const GAP_BREAK_MS = 3 * MAX_SILENT_MS
 
-interface ChartPoint { at: number; v: number | null }
+// `isolated`: leitura sem vizinha perto o suficiente pra formar linha (os
+// dois lados com lacuna). No Silencioso/Pulsado (1 leitura a cada
+// power.report_min) TODAS ficam assim — e uma linha de um único ponto não
+// desenha nada. Por isso essas ganham marcador próprio no gráfico.
+interface ChartPoint { at: number; v: number | null; isolated?: boolean }
 
 function withGapBreaks(data: BattVoltageEntry[]): ChartPoint[] {
   if (data.length === 0) return []
-  const out: ChartPoint[] = [data[0]]
+  const isIsolated = (i: number) => {
+    const prevGap = i > 0 ? data[i].at - data[i - 1].at : Infinity
+    const nextGap = i < data.length - 1 ? data[i + 1].at - data[i].at : Infinity
+    return prevGap > GAP_BREAK_MS && nextGap > GAP_BREAK_MS
+  }
+  const out: ChartPoint[] = [{ ...data[0], isolated: isIsolated(0) }]
   for (let i = 1; i < data.length; i++) {
     const prev = data[i - 1]
     const curr = data[i]
     if (curr.at - prev.at > GAP_BREAK_MS) {
       out.push({ at: (prev.at + curr.at) / 2, v: null })
     }
-    out.push(curr)
+    out.push({ ...curr, isolated: isIsolated(i) })
   }
   return out
 }
@@ -325,12 +334,33 @@ export default function BatteryChart({ history, config, onDeleteDay, recording, 
               // Suprime tooltip durante seleção de zoom
               active={isDragging ? false : undefined}
             />
+            {/* Tendência: atravessa as lacunas (tracejado discreto). Sem ela,
+                com 1 leitura a cada ~15 min (Silencioso/Pulsado) não havia
+                nada ligando os pontos — o gráfico parecia vazio. */}
+            <Line
+              type="monotone"
+              dataKey="v"
+              stroke={curColor}
+              strokeWidth={1}
+              strokeDasharray="3 4"
+              strokeOpacity={0.4}
+              dot={false}
+              isAnimationActive={false}
+              connectNulls
+            />
+            {/* Medições de verdade: linha cheia onde são densas, e marcador
+                em cada leitura isolada (que sozinha não formaria linha). */}
             <Line
               type="monotone"
               dataKey="v"
               stroke={curColor}
               strokeWidth={1.5}
-              dot={false}
+              dot={(props: any) => {
+                const { cx, cy, payload, index } = props
+                if (cy == null || cx == null || !payload?.isolated) return <g key={`d${index}`} />
+                return <circle key={`d${index}`} cx={cx} cy={cy} r={2.5} fill={curColor} stroke="#0b0e13" strokeWidth={1} />
+              }}
+              activeDot={{ r: 4 }}
               isAnimationActive={false}
               connectNulls={false}
             />

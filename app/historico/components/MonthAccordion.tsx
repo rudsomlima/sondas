@@ -5,7 +5,7 @@ import LaunchMap from '../LaunchMap'
 import YearMap from '../YearMap'
 import SourceBadges from '@/app/components/ui/SourceBadges'
 import { computeConfidence } from '@/app/lib/confidence'
-import { MONTHS, MONTHS_FULL, isDaytime, sameLaunch, launchKey } from '@/app/lib/launchUtils'
+import { MONTHS, MONTHS_FULL, isDaytime, sameLaunch, launchKey, launchDisplayTime } from '@/app/lib/launchUtils'
 import { isValidPosition } from '@/app/lib/launchData'
 import type { Station } from '@/app/lib/stations'
 import type { Launch, LaunchPosition } from '@/app/lib/types'
@@ -162,11 +162,14 @@ export default function MonthAccordion({
                           </div>
                           <div className="flex flex-wrap gap-x-2 gap-y-1">
                             {[...dayLaunches]
-                              .sort((a, b) => a.time_local.localeCompare(b.time_local))
-                              .map((l, i) => {
+                              .map(l => ({ l, display: launchDisplayTime(l) }))
+                              .sort((a, b) => a.display.time.localeCompare(b.display.time))
+                              .map(({ l, display }, i) => {
                                 const noMatch = l.radiosondyMatch === 'no' || noMatchLaunches.has(launchKey(l))
                                 const sourceLabel = l.source === 'sondehub' ? 'sondehub.org' : 'radiosondy.info'
-                                const title = l.approx
+                                const title = display.exact
+                                  ? `Primeiro dado recebido da sonda${l.position ? ` ${l.position.sondeNumber}` : ''} (radiosondy.info)`
+                                  : l.approx
                                   ? l.association === 'geographic'
                                     ? 'Candidato aproximado do sondehub.org por proximidade geográfica; pode pertencer a outra estação'
                                   : station.wyomingSupported === false
@@ -187,11 +190,11 @@ export default function MonthAccordion({
                                     }}
                                     title={title}
                                     className={`mono font-semibold flex items-center gap-1 hover:underline ${
-                                      isDaytime(l.time_local) ? 'text-amber-400' : 'text-indigo-400'
+                                      isDaytime(display.time) ? 'text-amber-400' : 'text-indigo-400'
                                     }`}
                                   >
-                                    {isDaytime(l.time_local) ? <Sun size={10} /> : <Moon size={10} />}
-                                    {l.approx && '~'}{l.time_local}
+                                    {isDaytime(display.time) ? <Sun size={10} /> : <Moon size={10} />}
+                                    {!display.exact && '~'}{display.time}
                                     <SourceBadges confidence={computeConfidence(l, station.wyomingSupported !== false)} />
                                   </button>
                                 )

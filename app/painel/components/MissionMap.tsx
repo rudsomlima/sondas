@@ -16,7 +16,7 @@ import type { Launch } from '@/app/lib/types'
 import type { TodayFlight } from '@/app/lib/radiosondy'
 import type { SelectedTarget } from '../selection'
 import { isValidCoordinate, isValidPosition } from '@/app/lib/launchData'
-import { formatGmt3, parseUtcDateStr } from '@/app/lib/launchUtils'
+import { formatGmt3, parseUtcDateStr, launchDisplayTime } from '@/app/lib/launchUtils'
 import { sondePointPopup, type SondePoint } from '@/app/lib/sondePoints'
 import { recoveryPopupHtml } from '@/app/lib/sondehubRecovery'
 
@@ -148,7 +148,7 @@ export default function MissionMap({ station, monthLaunches, extraPoints = NO_PO
         }).addTo(layer).bindPopup(
           `<b>${escapeHtml(pos.sondeNumber)}</b><br>Status: ${escapeHtml(pos.status)}` +
           (recoveryPopupHtml(pos.recoveredBy, pos.recoveryNote) || '<br>') +
-          `Lançamento: ${escapeHtml(l.date.split('-').reverse().join('/'))} ${escapeHtml(l.time_local)}` +
+          `Lançamento: ${escapeHtml(l.date.split('-').reverse().join('/'))} ${escapeHtml(launchDisplayTime(l).time)}` +
           (pos.altitude ? `<br>Altitude: ${Math.round(pos.altitude).toLocaleString('pt-BR')} m` : '')
         )
       }

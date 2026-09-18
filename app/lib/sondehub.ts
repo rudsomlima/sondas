@@ -16,6 +16,7 @@
  */
 import { TodayFlight, toReportStr, roundToSynopticHour } from './radiosondy'
 import { haversineKm } from './geo'
+import type { RawSondeFrame } from './receptionAnalysis'
 import { gmt3DateStr, gmt3DateWithMonthGuard } from './launchUtils'
 
 export interface SondeHubFrame {
@@ -230,6 +231,42 @@ interface NearbySondeApiFrame {
   snr?: number
   software_name?: string
   batt?: number
+}
+
+/**
+ * Quadros CRUS de um voo recente, um registro por (quadro, uploader) — é o
+ * único endpoint que diz QUEM recebeu cada quadro, e por isso a base do
+ * diagnóstico de recepção (app/lib/receptionAnalysis.ts). `fetchLiveTrajectory`
+ * (trajectory.ts) usa a mesma URL, mas descarta o uploader e o RSSI.
+ *
+ * Só vale pra voos recentes (a janela ao vivo do SondeHub, ~3 dias): passado
+ * isso a API responde 404/302 e o arquivo S3 não guarda o uploader por quadro.
+ */
+export async function fetchSondeHubRawFrames(serial: string): Promise<RawSondeFrame[]> {
+  const res = await fetch(`https://api.v2.sondehub.org/sonde/${encodeURIComponent(serial)}`, { cache: 'no-store' })
+  if (!res.ok) throw new Error(`Erro ${res.status} ao consultar os quadros da sonda no sondehub.org`)
+  const data: unknown = await res.json()
+  const list: any[] = Array.isArray(data) ? data : Object.values(data ?? {})
+  const out: RawSondeFrame[] = []
+  for (const f of list) {
+    if (!f || typeof f !== 'object') continue
+    if (typeof f.lat !== 'number' || typeof f.lon !== 'number' || !f.datetime) continue
+    out.push({
+      serial: typeof f.serial === 'string' ? f.serial : serial,
+      datetime: f.datetime,
+      lat: f.lat,
+      lon: f.lon,
+      alt: typeof f.alt === 'number' ? f.alt : 0,
+      rssi: typeof f.rssi === 'number' ? f.rssi : undefined,
+      snr: typeof f.snr === 'number' ? f.snr : undefined,
+      frequency: typeof f.frequency === 'number' ? f.frequency : undefined,
+      uploaderCallsign: typeof f.uploader_callsign === 'string' ? f.uploader_callsign : '?',
+      uploaderAntenna: typeof f.uploader_antenna === 'string' ? f.uploader_antenna : undefined,
+      softwareName: typeof f.software_name === 'string' ? f.software_name : undefined,
+      softwareVersion: typeof f.software_version === 'string' ? f.software_version : undefined,
+    })
+  }
+  return out
 }
 
 export async function fetchNearbySondes(

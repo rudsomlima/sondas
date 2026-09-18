@@ -2,7 +2,7 @@
 
 import { CheckCircle2, XCircle, Clock, Wind, Sun, Moon, Loader2 } from 'lucide-react'
 import { sondeHubUrl, flightStatus, FLIGHT_STATUS_LABEL, TodayFlight } from '@/app/lib/radiosondy'
-import { isDaytime, sameLaunch, formatGmt3 } from '@/app/lib/launchUtils'
+import { isDaytime, sameLaunch, formatGmt3, launchDisplayTime } from '@/app/lib/launchUtils'
 import type { Launch, TodayData } from '@/app/lib/types'
 
 interface LiveCardProps {
@@ -69,7 +69,9 @@ export default function LiveCard({
           {hasUnconfirmedCandidate && <div className="text-xs text-yellow-300 mt-1">{todayFlights.length} telemetria(s) próxima(s), ainda sem vínculo confirmado com esta estação</div>}
           {todayData?.launched_today ? (
             <div className="flex flex-wrap gap-x-2 gap-y-1 mt-1">
-              {todayData.launches.map((l, i) => (
+              {todayData.launches.map((l, i) => {
+                const display = launchDisplayTime(l)
+                return (
                 <button
                   key={i}
                   onClick={e => {
@@ -77,15 +79,18 @@ export default function LiveCard({
                     onExpandMonth(l.month)
                     onSelectLaunch(sameLaunch(selectedLaunch, l) ? null : l)
                   }}
-                  title="Ver no mapa a posição mais próxima após o lançamento"
+                  title={display.exact
+                    ? 'Primeiro dado recebido da sonda (radiosondy.info) — clique pra ver no mapa'
+                    : 'Horário sinótico nominal — clique pra ver no mapa a posição mais próxima'}
                   className={`text-xs mono font-medium hover:underline flex items-center gap-1 ${
-                    isDaytime(l.time_local) ? 'text-amber-400' : 'text-indigo-400'
+                    isDaytime(display.time) ? 'text-amber-400' : 'text-indigo-400'
                   }`}
                 >
-                  {isDaytime(l.time_local) ? <Sun size={10} /> : <Moon size={10} />}
-                  {l.time_local}
+                  {isDaytime(display.time) ? <Sun size={10} /> : <Moon size={10} />}
+                  {display.exact ? '' : '~'}{display.time}
                 </button>
-              ))}
+                )
+              })}
             </div>
           ) : !hadFlightToday ? (
             <div className="text-xs text-gray-400 mt-1">Nenhum lançamento</div>
