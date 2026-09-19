@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { writePollStatus } from '@/app/lib/blobStore'
 import { refreshLiveFlightsCache } from '@/app/lib/liveFlightsCache'
+import { backfillRegistry } from '@/app/lib/sondeRegistryServer'
 
 export const maxDuration = 60
 
@@ -37,12 +38,20 @@ export async function GET(req: NextRequest) {
   const startedAt = Date.now()
   const receivers = { total: 0, updated: 0, errors: 0 }
 
+  // Em paralelo: cache de voos ao vivo + completar o registro permanente de
+  // sondas (R2) aos poucos — poucas sondas por ping (cada uma pode baixar
+  // ~1-2 MB das fontes), sem depender de alguém abrir o app. Independentes:
+  // a demora de um não come o tempo do outro.
   let liveFlights: Awaited<ReturnType<typeof refreshLiveFlightsCache>> = { stations: {}, errors: 0 }
-  try {
-    liveFlights = await refreshLiveFlightsCache()
-  } catch (e) {
-    console.error('[poll] refreshLiveFlightsCache falhou:', e)
-  }
+  let registry: Awaited<ReturnType<typeof backfillRegistry>> | { error: string } = { seeded: 0, checked: [] }
+  await Promise.all([
+    refreshLiveFlightsCache()
+      .then(r => { liveFlights = r })
+      .catch(e => { console.error('[poll] refreshLiveFlightsCache falhou:', e) }),
+    backfillRegistry(4)
+      .then(r => { registry = r })
+      .catch((e: any) => { console.error('[poll] backfillRegistry falhou:', e); registry = { error: e?.message ?? 'falhou' } }),
+  ])
 
   await writePollStatus({
     lastRunAt: startedAt,
@@ -51,5 +60,5 @@ export async function GET(req: NextRequest) {
     liveFlights,
   })
 
-  return NextResponse.json({ ok: true, receivers, liveFlights })
+  return NextResponse.json({ ok: true, receivers, liveFlights, registry })
 }

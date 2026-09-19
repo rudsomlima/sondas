@@ -5,6 +5,7 @@ import { GMT3 } from '@/app/lib/types'
 import { formatDistance } from '@/app/lib/geo'
 import { LOW_HIGH_SPLIT_DEG, VERDICT_TEXT, type ReceptionReport, type StationReception } from '@/app/lib/receptionAnalysis'
 import { useReceptionQuality } from '../hooks/useReceptionQuality'
+import { PanelTitle } from './Collapsible'
 
 interface ReceptionQualityPanelProps {
   callsign: string
@@ -12,6 +13,9 @@ interface ReceptionQualityPanelProps {
   rxLon: number | null
   rxAltM: number
 }
+
+// Voos mostrados como botão; os mais antigos vão pra uma lista.
+const CHIP_LIMIT = 10
 
 function pad(n: number) { return String(n).padStart(2, '0') }
 
@@ -155,10 +159,9 @@ export default function ReceptionQualityPanel({ callsign, rxLat, rxLon, rxAltM }
   return (
     <div className="panel p-5 mb-6">
       <div className="flex items-center justify-between gap-3 flex-wrap mb-1">
-        <h2 className="text-sm font-semibold text-white flex items-center gap-2">
-          <SignalHigh size={15} className="text-blue-400" />
+        <PanelTitle icon={<SignalHigh size={15} className="text-blue-400" />}>
           Qualidade de recepção
-        </h2>
+        </PanelTitle>
         <div className="flex items-center gap-2">
           {q.serial && (
             <a
@@ -192,7 +195,7 @@ export default function ReceptionQualityPanel({ callsign, rxLat, rxLon, rxAltM }
         <>
           {q.flights.length > 0 && (
             <div className="flex flex-wrap gap-1.5 mb-4">
-              {q.flights.map(f => {
+              {q.flights.slice(0, CHIP_LIMIT).map(f => {
                 const active = f.serial === q.serial
                 return (
                   <button
@@ -209,6 +212,21 @@ export default function ReceptionQualityPanel({ callsign, rxLat, rxLon, rxAltM }
                   </button>
                 )
               })}
+              {q.flights.length > CHIP_LIMIT && (
+                <select
+                  value={q.flights.slice(CHIP_LIMIT).some(f => f.serial === q.serial) ? q.serial ?? '' : ''}
+                  onChange={e => e.target.value && q.setSerial(e.target.value)}
+                  className="px-2 py-1.5 rounded border border-border bg-surface text-xs mono text-gray-300"
+                  title="Voos mais antigos que o seu receptor ouviu (registro do app)"
+                >
+                  <option value="">+{q.flights.length - CHIP_LIMIT} voos anteriores…</option>
+                  {q.flights.slice(CHIP_LIMIT).map(f => (
+                    <option key={f.serial} value={f.serial}>
+                      {fmtLocal(f.lastReportMs)} · {f.serial}{f.frequency != null ? ` · ${f.frequency} MHz` : ''}
+                    </option>
+                  ))}
+                </select>
+              )}
             </div>
           )}
 
@@ -220,7 +238,7 @@ export default function ReceptionQualityPanel({ callsign, rxLat, rxLon, rxAltM }
           {q.listError && <p className="text-xs text-red-400 mb-3">{q.listError}</p>}
           {!q.listLoading && q.flights.length === 0 && !q.listError && (
             <p className="text-xs text-gray-400">
-              Nenhuma sonda nos últimos 3 dias num raio de 300 km — a janela ao vivo do sondehub.org
+              Nenhuma sonda recente num raio de 300 km nem no registro do app com o seu callsign — a janela ao vivo do sondehub.org
               não vai além disso.
             </p>
           )}

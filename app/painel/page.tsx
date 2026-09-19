@@ -9,11 +9,15 @@ import { nowGMT3 } from '@/app/lib/types'
 import type { Launch } from '@/app/lib/types'
 import { useTodayData } from '../historico/hooks/useTodayData'
 import { useLiveFlights } from '../historico/hooks/useLiveFlights'
-import { useSondePoints } from '../historico/hooks/useSondePoints'
+import { useYearSondePoints } from '../historico/hooks/useYearSondePoints'
+import { useYearData } from '../historico/hooks/useYearData'
+import { useSondeRegistry } from '../historico/hooks/useSondeRegistry'
 import { useRecoveredLaunches } from '../historico/hooks/useRecoveredLaunches'
 import { useSondeLaunches } from '../historico/hooks/useSondeLaunches'
-import { attachPositions } from '@/app/lib/sondePoints'
+import { attachPositions, mergeWithRegistry, isPointInMonth } from '@/app/lib/sondePoints'
 import { launchSortMs } from '@/app/lib/sondeLaunches'
+import { reportSondes } from '@/app/lib/sondeRegistryClient'
+import { parseUtcDateStr } from '@/app/lib/launchUtils'
 import { useReceiver } from './hooks/useReceiver'
 import { useReceiverAlerts } from './hooks/useReceiverAlerts'
 import { getSettings } from '@/app/lib/settings'
@@ -57,16 +61,59 @@ export default function PainelPage() {
   const mySerials = useMemo(() => new Set(receiver.mySondes.map(m => m.serial)), [receiver.mySondes])
 
   const clock = nowGMT3()
-  const { points: monthPoints, refresh: refreshPoints } = useSondePoints(station, clock.getUTCFullYear(), clock.getUTCMonth() + 1)
-  // Lançamentos sem posição ganham o pouso casado por horário (qualquer fonte),
-  // e o mapa ainda recebe as sondas que não casaram com nenhum lançamento.
+  const year = clock.getUTCFullYear()
+  const month = clock.getUTCMonth() + 1
+
+  // Lançamentos do ano inteiro — MESMA fonte do /historico (useYearData,
+  // cache-primeiro) — pro mapa mostrar exatamente o conjunto do mapa anual.
+  const { data: yearData } = useYearData(year, station)
+  const yearLaunches = useMemo(() => mergeLaunchCollections(
+    yearData?.year === year && yearData.station === station.id ? yearData.launches : [], monthLaunches,
+  ), [yearData, year, station.id, monthLaunches])
+  const { points: yearSourcePoints, refresh: refreshPoints } = useYearSondePoints(station, year, yearLaunches, { refreshMinutes: 5 })
+
+  // Registro permanente de sondas (R2): completa o que as fontes não
+  // devolvem mais e traz receptores / último sinal / 1º quadro.
+  // Ordem = prioridade de enriquecimento: sondas de hoje, depois as mais recentes.
+  const registrySerials = useMemo(
+    () => [
+      ...todayFlights.map(f => f.sondeNumber),
+      ...[...yearSourcePoints].sort((a, b) => b.date.getTime() - a.date.getTime()).map(p => p.serial),
+    ],
+    [yearSourcePoints, todayFlights],
+  )
+  const records = useSondeRegistry(station.id, [year], registrySerials)
+  const yearPoints = useMemo(() => mergeWithRegistry(yearSourcePoints, records,
+    (r, p) => !!r.stations?.includes(station.id) && p.date.getUTCFullYear() === year),
+  [yearSourcePoints, records, station.id, year])
+  const monthPoints = useMemo(() => yearPoints.filter(p => isPointInMonth(p, year, month)), [yearPoints, year, month])
+
+  // Sondas de hoje também vão pro registro (posição, último receptor).
+  useEffect(() => {
+    if (todayFlights.length === 0) return
+    reportSondes(todayFlights.flatMap(f => {
+      const d = parseUtcDateStr(f.lastReportUtc)
+      if (isNaN(d.getTime())) return []
+      const at = d.toISOString().replace(/\.\d{3}Z$/, 'Z')
+      return [{
+        serial: f.sondeNumber,
+        lastPos: { lat: f.lat, lon: f.lon, alt: f.altitude, at },
+        lastFrameUtc: at,
+        lastReceiver: f.lastReceiver,
+        lastReceiverAt: f.lastReceiver ? at : undefined,
+        frequencyMHz: f.frequencyMHz,
+      }]
+    }), station.id)
+  }, [todayFlights, station.id])
+
+  // Lançamentos sem posição ganham o pouso casado por horário (qualquer fonte).
   const attachedMonth = useMemo(() => attachPositions(monthLaunches, monthPoints).launches, [monthLaunches, monthPoints])
   // Posições UNKNOWN (telemetria RF) ganham FOUND/LOST se alguém registrou a
   // recuperação no SondeHub — em segundo plano, sem atrasar o mapa.
   const positionedMonth = useRecoveredLaunches(attachedMonth)
   // Uma entrada por sonda (inclusive as que não casaram com nenhum slot da
-  // Wyoming) e horário do primeiro quadro recebido — ver sondeLaunches.ts.
-  const sondeLaunches = useSondeLaunches(positionedMonth, monthPoints)
+  // Wyoming), com 1º quadro, receptores e último sinal do registro.
+  const sondeLaunches = useSondeLaunches(positionedMonth, monthPoints, records)
 
   const loadMonth = useCallback(async () => {
     const request = ++monthRequestRef.current
@@ -167,8 +214,10 @@ export default function PainelPage() {
         </div>
 
         <div className="lg:col-span-6 h-[280px] sm:h-[340px] lg:h-auto order-1 lg:order-2">
+          {/* Mesmo conjunto do mapa do histórico anual (useYearSondePoints +
+              registro do R2), com filtro Mês/Ano no próprio mapa. */}
           <MissionMap
-            station={station} monthLaunches={positionedMonth} extraPoints={monthPoints} todayFlights={todayFlights}
+            station={station} points={yearPoints} records={records} todayFlights={todayFlights}
             selected={selected} chasePos={geo.pos ? { lat: geo.pos.lat, lon: geo.pos.lon } : null}
             receiverPos={receiverPos} receiverName={callsign}
           />

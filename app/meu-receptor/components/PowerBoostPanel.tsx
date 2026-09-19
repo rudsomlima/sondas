@@ -6,6 +6,7 @@ import { getSettings } from '@/app/lib/settings'
 import { computeCfgAuth, randomReqId } from '@/app/lib/cfgAuth'
 import { formatGmt3 } from '@/app/lib/launchUtils'
 import type { RdzPower } from '@/app/lib/mqtt'
+import { PanelTitle } from './Collapsible'
 
 interface BoostInfo {
   manualUntilEpoch: number
@@ -87,9 +88,9 @@ export default function PowerBoostPanel({ power, reportMin }: PowerBoostPanelPro
 
   return (
     <div className="panel p-5 mb-6">
-      <h2 className="text-sm font-semibold text-white flex items-center gap-2 mb-1">
-        <Zap size={14} className="text-amber-400" /> Turbo
-      </h2>
+      <PanelTitle className="mb-1" icon={<Zap size={14} className="text-amber-400" />}>
+        Turbo
+      </PanelTitle>
       <p className="text-[11px] text-faint mb-3">
         Deixa o receptor em Pleno por um tempo, independente do horário — útil quando você sabe que tem sonda subindo.
         {reportMin ? ` No Silencioso/Pulsado ele pode levar até ${reportMin} min pra receber o pedido.` : ''}

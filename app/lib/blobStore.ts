@@ -14,6 +14,8 @@
 import { S3Client, GetObjectCommand, PutObjectCommand, ListObjectsV2Command, DeleteObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3'
 import type { YearStore, SyncStatus, PollStatus, KnownReceiverEntry } from './types'
 import type { TodayFlight } from './radiosondy'
+import type { SondeRegistryYear } from './sondeRegistry'
+import type { ReceiverStationsFile } from './receiverStations'
 
 export type { YearStore }
 
@@ -791,3 +793,79 @@ export const deleteScreensRequest = (key: string) => deleteJsonKey(screensReques
 export const readScreensResult = (key: string) => readJsonKey<ScreensResult>(screensResultPath(key))
 export const writeScreensResult = (key: string, result: Omit<ScreensResult, 'resolvedAt'>) =>
   writeJsonKey(screensResultPath(key), { ...result, resolvedAt: Date.now() } as ScreensResult)
+
+// ---------------------------------------------------------------------------
+// Registro permanente de sondas (ver app/lib/sondeRegistry.ts) — um JSON por
+// ano em `sondas/sondes/{ano}.json`.
+
+function sondeRegistryPath(year: number) { return `sondas/sondes/${year}.json` }
+const RECEIVER_STATIONS_KEY = 'sondas/receiver-stations.json'
+
+async function readJsonWithEtag<T>(key: string): Promise<{ data: T | null; etag?: string }> {
+  const client = getClient()
+  if (!client) return { data: null }
+  try {
+    const res = await client.send(new GetObjectCommand({ Bucket: bucket(), Key: key }))
+    const body = await res.Body?.transformToString()
+    return { data: body ? JSON.parse(body) : null, etag: res.ETag }
+  } catch (e: any) {
+    if (e?.name === 'NoSuchKey' || e?.$metadata?.httpStatusCode === 404) return { data: null }
+    console.error(`[R2] read(${key}) falhou:`, e)
+    throw e
+  }
+}
+
+/**
+ * Leitura-mescla-gravação condicional (If-Match no ETag lido; If-None-Match: *
+ * quando o arquivo ainda não existe). Se outra requisição gravou no meio,
+ * relê e tenta de novo — sem isso, duas gravações simultâneas (várias abas,
+ * mapa + painel, cron) perderiam dados uma da outra. `apply` devolve o novo
+ * conteúdo ou `null` se nada mudou.
+ */
+async function updateJsonConditional<T>(key: string, empty: () => T, apply: (current: T) => T | null): Promise<T | null> {
+  const client = getClient()
+  if (!client) return null
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const { data, etag } = await readJsonWithEtag<T>(key)
+    const current = data ?? empty()
+    const next = apply(current)
+    if (!next) return current
+    try {
+      await client.send(new PutObjectCommand({
+        Bucket: bucket(), Key: key,
+        Body: JSON.stringify(next), ContentType: 'application/json',
+        ...(etag ? { IfMatch: etag } : { IfNoneMatch: '*' }),
+      }))
+      return next
+    } catch (e: any) {
+      const status = e?.$metadata?.httpStatusCode
+      if (status === 412 || status === 409) {
+        await new Promise(r => setTimeout(r, 150 + Math.random() * 350))
+        continue
+      }
+      console.error(`[R2] update(${key}) falhou:`, e)
+      throw e
+    }
+  }
+  throw new Error(`${key}: conflito de gravação persistente`)
+}
+
+export async function readSondeRegistry(year: number): Promise<SondeRegistryYear | null> {
+  return (await readJsonWithEtag<SondeRegistryYear>(sondeRegistryPath(year))).data
+}
+
+export function updateSondeRegistry(
+  year: number, apply: (current: SondeRegistryYear) => SondeRegistryYear | null,
+): Promise<SondeRegistryYear | null> {
+  return updateJsonConditional(sondeRegistryPath(year), () => ({ year, updatedAt: 0, records: {} }), apply)
+}
+
+export async function readReceiverStations(): Promise<ReceiverStationsFile | null> {
+  return (await readJsonWithEtag<ReceiverStationsFile>(RECEIVER_STATIONS_KEY)).data
+}
+
+export function updateReceiverStations(
+  apply: (current: ReceiverStationsFile) => ReceiverStationsFile | null,
+): Promise<ReceiverStationsFile | null> {
+  return updateJsonConditional(RECEIVER_STATIONS_KEY, () => ({ updatedAt: 0, stations: {} }), apply)
+}

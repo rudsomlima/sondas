@@ -17,51 +17,6 @@ export interface RadiosondyFeature {
   popupContent: string
 }
 
-function escapePopupHtml(value: string): string {
-  return value.replace(/[&<>'"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[c] ?? c))
-}
-
-function popupNumber(html: string, label: string): number | null {
-  const match = html.match(new RegExp(`${label}:\\s*(-?[\\d.]+)`, 'i'))
-  if (!match) return null
-  const value = Number(match[1])
-  return Number.isFinite(value) ? value : null
-}
-
-/**
- * Rebuilds the radiosondy.info popup from parsed/validated values. This keeps
- * all useful telemetry from the old popup without injecting provider HTML.
- */
-export function radiosondyFeaturePopup(feature: RadiosondyFeature): string {
-  const altitude = popupNumber(feature.popupContent, 'Altitude')
-  const course = popupNumber(feature.popupContent, 'Course')
-  const speed = popupNumber(feature.popupContent, 'Speed')
-  const climbing = popupNumber(feature.popupContent, 'Climbing')
-  const pad = (n: number) => String(n).padStart(2, '0')
-  const local = new Date(feature.date.getTime() + GMT3)
-  const localTime = `${pad(local.getUTCDate())}/${pad(local.getUTCMonth() + 1)}/${local.getUTCFullYear()} ` +
-    `${pad(local.getUTCHours())}:${pad(local.getUTCMinutes())}:${pad(local.getUTCSeconds())}`
-  const utcTime = feature.date.toISOString().slice(0, 19).replace('T', ' ')
-  const serial = escapePopupHtml(feature.sondeNumber)
-  const status = escapePopupHtml(feature.status)
-  const detailsUrl = `https://radiosondy.info/sonde.php?sondenumber=${encodeURIComponent(feature.sondeNumber)}`
-  const navigateUrl = `https://www.openstreetmap.org/directions?route=%3B${feature.lat},${feature.lon}`
-
-  return `<div style="min-width:210px;line-height:1.45">` +
-    `<div style="font-size:16px;font-weight:700;margin-bottom:3px">${serial}</div>` +
-    `<div><b>Status:</b> ${status}</div>` +
-    `<div><b>Último reporte:</b> ${localTime} GMT-3</div>` +
-    `<div style="font-size:11px;opacity:.72">${utcTime} UTC</div>` +
-    (altitude !== null ? `<div><b>Altitude:</b> ${altitude.toLocaleString('pt-BR')} m</div>` : '') +
-    (course !== null ? `<div><b>Curso:</b> ${course}°</div>` : '') +
-    (speed !== null ? `<div><b>Velocidade:</b> ${speed} km/h</div>` : '') +
-    (climbing !== null ? `<div><b>Vertical:</b> ${climbing > 0 ? '+' : ''}${climbing} m/s</div>` : '') +
-    `<div><b>Posição:</b> ${feature.lat.toFixed(5)}, ${feature.lon.toFixed(5)}</div>` +
-    `<div style="margin-top:6px"><a href="${detailsUrl}" target="_blank" rel="noopener noreferrer">Detalhes ↗</a>` +
-    ` · <a href="${navigateUrl}" target="_blank" rel="noopener noreferrer">Navegar ↗</a></div>` +
-    `</div>`
-}
-
 // Bounding box aproximada do Rio Grande do Norte — só usada como fallback
 // para o startplace de Natal, cobrindo sondas que sobrevoem o estado mesmo
 // fora da posição exata de Barreira do Inferno.
@@ -157,6 +112,9 @@ export interface TodayFlight {
   // local sobrevoando a área — não confirma "teve voo" sozinho, ver LiveCard);
   // 'sondehub' = casado só por proximidade geográfica com a estação.
   source: 'radiosondy' | 'radiosondy-approx' | 'sondehub' | 'sondehub-site'
+  // Quem subiu o último quadro (só vem do SondeHub) e frequência — opcionais.
+  lastReceiver?: string
+  frequencyMHz?: number
 }
 
 export type FlightStatus = 'climbing' | 'descending' | 'landed' | 'signal-lost'

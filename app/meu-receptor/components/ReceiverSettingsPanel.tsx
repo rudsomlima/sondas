@@ -5,6 +5,7 @@ import { RadioTower, LocateFixed, Pencil, Trash2, Plus, KeyRound, Bell, BatteryM
 import type { AppSettings, KnownReceiver } from '@/app/lib/settings'
 import type { RdzConfig } from '@/app/lib/rdzConfig'
 import { receiverKey } from '@/app/lib/receiverKey'
+import { PanelTitle } from './Collapsible'
 
 interface ReceiverSettingsPanelProps {
   settings: AppSettings
@@ -203,10 +204,9 @@ export default function ReceiverSettingsPanel({
 
   return (
     <div className="panel p-5 mb-6">
-      <h2 className="text-sm font-semibold text-white flex items-center gap-2 mb-4">
-        <RadioTower size={14} className="text-blue-400" />
+      <PanelTitle className="mb-4" icon={<RadioTower size={14} className="text-blue-400" />}>
         Meu receptor
-      </h2>
+      </PanelTitle>
 
       {/* ── Receptor ativo ── */}
       <Section first icon={null} title="Receptores">

@@ -1,55 +1,37 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import 'leaflet/dist/leaflet.css'
 import {
   statusColor, buildBalloonIcon, buildHighlightBalloonIcon,
-  buildHighlightLiveBalloonIcon, gmt3IconLabel, launchUtcInstant,
+  buildHighlightLiveBalloonIcon, gmt3IconLabel, gmt3IconLabelWithMonth,
   LIVE_COLOR, LEGEND_ITEMS, flightStatus, FLIGHT_STATUS_LABEL,
 } from '@/app/lib/radiosondy'
 import { createBaseMap } from '@/app/lib/leafletBase'
-import { STATUS_COLORS } from '@/app/lib/tokens'
 import { fetchLiveTrajectory, fetchArchiveTrajectory, analyzeTrajectory } from '@/app/lib/trajectory'
 import { drawTrajectory } from '@/app/components/TrajectoryLayer'
 import type { Station } from '@/app/lib/stations'
-import type { Launch } from '@/app/lib/types'
+import { GMT3, nowGMT3 } from '@/app/lib/types'
 import type { TodayFlight } from '@/app/lib/radiosondy'
 import type { SelectedTarget } from '../selection'
-import { isValidCoordinate, isValidPosition } from '@/app/lib/launchData'
-import { formatGmt3, parseUtcDateStr, launchDisplayTime } from '@/app/lib/launchUtils'
-import { sondePointPopup, type SondePoint } from '@/app/lib/sondePoints'
-import { recoveryPopupHtml } from '@/app/lib/sondehubRecovery'
+import { isValidCoordinate } from '@/app/lib/launchData'
+import { parseUtcDateStr } from '@/app/lib/launchUtils'
+import { applyRegistryToPoints, sondePointPopup, type SondePoint } from '@/app/lib/sondePoints'
+import type { SondeRecord } from '@/app/lib/sondeRegistry'
+import { launchSitePopupHtml, POPUP_OPTIONS, simplePopupHtml } from '@/app/lib/mapPopups'
+import { useReceiverStations } from '@/app/lib/receiverStationsClient'
+import { drawReceiverStations, receptorsFromPoints } from '@/app/lib/receiverStationsLayer'
 
 const BALLOON_SIZE = 15
+const LIVE_BALLOON_SIZE = 40
 
-function escapeHtml(value: string): string {
-  return value.replace(/[&<>'"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[c] ?? c))
-}
-
-// Ícone de antena (mesmos paths do lucide-react "Antenna", viewBox 24x24)
-// para o marcador do "meu receptor" no mapa — só o glifo em vermelho (sem
-// círculo de fundo), com o nome/callsign da estação como rótulo abaixo,
-// mesmo estilo de "pill" escura usado nos rótulos de dia/noite dos balões.
-function antennaIconMarkup(name: string, sizePx: number): string {
-  const safeName = escapeHtml(name)
-  return `
-    <div style="display:flex;flex-direction:column;align-items:center;">
-      <svg width="${sizePx}" height="${sizePx}" viewBox="0 0 24 24"
-        fill="none" stroke="${STATUS_COLORS.lost}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"
-        style="filter:drop-shadow(0 1px 2px rgba(0,0,0,0.9));">
-        <path d="M2 12 7 2"/><path d="m7 12 5-10"/><path d="m12 12 5-10"/><path d="m17 12 5-10"/>
-        <path d="M4.5 7h15"/><path d="M12 16v6"/>
-      </svg>
-      <div style="margin-top:2px;background:rgba(0,0,0,0.75);border:1px solid rgba(255,255,255,0.4);border-radius:4px;padding:1px 5px;white-space:nowrap;">
-        <span style="color:#fff;font-size:10px;font-family:monospace;font-weight:700;">${safeName}</span>
-      </div>
-    </div>`
-}
 
 interface MissionMapProps {
   station: Station
-  monthLaunches: Launch[] // lançamentos do mês corrente (pousos como contexto)
-  extraPoints?: SondePoint[] // sondas do mês de qualquer fonte, com ou sem lançamento casado
+  // Todas as sondas do ano (mesma coleta do mapa anual — useYearSondePoints —
+  // já completada com o registro do R2). O filtro Mês/Ano é do próprio mapa.
+  points: SondePoint[]
+  records?: Map<string, SondeRecord> // registro do R2, pra completar as sondas de hoje
   todayFlights: TodayFlight[]
   selected: SelectedTarget | null
   chasePos: { lat: number; lon: number } | null
@@ -57,11 +39,45 @@ interface MissionMapProps {
   receiverName?: string | null // callsign do "meu receptor", rotulado no marcador
 }
 
-// Mapa central do mission control: pousos do mês + sondas de hoje +
-// trajetória do voo selecionado + posição do caçador.
-const NO_POINTS: SondePoint[] = []
+// Mapa central do mission control: todas as sondas do ano (ou só do mês) +
+// sondas de hoje + trajetória do voo selecionado + posição do caçador.
+const NO_RECORDS = new Map<string, SondeRecord>()
+const PERIOD_KEY = 'sondas_painel_map_period'
+type MapPeriod = 'year' | 'month'
 
-export default function MissionMap({ station, monthLaunches, extraPoints = NO_POINTS, todayFlights, selected, chasePos, receiverPos, receiverName }: MissionMapProps) {
+function inCurrentMonth(p: SondePoint): boolean {
+  const now = nowGMT3()
+  const ref = p.firstFrameUtc ? new Date(p.firstFrameUtc) : p.date
+  const local = new Date((isNaN(ref.getTime()) ? p.date : ref).getTime() + GMT3)
+  return local.getUTCFullYear() === now.getUTCFullYear() && local.getUTCMonth() === now.getUTCMonth()
+}
+
+// Sonda de hoje → ponto, pra usar o MESMO popup dos outros mapas
+// (receptores, último sinal, recuperação) completado pelo registro.
+function flightToPoint(f: TodayFlight): SondePoint {
+  const date = parseUtcDateStr(f.lastReportUtc)
+  return {
+    serial: f.sondeNumber, lat: f.lat, lon: f.lon, status: 'UNKNOWN',
+    date: isNaN(date.getTime()) ? new Date() : date, altitude: f.altitude,
+    sources: [f.source.startsWith('radiosondy') ? 'radiosondy' : 'sondehub'],
+    geographic: f.source === 'sondehub' || f.source === 'radiosondy-approx' || undefined,
+    lastReceiver: f.lastReceiver,
+    lastReceiverAt: f.lastReceiver && !isNaN(date.getTime()) ? date.toISOString().replace(/\.\d{3}Z$/, 'Z') : undefined,
+    frequencyMHz: f.frequencyMHz,
+  }
+}
+
+export default function MissionMap({ station, points, records = NO_RECORDS, todayFlights, selected, chasePos, receiverPos, receiverName }: MissionMapProps) {
+  const [period, setPeriodState] = useState<MapPeriod>('year')
+  useEffect(() => {
+    try { const v = localStorage.getItem(PERIOD_KEY); if (v === 'year' || v === 'month') setPeriodState(v) } catch { }
+  }, [])
+  const setPeriod = (v: MapPeriod) => {
+    setPeriodState(v)
+    try { localStorage.setItem(PERIOD_KEY, v) } catch { }
+  }
+  const visiblePoints = useMemo(() => period === 'year' ? points : points.filter(inCurrentMonth), [points, period])
+  const receiverStations = useReceiverStations()
   const mapDivRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<any>(null)
   const leafletRef = useRef<any>(null)
@@ -132,35 +148,18 @@ export default function MissionMap({ station, monthLaunches, extraPoints = NO_PO
       // Estação (marcador fixo discreto)
       L.circleMarker([station.lat, station.lon], {
         radius: 6, color: '#3b82f6', fillColor: '#3b82f6', fillOpacity: 0.6, weight: 2,
-      }).addTo(layer).bindPopup(`<b>${escapeHtml(station.name)}</b><br>STNM ${escapeHtml(station.id)}`)
+      }).addTo(layer).bindPopup(launchSitePopupHtml(station), POPUP_OPTIONS)
 
-      // Pousos do mês corrente
+      // Todas as sondas do período — mesmo conjunto e mesmo popup do mapa anual.
       const todaySerials = new Set(todayFlights.map(f => f.sondeNumber))
-      const drawn = new Set<string>(todaySerials)
-      for (const l of monthLaunches) {
-        const pos = l.position
-        if (!isValidPosition(pos)) continue
-        if (drawn.has(pos.sondeNumber)) continue // sonda de hoje tem marcador próprio
-        drawn.add(pos.sondeNumber)
-        const instant = launchUtcInstant(l.year, l.month, l.day, l.time_utc, l.time_local)
-        L.marker([pos.lat, pos.lon], {
-          icon: buildBalloonIcon(L, statusColor(pos.status), BALLOON_SIZE, gmt3IconLabel(instant)),
-        }).addTo(layer).bindPopup(
-          `<b>${escapeHtml(pos.sondeNumber)}</b><br>Status: ${escapeHtml(pos.status)}` +
-          (recoveryPopupHtml(pos.recoveredBy, pos.recoveryNote) || '<br>') +
-          `Lançamento: ${escapeHtml(l.date.split('-').reverse().join('/'))} ${escapeHtml(launchDisplayTime(l).time)}` +
-          (pos.altitude ? `<br>Altitude: ${Math.round(pos.altitude).toLocaleString('pt-BR')} m` : '')
-        )
-      }
-
-      // Sondas do mês vistas por alguma fonte mas sem lançamento casado
-      // (voos fora do horário sinótico, pouso só no SondeHub etc.).
-      for (const p of extraPoints) {
-        if (drawn.has(p.serial) || !isValidCoordinate(p.lat, p.lon)) continue
-        drawn.add(p.serial)
+      for (const p of visiblePoints) {
+        if (todaySerials.has(p.serial) || !isValidCoordinate(p.lat, p.lon)) continue // hoje tem marcador próprio
+        const first = p.firstFrameUtc ? new Date(p.firstFrameUtc) : null
+        const labelDate = first && !isNaN(first.getTime()) ? first : p.date
         L.marker([p.lat, p.lon], {
-          icon: buildBalloonIcon(L, statusColor(p.status), BALLOON_SIZE, gmt3IconLabel(p.date)),
-        }).addTo(layer).bindPopup(sondePointPopup(p))
+          icon: buildBalloonIcon(L, statusColor(p.status), BALLOON_SIZE,
+            period === 'year' ? gmt3IconLabelWithMonth(labelDate) : gmt3IconLabel(labelDate)),
+        }).addTo(layer).bindPopup(sondePointPopup(p), POPUP_OPTIONS)
       }
 
       // Sondas de hoje (em voo = paraquedas pulsante; pousada = balão destacado)
@@ -169,17 +168,19 @@ export default function MissionMap({ station, monthLaunches, extraPoints = NO_PO
         const reportDate = parseUtcDateStr(f.lastReportUtc)
         const label = isNaN(reportDate.getTime()) ? undefined : gmt3IconLabel(reportDate)
         const icon = f.isLive
-          ? buildHighlightLiveBalloonIcon(L, LIVE_COLOR, BALLOON_SIZE, label)
+          ? buildHighlightLiveBalloonIcon(L, LIVE_COLOR, LIVE_BALLOON_SIZE, label)
           : buildHighlightBalloonIcon(L, statusColor('UNKNOWN'), BALLOON_SIZE, label)
-        L.marker([f.lat, f.lon], { icon, zIndexOffset: 1000 }).addTo(layer).bindPopup(
-          `<b>${escapeHtml(f.sondeNumber)}</b><br>${f.isLive ? 'Em voo' : FLIGHT_STATUS_LABEL[flightStatus(f)]}` +
-          `<br>Último reporte: ${escapeHtml(formatGmt3(f.lastReportUtc))} GMT-3` +
-          `<br>Altitude: ${Math.round(f.altitude).toLocaleString('pt-BR')} m` +
-          (f.isLive ? `<br>Var. vertical: ${f.climbing.toFixed(1)} m/s` : '')
-        )
+        const pt = applyRegistryToPoints([flightToPoint(f)], records)[0]
+        const banner = {
+          text: f.isLive
+            ? `Em voo agora · ${f.climbing > 0 ? 'subindo' : 'descendo'} ${Math.abs(f.climbing).toFixed(1)} m/s`
+            : FLIGHT_STATUS_LABEL[flightStatus(f)],
+          color: f.isLive ? LIVE_COLOR : '#22c55e',
+        }
+        L.marker([f.lat, f.lon], { icon, zIndexOffset: 1000 }).addTo(layer).bindPopup(sondePointPopup(pt, { banner }), POPUP_OPTIONS)
       }
     }
-  }, [station, monthLaunches, extraPoints, todayFlights, mapReady])
+  }, [station, visiblePoints, records, todayFlights, period, mapReady])
 
   // Trajetória do voo selecionado.
   useEffect(() => {
@@ -242,7 +243,10 @@ export default function MissionMap({ station, monthLaunches, extraPoints = NO_PO
 
     L.circleMarker([chasePos.lat, chasePos.lon], {
       radius: 7, color: '#3b82f6', fillColor: '#60a5fa', fillOpacity: 0.9, weight: 2,
-    }).addTo(layer).bindPopup('<b>Você</b>')
+    }).addTo(layer).bindPopup(simplePopupHtml({
+      title: 'Você', subtitle: 'Posição do navegador (perseguição)', icon: 'crosshair', color: '#60a5fa',
+      rows: [{ icon: 'pin', label: 'Posição', value: `${chasePos.lat.toFixed(5)}, ${chasePos.lon.toFixed(5)}` }],
+    }), POPUP_OPTIONS)
 
     if (selected) {
       L.polyline([[chasePos.lat, chasePos.lon], [selected.lat, selected.lon]], {
@@ -251,32 +255,36 @@ export default function MissionMap({ station, monthLaunches, extraPoints = NO_PO
     }
   }, [chasePos, selected, mapReady])
 
-  // Posição do "meu receptor" (rxlat/rxlon publicado via MQTT) — ícone de
-  // antena para diferenciar de "Você" (círculo azul, geolocalização do
-  // navegador) e das sondas (balão/paraquedas).
+  // Estações receptoras: todas as que receberam alguma sonda visível no mapa
+  // (posição vinda do SondeHub, guardada no R2) + o "meu receptor" sempre.
+  // Mesmo ícone de antena; vermelho = meu receptor, verde-água = demais.
   useEffect(() => {
     const L = leafletRef.current
     const layer = receiverLayerRef.current
     if (!L || !layer) return
-    layer.clearLayers()
-    if (!receiverPos) return
-
-    const size = 26
-    const labelH = 16
-    L.marker([receiverPos.lat, receiverPos.lon], {
-      icon: L.divIcon({
-        html: antennaIconMarkup(receiverName || 'Meu receptor', size),
-        className: '',
-        iconSize: [Math.max(size, (receiverName?.length ?? 12) * 6), size + labelH],
-        iconAnchor: [size / 2, size - 1],
-      }),
-    }).addTo(layer).bindPopup(`<b>${escapeHtml(receiverName || 'Meu receptor')}</b>`)
-  }, [receiverPos, receiverName, mapReady])
+    const counts = receptorsFromPoints([
+      ...visiblePoints,
+      ...applyRegistryToPoints(todayFlights.map(flightToPoint), records),
+    ])
+    drawReceiverStations(L, layer, receiverStations, counts, { callsign: receiverName, pos: receiverPos })
+  }, [visiblePoints, todayFlights, records, receiverStations, receiverPos, receiverName, mapReady])
 
   return (
     <div className="panel overflow-hidden h-full flex flex-col">
       <div className="relative flex-1 min-h-[420px] lg:min-h-0 bg-bg">
         <div ref={mapDivRef} className="absolute inset-0" />
+        <div className="absolute top-3 right-3 z-[900] flex rounded-md overflow-hidden border border-border bg-bg/85 backdrop-blur-sm text-[11px]">
+          {(['month', 'year'] as MapPeriod[]).map(v => (
+            <button
+              key={v}
+              onClick={() => setPeriod(v)}
+              className={`px-2.5 py-1 transition-colors ${period === v ? 'bg-blue-500/30 text-white' : 'text-gray-400 hover:text-white'}`}
+              title={v === 'year' ? 'Todas as sondas do ano (igual ao mapa do histórico anual)' : 'Só as sondas do mês corrente'}
+            >
+              {v === 'year' ? `Ano (${points.length})` : 'Mês'}
+            </button>
+          ))}
+        </div>
         {trajNote && (
           <div className="absolute top-3 left-1/2 -translate-x-1/2 z-[900] bg-bg/80 backdrop-blur-sm rounded-md px-3 py-1.5 text-[11px] text-sky-300 mono whitespace-nowrap">
             {trajNote}

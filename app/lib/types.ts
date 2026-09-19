@@ -70,12 +70,20 @@ export interface Launch {
   // da Wyoming); ausente = ainda não verificado (launches persistidos antes
   // desta checagem existir, ou verificação falhou por erro de rede/timeout).
   wyomingDataOk?: boolean
-  // Primeiro quadro recebido desta sonda (radiosondy.info sonde_archive.php,
-  // via app/lib/sondeArchive.ts), "YYYY-MM-DD HH:mm:ssz" em UTC. Quando
+  // Primeiro quadro recebido desta sonda (registro de sondas no R2, ver
+  // app/lib/sondeRegistry.ts), ISO UTC. Quando
   // presente é ELE o horário de lançamento mostrado na interface — `time_local`
   // segue sendo o slot sinótico nominal da Wyoming (e a identidade do
   // lançamento em caches/merges). Ver launchDisplayTime em launchUtils.ts.
   firstFrameUtc?: string
+  // Estações que participaram da recepção RF desta sonda (registro de sondas
+  // no R2: radiosondy.info + SondeHub, ver app/lib/sondeRegistry.ts), em
+  // ordem de quadros recebidos. Não confundir com quem RECUPEROU o
+  // equipamento fisicamente (LaunchPosition.recoveredBy).
+  receivers?: string[]
+  receiverFrames?: Record<string, number>
+  lastReceiver?: string   // de quem foi o último sinal recebido
+  lastReceiverAt?: string // ISO UTC
   // Novos campos opcionais (reformulação mission control):
   sources?: LaunchSources
   flightStats?: FlightStats

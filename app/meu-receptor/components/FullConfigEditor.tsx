@@ -8,6 +8,7 @@ import { RDZ_CONFIG_SECTIONS } from '@/app/lib/rdzConfigSections'
 import PowerConfigEditor from './PowerConfigEditor'
 import MultiFreqConfigEditor from './MultiFreqConfigEditor'
 import OledScreenEditor from './OledScreenEditor'
+import { PanelTitle } from './Collapsible'
 
 const POWER_SECTION_LABEL = 'Energia'
 const MULTIFREQ_SECTION_LABEL = 'Várias frequências'
@@ -103,7 +104,7 @@ export default function FullConfigEditor({ config, loadedAt, applying, applyErro
       <input ref={uploadRef} type="file" accept=".txt,text/plain" className="hidden" onChange={handleUpload} />
 
       <div className="flex items-center justify-between flex-wrap gap-2 mb-1">
-        <h2 className="text-sm font-semibold text-white">Configuração completa do firmware</h2>
+        <PanelTitle>Configuração completa do firmware</PanelTitle>
         <div className="flex items-center gap-2 flex-wrap">
           {loadedAt && (
             <span className="text-[11px] text-faint">

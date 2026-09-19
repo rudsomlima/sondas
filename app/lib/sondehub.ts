@@ -35,7 +35,13 @@ export const LIVE_STALE_MS = 10 * 60 * 1000
 // em si pra quem for consultar VÁRIAS estações (ex. o cron do servidor, ver
 // app/lib/liveFlightsCache.ts) poder buscar uma vez só e filtrar por estação
 // em memória, em vez de refazer o fetch de ~350KB por estação.
-export interface SondeHubLastFrame { lat: number; lon: number; alt: number; vel_v: number; reportDate: Date }
+export interface SondeHubLastFrame {
+  lat: number; lon: number; alt: number; vel_v: number; reportDate: Date
+  // Quem subiu o quadro mais recente (= de quem foi o último sinal recebido).
+  uploaderCallsign?: string
+  frequency?: number
+  type?: string
+}
 
 export async function fetchSondeHubLastFrames(): Promise<Map<string, SondeHubLastFrame>> {
   // /sondes returns one latest frame per serial and is substantially smaller
@@ -65,6 +71,8 @@ export function filterSondeHubFlights(
       lastReportUtc: toReportStr(last.reportDate),
       isLive: now - last.reportDate.getTime() < LIVE_STALE_MS,
       source: 'sondehub',
+      lastReceiver: last.uploaderCallsign,
+      frequencyMHz: last.frequency,
     })
   }
   return out
@@ -93,7 +101,12 @@ function latestFramesFromResponse(data: unknown): Map<string, SondeHubLastFrame>
     if (!last) continue
     const reportDate = new Date(last.datetime)
     if (Number.isNaN(reportDate.getTime())) continue
-    out.set(serial, { lat: last.lat, lon: last.lon, alt: last.alt ?? 0, vel_v: last.vel_v ?? 0, reportDate })
+    out.set(serial, {
+      lat: last.lat, lon: last.lon, alt: last.alt ?? 0, vel_v: last.vel_v ?? 0, reportDate,
+      uploaderCallsign: typeof last.uploader_callsign === 'string' && last.uploader_callsign.trim() ? last.uploader_callsign.trim() : undefined,
+      frequency: typeof last.frequency === 'number' ? last.frequency : undefined,
+      type: typeof last.type === 'string' ? last.type : undefined,
+    })
   }
   return out
 }
@@ -239,8 +252,9 @@ interface NearbySondeApiFrame {
  * diagnóstico de recepção (app/lib/receptionAnalysis.ts). `fetchLiveTrajectory`
  * (trajectory.ts) usa a mesma URL, mas descarta o uploader e o RSSI.
  *
- * Só vale pra voos recentes (a janela ao vivo do SondeHub, ~3 dias): passado
- * isso a API responde 404/302 e o arquivo S3 não guarda o uploader por quadro.
+ * Serve pra voos antigos também: a rota redireciona (302) pro histórico do
+ * voo inteiro, com o uploader de cada quadro, guardado por meses — por isso
+ * o fetch precisa seguir o redirecionamento (padrão do navegador).
  */
 export async function fetchSondeHubRawFrames(serial: string): Promise<RawSondeFrame[]> {
   const res = await fetch(`https://api.v2.sondehub.org/sonde/${encodeURIComponent(serial)}`, { cache: 'no-store' })

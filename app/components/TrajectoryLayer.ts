@@ -7,6 +7,7 @@
  * Compartilhado entre MissionMap (painel) e LaunchMap (histórico).
  */
 import { TRAJECTORY } from '@/app/lib/tokens'
+import { POPUP_OPTIONS, simplePopupHtml } from '@/app/lib/mapPopups'
 import { TrajectoryPoint, FlightAnalysis, downsample } from '@/app/lib/trajectory'
 
 export function drawTrajectory(
@@ -55,9 +56,12 @@ export function drawTrajectory(
         iconAnchor: [32, 9],
       }),
       zIndexOffset: 900,
-    }).addTo(layerGroup).bindPopup(
-      `<b>Estouro do balão</b><br>Altitude: ${Math.round(analysis.maxAltM).toLocaleString('pt-BR')} m` +
-      (analysis.ascentRateMs ? `<br>Taxa de subida: ${analysis.ascentRateMs.toFixed(1)} m/s` : '')
-    )
+    }).addTo(layerGroup).bindPopup(simplePopupHtml({
+      title: 'Estouro do balão', icon: 'burst', color: TRAJECTORY.burst,
+      rows: [
+        { icon: 'mountain', label: 'Altitude máxima', value: `${Math.round(analysis.maxAltM).toLocaleString('pt-BR')} m` },
+        ...(analysis.ascentRateMs ? [{ icon: 'trendUp' as const, label: 'Taxa de subida', value: `${analysis.ascentRateMs.toFixed(1)} m/s` }] : []),
+      ],
+    }), POPUP_OPTIONS)
   }
 }

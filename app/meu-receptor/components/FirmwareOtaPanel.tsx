@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { Cpu, UploadCloud, CheckCircle2, XCircle, Loader2, AlertTriangle, Trash2 } from 'lucide-react'
+import { PanelTitle } from './Collapsible'
 
 interface FirmwareMeta {
   version:    string
@@ -113,10 +114,9 @@ export default function FirmwareOtaPanel({ receiverKey, pollMs }: FirmwareOtaPan
 
   return (
     <div className="panel p-5 mb-6">
-      <h2 className="text-sm font-semibold text-white flex items-center gap-2 mb-3">
-        <Cpu size={14} className="text-blue-400" />
+      <PanelTitle className="mb-3" icon={<Cpu size={14} className="text-blue-400" />}>
         Firmware (auto-OTA)
-      </h2>
+      </PanelTitle>
 
       <p className="text-xs text-dim mb-3">
         O app funciona como o servidor de atualização deste receptor ({receiverKey}). Publique aqui o{' '}

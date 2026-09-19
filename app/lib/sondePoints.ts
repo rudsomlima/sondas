@@ -7,20 +7,21 @@
  * deduplicado por serial, e os mapas desenham a união.
  */
 import {
-  fetchRadiosondyFeatures, sondeHubUrl, launchUtcInstant,
+  fetchRadiosondyFeatures, launchUtcInstant,
   type RadiosondyFeature,
 } from './radiosondy'
 import {
   fetchSondeHubRecentFrames, fetchSondeHubRecentFramesSplit, fetchSondeHubArchiveLaunches, SONDEHUB_RECENT_SECONDS,
   type SondeHubRecentFrame,
 } from './sondehub'
-import { applyRecoveryToPosition, fetchRecoveries, recoveryPopupHtml, type SondeRecovery } from './sondehubRecovery'
+import { applyRecoveryToPosition, fetchRecoveries, type SondeRecovery } from './sondehubRecovery'
 import { isValidPosition, launchInstantMs } from './launchData'
-import { GMT3 } from './types'
+import { sondePopupHtml, type SondePopupOptions } from './mapPopups'
+import type { SondeRecord } from './sondeRegistry'
 import type { Launch, LaunchPosition } from './types'
 import type { Station } from './stations'
 
-export type SondePointSource = 'cache' | 'radiosondy' | 'sondehub' | 'archive'
+export type SondePointSource = 'cache' | 'radiosondy' | 'sondehub' | 'archive' | 'registry'
 
 export interface SondePoint {
   serial: string
@@ -34,13 +35,16 @@ export interface SondePoint {
   radiosondyUrl?: string
   recoveredBy?: string  // relato de recuperação do SondeHub (sondehubRecovery.ts)
   recoveryNote?: string
-}
-
-const SOURCE_LABELS: Record<SondePointSource, string> = {
-  cache: 'histórico consolidado',
-  radiosondy: 'radiosondy.info',
-  sondehub: 'SondeHub',
-  archive: 'arquivo SondeHub',
+  // Quem participou da recepção RF, em ordem de quadros recebidos
+  // (radiosondy.info e SondeHub, via registro no R2 — ver sondeRegistry.ts).
+  receivers?: string[]
+  receiverFrames?: Record<string, number>
+  lastReceiver?: string   // de quem foi o último sinal recebido
+  lastReceiverAt?: string // ISO UTC
+  firstFrameUtc?: string  // ISO UTC — primeiro dado recebido (= lançamento exibido)
+  maxAltM?: number
+  frequencyMHz?: number
+  sondeType?: string
 }
 
 function pointKey(p: SondePoint): string {
@@ -71,6 +75,9 @@ export function pointsFromLaunches(launches: Launch[]): SondePoint[] {
       date: new Date(launchInstantMs(l)), sources: ['cache'],
       geographic: l.association === 'geographic' || undefined,
       recoveredBy: l.position.recoveredBy, recoveryNote: l.position.recoveryNote,
+      receivers: l.receivers, receiverFrames: l.receiverFrames,
+      lastReceiver: l.lastReceiver, lastReceiverAt: l.lastReceiverAt,
+      firstFrameUtc: l.firstFrameUtc,
     })
   }
   return out
@@ -101,38 +108,141 @@ export function mergeSondePoints(...lists: SondePoint[][]): SondePoint[] {
         radiosondyUrl: prev.radiosondyUrl ?? p.radiosondyUrl,
         recoveredBy: prev.recoveredBy ?? p.recoveredBy,
         recoveryNote: prev.recoveryNote ?? p.recoveryNote,
+        receivers: prev.receivers ?? p.receivers,
+        receiverFrames: prev.receiverFrames ?? p.receiverFrames,
+        lastReceiver: newer.lastReceiver ?? prev.lastReceiver ?? p.lastReceiver,
+        lastReceiverAt: newer.lastReceiver ? newer.lastReceiverAt : prev.lastReceiverAt ?? p.lastReceiverAt,
+        firstFrameUtc: [prev.firstFrameUtc, p.firstFrameUtc].filter(Boolean).sort()[0],
+        maxAltM: Math.max(prev.maxAltM ?? 0, p.maxAltM ?? 0) || undefined,
+        frequencyMHz: prev.frequencyMHz ?? p.frequencyMHz,
+        sondeType: prev.sondeType ?? p.sondeType,
       })
     }
   }
   return [...byKey.values()]
 }
 
-function escapeHtml(value: string): string {
-  return value.replace(/[&<>'"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[c] ?? c))
+function isoNoMs(d: Date): string {
+  return d.toISOString().replace(/\.\d{3}Z$/, 'Z')
 }
 
-export function sondePointPopup(p: SondePoint): string {
-  const pad = (n: number) => String(n).padStart(2, '0')
-  const local = new Date(p.date.getTime() + GMT3)
-  const localTime = `${pad(local.getUTCDate())}/${pad(local.getUTCMonth() + 1)}/${local.getUTCFullYear()} ` +
-    `${pad(local.getUTCHours())}:${pad(local.getUTCMinutes())}`
-  const onlyCache = p.sources.length === 1 && p.sources[0] === 'cache'
-  const links = [
-    p.radiosondyUrl ? `<a href="${p.radiosondyUrl}" target="_blank" rel="noopener noreferrer">radiosondy.info ↗</a>` : '',
-    `<a href="${sondeHubUrl(p.serial, p.lat, p.lon)}" target="_blank" rel="noopener noreferrer">SondeHub ↗</a>`,
-    `<a href="https://www.openstreetmap.org/directions?route=%3B${p.lat},${p.lon}" target="_blank" rel="noopener noreferrer">Navegar ↗</a>`,
-  ].filter(Boolean).join(' · ')
-  return `<div style="min-width:200px;line-height:1.45">` +
-    `<div style="font-size:15px;font-weight:700;margin-bottom:3px">${escapeHtml(p.serial)}</div>` +
-    `<div><b>Status:</b> ${escapeHtml(p.status)}</div>` +
-    recoveryPopupHtml(p.recoveredBy, p.recoveryNote) +
-    `<div><b>${onlyCache ? 'Lançamento' : 'Último reporte'}:</b> ${localTime} GMT-3</div>` +
-    (p.altitude != null ? `<div><b>Altitude:</b> ${Math.round(p.altitude).toLocaleString('pt-BR')} m</div>` : '') +
-    `<div><b>Posição:</b> ${p.lat.toFixed(5)}, ${p.lon.toFixed(5)}</div>` +
-    `<div><b>Fonte:</b> ${p.sources.map(s => SOURCE_LABELS[s]).join(' + ')}</div>` +
-    (p.geographic ? `<div style="font-size:11px;color:#b45309">Associada por proximidade — pode ser de outra estação</div>` : '') +
-    `<div style="margin-top:6px">${links}</div>` +
-    `</div>`
+/**
+ * Popup único de sonda, usado por TODOS os mapas (painel, mapa do ano, mapa
+ * do lançamento) — visual e dados em app/lib/mapPopups.ts.
+ */
+export function sondePointPopup(p: SondePoint, opts?: SondePopupOptions): string {
+  return sondePopupHtml(p, opts)
+}
+
+// ---------------------------------------------------------------------------
+// Registro de sondas (R2) ↔ pontos do mapa. Ver sondeRegistry.ts.
+
+function registryFields(r: SondeRecord): Partial<SondePoint> {
+  const receivers = r.receivers?.map(x => x.callsign)
+  const withFrames = r.receivers?.filter(x => x.frames) ?? []
+  return {
+    recoveredBy: r.recoveredBy, recoveryNote: r.recoveryNote,
+    receivers: receivers?.length ? receivers : undefined,
+    receiverFrames: withFrames.length ? Object.fromEntries(withFrames.map(x => [x.callsign, x.frames!])) : undefined,
+    lastReceiver: r.lastReceiver, lastReceiverAt: r.lastReceiverAt,
+    firstFrameUtc: r.firstFrameUtc, maxAltM: r.maxAltM,
+    frequencyMHz: r.frequencyMHz, sondeType: r.type,
+  }
+}
+
+/** Registro → ponto (fonte 'registry'). null se o registro não tem posição. */
+export function pointFromRecord(r: SondeRecord): SondePoint | null {
+  const where = r.status === 'FOUND' && r.recoveryPos ? r.recoveryPos : r.lastPos
+  const when = r.lastPos?.at ?? r.lastFrameUtc ?? r.firstFrameUtc
+  if (!where || !when) return null
+  const date = new Date(when)
+  if (isNaN(date.getTime())) return null
+  return {
+    serial: r.serial, lat: where.lat, lon: where.lon, status: r.status ?? 'UNKNOWN', date,
+    altitude: r.lastPos?.alt, sources: ['registry'],
+    ...registryFields(r),
+  }
+}
+
+/**
+ * Completa pontos vindos das fontes com o que o registro sabe (receptores,
+ * último sinal, 1º quadro, recuperação). O dado ao vivo vence onde existir; o
+ * registro preenche o resto — e promove status UNKNOWN → FOUND/LOST.
+ */
+export function applyRegistryToPoints(points: SondePoint[], records: Map<string, SondeRecord>): SondePoint[] {
+  if (records.size === 0) return points
+  let changed = false
+  const out = points.map(p => {
+    const r = records.get(p.serial)
+    if (!r) return p
+    const f = registryFields(r)
+    // Último sinal: vale o mais recente entre o ponto e o registro.
+    const pointNewer = !!p.lastReceiver && (!f.lastReceiverAt || (p.lastReceiverAt ?? '') >= f.lastReceiverAt)
+    const next: SondePoint = {
+      ...p,
+      receivers: f.receivers ?? p.receivers,
+      receiverFrames: f.receiverFrames ?? p.receiverFrames,
+      lastReceiver: pointNewer ? p.lastReceiver : f.lastReceiver ?? p.lastReceiver,
+      lastReceiverAt: pointNewer ? p.lastReceiverAt : f.lastReceiverAt ?? p.lastReceiverAt,
+      firstFrameUtc: f.firstFrameUtc ?? p.firstFrameUtc,
+      maxAltM: Math.max(p.maxAltM ?? 0, f.maxAltM ?? 0) || undefined,
+      frequencyMHz: p.frequencyMHz ?? f.frequencyMHz,
+      sondeType: p.sondeType ?? f.sondeType,
+      recoveredBy: p.recoveredBy ?? f.recoveredBy,
+      recoveryNote: p.recoveryNote ?? f.recoveryNote,
+    }
+    if (p.status === 'UNKNOWN' && r.status && r.status !== 'UNKNOWN') {
+      next.status = r.status
+      if (r.status === 'FOUND' && r.recoveryPos) { next.lat = r.recoveryPos.lat; next.lon = r.recoveryPos.lon }
+    }
+    if (JSON.stringify(next) === JSON.stringify(p)) return p
+    changed = true
+    return next
+  })
+  return changed ? out : points
+}
+
+/**
+ * Registro + pontos das fontes: o registro entra como fonte própria (sondas
+ * que as fontes não devolvem mais continuam no mapa) e completa os demais.
+ * `include` restringe quais registros viram ponto novo (ex.: só os da
+ * estação e do período); completar pontos existentes vale pra qualquer um.
+ */
+export function mergeWithRegistry(
+  points: SondePoint[], records: Map<string, SondeRecord>,
+  include?: (record: SondeRecord, point: SondePoint) => boolean,
+): SondePoint[] {
+  if (records.size === 0) return points
+  const fromRegistry: SondePoint[] = []
+  for (const r of records.values()) {
+    const p = pointFromRecord(r)
+    if (p && (!include || include(r, p))) fromRegistry.push(p)
+  }
+  return applyRegistryToPoints(mergeSondePoints(points, fromRegistry), records)
+}
+
+/**
+ * Ponto visto numa fonte → registro parcial a gravar no R2. Pontos só do
+ * cache de lançamentos (ou só do próprio registro) não têm reporte novo e não
+ * viram posição.
+ */
+export function pointToRecord(p: SondePoint): ({ serial: string } & Partial<SondeRecord>) | null {
+  if (!p.serial || p.serial === '?') return null
+  const real = p.sources.some(s => s === 'radiosondy' || s === 'sondehub' || s === 'archive')
+  if (!real) return null
+  const at = isoNoMs(p.date)
+  const found = p.status === 'FOUND' && !!p.recoveredBy
+  return {
+    serial: p.serial,
+    status: p.status,
+    ...(found ? { recoveryPos: { lat: p.lat, lon: p.lon } } : { lastPos: { lat: p.lat, lon: p.lon, alt: p.altitude, at }, lastFrameUtc: at }),
+    recoveredBy: p.recoveredBy,
+    recoveryNote: p.recoveryNote,
+    lastReceiver: p.lastReceiver,
+    lastReceiverAt: p.lastReceiverAt,
+    frequencyMHz: p.frequencyMHz,
+    type: p.sondeType,
+  }
 }
 
 export function isPointInMonth(p: SondePoint, year: number, month: number): boolean {
@@ -154,6 +264,10 @@ function pointsFromRecentFrames(frames: SondeHubRecentFrame[]): SondePoint[] {
   return frames.map(({ serial, frame, association }) => ({
     serial, lat: frame.lat, lon: frame.lon, status: 'UNKNOWN', date: frame.reportDate,
     altitude: frame.alt, sources: ['sondehub'] as SondePointSource[], geographic: association === 'geographic' || undefined,
+    lastReceiver: frame.uploaderCallsign,
+    lastReceiverAt: frame.uploaderCallsign ? frame.reportDate.toISOString().replace(/\.\d{3}Z$/, 'Z') : undefined,
+    frequencyMHz: frame.frequency,
+    sondeType: frame.type,
   }))
 }
 

@@ -3,19 +3,22 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { fetchNearbySondes, fetchSondeHubRawFrames, type NearbySonde } from '@/app/lib/sondehub'
 import { analyzeReception, type ReceptionReport } from '@/app/lib/receptionAnalysis'
+import { fetchRegistryYear } from '@/app/lib/sondeRegistryClient'
 
 /**
- * Voos recentes perto do receptor + diagnóstico de recepção do voo escolhido
- * (ver app/lib/receptionAnalysis.ts).
+ * Voos que o receptor ouviu + diagnóstico de recepção do voo escolhido (ver
+ * app/lib/receptionAnalysis.ts).
  *
- * Os quadros crus de um voo são ~2 MB, então o relatório já calculado fica em
- * `localStorage` por voo: abrir a página de novo não rebaixa a mesma trilha.
- * A janela ao vivo do SondeHub é de ~3 dias — passado isso o voo desaparece da
- * lista e o relatório salvo é o único registro que sobra.
+ * A lista junta duas origens: o SondeHub ao vivo (sondas dos últimos dias
+ * num raio de 300 km, ouvidas ou não) e o registro permanente de sondas no
+ * R2 (todas as do ano em que o seu callsign aparece entre os receptores). O
+ * /sonde/{serial} do SondeHub guarda o voo inteiro por meses, então voos
+ * antigos também podem ser analisados.
+ *
+ * Os quadros crus de um voo passam de 1 MB, então o relatório já calculado
+ * fica em `localStorage` por voo: abrir a página de novo não rebaixa a trilha.
  */
 
-// A API aceita até 7 dias, mas os quadros por uploader só existem na janela ao
-// vivo (~3 dias); pedir mais só encheria a lista de voos sem análise possível.
 const LIST_SECONDS = 3 * 24 * 3600
 const SEARCH_RADIUS_KM = 300
 const STORAGE_PREFIX = 'sondas_reception_v1'
@@ -25,6 +28,7 @@ export interface RecentFlight {
   lastReportMs: number
   frequency?: number
   type?: string
+  heardByMe?: boolean // o registro diz que o seu callsign participou da recepção
 }
 
 function storageKey(serial: string, callsign: string) {
@@ -62,16 +66,30 @@ export function useReceptionQuality(
     setListLoading(true)
     setListError(null)
     try {
-      const sondes: NearbySonde[] = await fetchNearbySondes(rxLat, rxLon, SEARCH_RADIUS_KM, LIST_SECONDS)
-      const list = sondes
-        .map(s => ({
-          serial: s.serial,
-          lastReportMs: new Date(s.datetime).getTime(),
-          frequency: s.frequency,
-          type: s.type,
-        }))
-        .filter(f => Number.isFinite(f.lastReportMs))
-        .sort((a, b) => b.lastReportMs - a.lastReportMs)
+      const me = callsign.trim().toUpperCase()
+      const year = new Date().getUTCFullYear()
+      const [nearby, reg, regPrev] = await Promise.all([
+        fetchNearbySondes(rxLat, rxLon, SEARCH_RADIUS_KM, LIST_SECONDS).catch(() => [] as NearbySonde[]),
+        fetchRegistryYear(year),
+        fetchRegistryYear(year - 1),
+      ])
+      const bySerial = new Map<string, RecentFlight>()
+      for (const s of nearby) {
+        const t = new Date(s.datetime).getTime()
+        if (Number.isFinite(t)) bySerial.set(s.serial, { serial: s.serial, lastReportMs: t, frequency: s.frequency, type: s.type })
+      }
+      for (const r of [...reg, ...regPrev]) {
+        const heard = !!r.receivers?.some(x => x.callsign.trim().toUpperCase() === me) || r.lastReceiver?.trim().toUpperCase() === me
+        if (!heard) continue
+        const t = new Date(r.lastFrameUtc ?? r.lastPos?.at ?? r.firstFrameUtc ?? '').getTime()
+        if (!Number.isFinite(t)) continue
+        const prev = bySerial.get(r.serial)
+        bySerial.set(r.serial, {
+          serial: r.serial, lastReportMs: Math.max(t, prev?.lastReportMs ?? 0),
+          frequency: prev?.frequency ?? r.frequencyMHz, type: prev?.type ?? r.type, heardByMe: true,
+        })
+      }
+      const list = [...bySerial.values()].sort((a, b) => b.lastReportMs - a.lastReportMs)
       setFlights(list)
       setSerial(prev => prev && list.some(f => f.serial === prev) ? prev : list[0]?.serial ?? null)
     } catch (e: any) {
@@ -79,7 +97,7 @@ export function useReceptionQuality(
     } finally {
       setListLoading(false)
     }
-  }, [enabled, rxLat, rxLon])
+  }, [enabled, rxLat, rxLon, callsign])
 
   useEffect(() => { loadList() }, [loadList])
 
@@ -96,7 +114,7 @@ export function useReceptionQuality(
       if (request !== requestRef.current) return
       const result = analyzeReception(frames, rxLat, rxLon, rxAltM, callsign)
       if (!result) {
-        setError('O sondehub.org não tem mais os quadros deste voo (a janela ao vivo é de ~3 dias).')
+        setError('O sondehub.org não devolveu quadros deste voo.')
         return
       }
       setReport(result)

@@ -176,7 +176,7 @@ export default function ReceiverPanel({
             )}
             <span className="text-[10px] text-faint">
               {lastSeenMs != null
-                ? `Visto em ${formatGmt3(new Date(lastSeenMs).toISOString())}`
+                ? `Visto há ${fmtAgo(Math.max(0, Math.round((nowTick - lastSeenMs) / 1000)))} (${formatGmt3(new Date(lastSeenMs).toISOString())})`
                 : status?.online ? 'ligado, sem sonda no ar' : 'sem frames recentes'}
             </span>
           </div>

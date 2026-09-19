@@ -11,6 +11,7 @@ import { GMT3 } from '@/app/lib/types'
 import { type BattVoltageEntry, localBattDayKey, MAX_SILENT_MS } from '@/app/painel/hooks/useBatteryHistory'
 import type { RdzConfig } from '@/app/lib/rdzConfig'
 import HistoryRecordingToggle, { RecordingPausedNote } from './HistoryRecordingToggle'
+import { PanelTitle } from './Collapsible'
 
 interface BatteryChartProps {
   history:     BattVoltageEntry[]
@@ -185,10 +186,9 @@ export default function BatteryChart({ history, config, onDeleteDay, recording, 
     return (
       <div className="panel p-5 mb-6">
         <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
-          <h2 className="text-sm font-semibold text-white flex items-center gap-2">
-            <Battery size={14} className="text-emerald-400" />
+          <PanelTitle icon={<Battery size={14} className="text-emerald-400" />}>
             Tensão da bateria — últimos 7 dias
-          </h2>
+          </PanelTitle>
           <HistoryRecordingToggle recording={recording} onChange={onRecordingChange} />
         </div>
         <p className="text-xs text-faint">
@@ -202,10 +202,9 @@ export default function BatteryChart({ history, config, onDeleteDay, recording, 
     <div className="panel p-5 mb-6">
       {/* Cabeçalho */}
       <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
-        <h2 className="text-sm font-semibold text-white flex items-center gap-2">
-          <Battery size={14} className="text-emerald-400" />
+        <PanelTitle icon={<Battery size={14} className="text-emerald-400" />}>
           Tensão da bateria
-        </h2>
+        </PanelTitle>
         <div className="flex items-center gap-2">
           {zoomDomain ? (
             <button

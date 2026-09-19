@@ -132,3 +132,137 @@ html, body {
 .pulse-soft {
   animation: pulse-soft 2s ease-in-out infinite;
 }
+
+/* ---------------------------------------------------------------------------
+ * Popups dos mapas (Leaflet) — cartão escuro no padrão do app. O HTML vem de
+ * app/lib/mapPopups.ts (classes .mp-*); vale pra todos os mapas.
+ * ------------------------------------------------------------------------- */
+.leaflet-popup.mp-popup .leaflet-popup-content-wrapper {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.55);
+  padding: 0;
+  overflow: hidden;
+}
+.leaflet-popup.mp-popup .leaflet-popup-content {
+  margin: 0;
+  font-family: Inter, system-ui, sans-serif;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.leaflet-popup.mp-popup .leaflet-popup-content p { margin: 0; }
+/* maxHeight do Leaflet: rolagem fina, no tema. */
+.leaflet-popup.mp-popup .leaflet-popup-scrolled {
+  border: 0; overflow-x: hidden;
+  scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent;
+}
+.leaflet-popup.mp-popup .leaflet-popup-tip {
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  box-shadow: none;
+}
+.leaflet-popup.mp-popup a.leaflet-popup-close-button {
+  color: var(--text-dim);
+  top: 8px;
+  right: 8px;
+  width: 22px;
+  height: 22px;
+  font-size: 18px;
+  line-height: 20px;
+  border-radius: 6px;
+}
+.leaflet-popup.mp-popup a.leaflet-popup-close-button:hover {
+  color: var(--text);
+  background: var(--surface-2);
+}
+.mp { min-width: 250px; }
+.mp-banner {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 36px 6px 12px;
+  font-size: 11px; font-weight: 600;
+  border-bottom: 1px solid transparent;
+}
+.mp-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 36px 9px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.mp-headtext { min-width: 0; flex: 1; }
+.mp-title {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-weight: 600; font-size: 14px; color: var(--text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.mp-sub { font-size: 11px; color: var(--text-dim); }
+.mp-badge {
+  flex-shrink: 0;
+  font-size: 10px; font-weight: 600;
+  padding: 2px 8px; border-radius: 999px; border: 1px solid;
+  white-space: nowrap;
+}
+.mp-body { display: grid; gap: 6px; padding: 9px 12px; }
+.mp-row { display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: 8px; align-items: start; }
+.mp-ico {
+  width: 14px; height: 14px; margin-top: 1px; flex-shrink: 0;
+  fill: none; stroke: var(--text-dim); stroke-width: 2;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+.mp-label {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.mp-kv {
+  display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline;
+  gap: 2px 10px; min-width: 0;
+}
+.mp-kv .mp-value { text-align: right; margin-left: auto; }
+.mp-value { color: var(--text); overflow-wrap: anywhere; }
+.mp-mono { font-family: 'JetBrains Mono', ui-monospace, monospace; }
+.mp-muted { color: var(--text-dim); font-size: 11px; }
+.mp-note { margin-top: 2px; font-style: italic; color: var(--text-dim); }
+.mp-rxlist { display: grid; gap: 3px; margin-top: 2px; }
+.mp-rx {
+  display: grid; grid-template-columns: minmax(0, 1fr) 56px 44px;
+  gap: 6px; align-items: center; font-size: 11px;
+}
+.mp-rxname { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text); }
+.mp-rxn { text-align: right; color: var(--text-dim); font-size: 10px; }
+.mp-bar { height: 5px; background: var(--surface-2); border-radius: 3px; overflow: hidden; }
+.mp-bar > span { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
+.mp-me .mp-rxname { color: #f87171; font-weight: 600; }
+.mp-me .mp-bar > span { background: #f87171; }
+.mp-warn { display: flex; gap: 6px; align-items: flex-start; font-size: 11px; color: #f59e0b; }
+.mp-warn .mp-ico { stroke: #f59e0b; }
+.mp-sources { display: flex; gap: 8px; align-items: center; }
+.mp-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.mp-chip {
+  font-size: 10px; padding: 1px 7px; border-radius: 999px;
+  background: var(--surface-2); color: var(--text-dim); border: 1px solid var(--border);
+}
+.mp-foot {
+  display: flex; flex-wrap: wrap; gap: 6px;
+  padding: 8px 12px 10px; border-top: 1px solid var(--border);
+  background: var(--bg);
+}
+.leaflet-container a.mp-btn, .mp-btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 9px; border-radius: 7px;
+  background: var(--surface-2); border: 1px solid var(--border);
+  color: var(--text); text-decoration: none; font-size: 11px; font-weight: 500;
+}
+.leaflet-container a.mp-btn:hover, .mp-btn:hover { border-color: var(--border-strong); color: #fff; }
+.mp-btn .mp-ico { width: 12px; height: 12px; margin: 0; }
+/* Várias estações no mesmo lugar: popups empilhados no mesmo cartão. */
+.mp + .mp { border-top: 1px solid var(--border-strong); }
+
+/* Painéis recolhíveis (app/meu-receptor/components/Collapsible.tsx):
+ * recolhido, o painel mostra só a linha que contém o título. */
+.collapsible-section[data-collapsed="true"] > .panel > *:not(.panel-title-toggle):not(:has(.panel-title-toggle)) {
+  display: none !important;
+}
+.collapsible-section[data-collapsed="true"] > .panel > .panel-title-toggle,
+.collapsible-section[data-collapsed="true"] > .panel > :has(.panel-title-toggle) {
+  margin-bottom: 0 !important;
+}

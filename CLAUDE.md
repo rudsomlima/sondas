@@ -252,12 +252,14 @@ diagnostica nada — o ângulo separa problema de antena de problema de sinal.
   corte fixo: voos que derivam rápido nunca chegam a ângulos altos e um corte
   fixo os classificava como "fraco em geral".
 - `fetchSondeHubRawFrames(serial)` (`sondehub.ts`) — `GET /sonde/{serial}` sem
-  descartar `uploader_callsign`/`rssi` (o que `fetchLiveTrajectory` faz). Só
-  funciona na janela ao vivo do SondeHub (~3 dias); o arquivo S3 não guarda o
-  uploader por quadro.
-- `useReceptionQuality` (`app/meu-receptor/hooks/`) — lista voos recentes num
-  raio de 300 km e guarda o relatório já calculado em `localStorage`
-  (`sondas_reception_v1_*`), porque os quadros crus de um voo passam de 1 MB.
+  descartar `uploader_callsign`/`rssi` (o que `fetchLiveTrajectory` faz). A
+  rota redireciona pro histórico do voo inteiro, **guardado por meses** (voos
+  de janeiro/2026 conferidos em setembro) — não é só a janela ao vivo.
+- `useReceptionQuality` (`app/meu-receptor/hooks/`) — lista as sondas recentes
+  num raio de 300 km **mais** todas as do registro de sondas (R2) em que o
+  callsign do usuário aparece entre os receptores; guarda o relatório já
+  calculado em `localStorage` (`sondas_reception_v1_*`), porque os quadros
+  crus de um voo passam de 1 MB.
 - ⚠️ **O SondeHub deduplica telemetria**: cada quadro fica atribuído a um único
   uploader (quem subiu primeiro), então contagem de quadros por estação é um
   limite inferior e não serve pra comparar recepção. Por isso a cobertura é
@@ -312,42 +314,142 @@ contato (desde `dev20260915.5`: logo que o WiFi conecta e a cada 10 min,
 - `app/api/cache/route.ts` — endpoint fino de status/info; a mutação do cache de fato acontece do lado do cliente via `localStorage` (essa rota só confirma a intenção pros fluxos de UI).
 - `app/meu-receptor/page.tsx` — dono do próprio rdzTTGOsonde: seletor de receptor (múltiplos cadastrados), config remota completa, editor de telas OLED, publicação de firmware, histórico de bateria/energia. Ver seção dedicada "Meu Receptor" acima — arquitetura própria, não compartilha nada com o resto do app além de `settings.ts`/`receiverKey.ts`.
 
-### Horário de lançamento = primeiro quadro recebido (`app/lib/sondeArchive.ts`, `sondeLaunches.ts`)
+### Registro permanente de sondas no R2 (`app/lib/sondeRegistry*.ts`)
+
+Tudo que qualquer fonte já disse sobre uma sonda fica guardado pra sempre em
+`sondas/sondes/{ano}.json` (`{ year, updatedAt, records: {serial: SondeRecord} }`),
+mesclado de forma **aditiva** (`mergeSondeRecords`: nunca apaga um dado por
+falta dele na outra cópia; 1º quadro = o mais antigo, último quadro/posição/
+receptor = o mais recente, status FOUND > LOST > UNKNOWN, receptores = união).
+As fontes esquecem ou falham — o registro não; com o tempo ele fica mais
+completo que qualquer fonte sozinha, e é **ele que completa todos os mapas**.
+
+- **Fontes** (`sondeSources.ts`, só servidor):
+  - `radiosondy.info/sonde_archive.php` — status, 1º/último quadro, lista
+    `Receivers:`, local de lançamento, tipo, frequência, altitude máx., e a
+    tabela "Status Changes" (quem achou, se FOUND). Exige User-Agent de
+    navegador (403 sem) e responde **302 pra sonda desconhecida**.
+  - `radiosondy.info/zip_download.php` (botão "Get Data", POST) — zip com um
+    CSV de **uma linha por quadro, com a estação que o recebeu**: dá a
+    contagem por receptor e **de quem foi o último sinal** mesmo pra voos
+    antigos. ~1 MB (quase tudo PNG); descompactado sem dependência
+    (`unzipEntry`, node:zlib).
+  - SondeHub `/sonde/{serial}` — voo inteiro com o uploader de cada quadro
+    (deduplicado: contagens são mínimas). Primeiro quadro só vale como
+    "lançamento" se estava abaixo de 3 km (W3770721 começava a 11,8 km).
+  - SondeHub `/recovered` — quem recuperou fisicamente (`fetchRecoveryDirect`).
+- **Rotas**: `GET /api/sonde-registry?year=&station=|serials=` (leitura),
+  `POST /api/sonde-registry` (o navegador manda o que viu nas fontes leves —
+  validado por `sanitizeRecord`; fontes pesadas nunca vêm do navegador) e
+  `POST /api/sonde-registry/enrich` (até 6 serials; o servidor consulta as
+  fontes pesadas e grava). Núcleo compartilhado em `sondeRegistryServer.ts`.
+- **Gravação concorrente**: `updateSondeRegistry` (blobStore) faz
+  leitura-mescla-gravação com `If-Match` no ETag (`If-None-Match: *` quando o
+  arquivo não existe) e tenta de novo em 412 — sem isso duas abas/requisições
+  perdiam dados uma da outra.
+- **Quando reconsultar** (`needsEnrichment`): voo nas últimas 6 h, a cada 10
+  min; voo encerrado e completo, nunca mais; fonte que já disse "não tenho"
+  num voo de mais de 7 dias, nunca mais; relato de recuperação, a cada 6 h
+  por 30 dias enquanto não for FOUND. O navegador ainda limita uma tentativa
+  por serial a cada 10 min (`serialsNeedingEnrichment`).
+- **Sem ninguém com o app aberto**: `/api/poll` (pingado a cada poucos
+  minutos pelo cron-job.org) roda `backfillRegistry(4)` em paralelo com o
+  cache de voos ao vivo — semeia o registro com as posições de lançamento do
+  YearStore que ele ainda não tem e enriquece as 4 sondas mais recentes que
+  ainda valem consulta.
+- **Navegador** (`sondeRegistryClient.ts`): cache em memória + localStorage
+  (`sondas_registry_v1`); `useSondeRegistry(station, years, serials)` carrega
+  o ano do R2 e pede enriquecimento (ordem de `serials` = prioridade: sondas
+  de hoje e mais recentes primeiro). `reportSondes` agrupa e não repete (no
+  máx. 1 envio por serial por minuto; falha de envio libera o reenvio).
+- **Nos mapas**: `mergeWithRegistry(points, records, include)` —
+  o registro entra como fonte própria (`'registry'`, sondas que as fontes não
+  devolvem mais continuam no mapa) e completa os pontos existentes
+  (`applyRegistryToPoints`). Só vira ponto novo o registro com
+  `stations` contendo a estação do mapa (a estação é carimbada por quem
+  reporta/enriquece), nunca por adivinhação geográfica.
+- **Popups de mapa** (`app/lib/mapPopups.ts` + estilos `.mp-*` no fim de
+  `globals.css`): cartão escuro com ícones (paths do lucide em SVG inline) pra
+  sonda (`sondePopupHtml`, via `sondePointPopup`), estação receptora
+  (`stationPopupHtml`), local de lançamento (`launchSitePopupHtml`) e
+  marcadores auxiliares (`simplePopupHtml`: estouro, "Você", mapa de calor).
+  **Todo `bindPopup` passa `POPUP_OPTIONS`**: é a `className: 'mp-popup'` que
+  dá especificidade pro tema vencer o CSS do Leaflet (carregado depois do
+  nosso — sem ela o cartão sai branco com texto claro) e o `maxHeight` que
+  faz o cartão rolar por dentro em mapas baixos. Não crie popup próprio num
+  mapa; complete este módulo.
+- **Mapa do lançamento** (`LaunchMap`): todo marcador usa `bindSonde` — o
+  popup é calculado ao abrir (`bestPoint`: ponto da fonte + mesmo serial nos
+  pontos do mês + registro), então nunca mostra menos que o painel (bug real:
+  W0521239 em 17/09 aparecia só com "Status: UNKNOWN"). Clicar numa sonda
+  troca o cabeçalho pros dados dela (lançamento, recepção, último sinal), com
+  botão pra voltar ao lançamento aberto.
+
+- **Tela cheia** (mapa do ano e mapa do lançamento): `useFullscreen(ref,
+  onChange)` (`app/lib/useFullscreen.ts`) usa a Fullscreen API no bloco
+  inteiro (cabeçalho + mapa) e, onde ela não existe pra elementos comuns
+  (iPhone), cai num modo CSS `fixed inset-0` com Esc e rolagem da página
+  travada. `onChange` chama `map.invalidateSize()` — sem isso o Leaflet
+  continua desenhando no tamanho antigo.
+
+### Estações receptoras (`app/lib/receiverStations*.ts`)
+
+Posição, antena, software e último contato de cada estação que sobe
+telemetria pro SondeHub, em `sondas/receiver-stations.json` (mesma gravação
+condicional com ETag do registro). Fontes: `uploader_position` de cada quadro
+do `/sonde/{serial}` (lido no enriquecimento — cobre estações que já não estão
+ativas, ex.: SMOLDER/2022) e `/listeners/telemetry?duration=1d` (estações
+ativas; ~400 KB do mundo todo, então o cron só consulta a cada 6 h e só guarda
+quem aparece como receptor no registro). `stationsCaptured` no SondeRecord
+faz registros antigos relerem o SondeHub uma vez pra capturar as posições.
+- `GET /api/receiver-stations`; no navegador `useReceiverStations()`
+  (cache + releitura quando o registro muda).
+- `drawReceiverStations` (`receiverStationsLayer.ts`) desenha, em todos os
+  mapas, as estações que receberam alguma sonda visível
+  (`receptorsFromPoints`) + o meu receptor sempre. Mesmo ícone de antena:
+  vermelho = meu, verde-água = demais; estações no mesmo lugar (~50 m) viram
+  um marcador só com os popups empilhados.
+
+### Painéis recolhíveis em "Meu receptor"
+
+`CollapsibleSection id` (página) + `PanelTitle` (no lugar do `h2` de cada
+painel) — clicar no título recolhe; a escolha fica em `localStorage`
+(`sondas_meu_receptor_collapsed`). Recolhido, o CSS
+(`.collapsible-section[data-collapsed="true"]`, com `:has()`) esconde tudo do
+painel menos a linha que contém o título — o painel em si não sabe que é
+recolhível. Painel novo: use `PanelTitle` e envolva na página.
+
+### Uma entrada de lançamento por sonda (`app/lib/sondeLaunches.ts`)
 
 O histórico nasceu modelado pela Wyoming: dois horários nominais por dia
 (00Z/12Z), cada um com no máximo **uma** sonda casada. Em Natal isso escondia
-voos reais — 15/09/2026 teve 5 sondas no SondeHub e o app listava 2
-lançamentos (as outras 3 só apareciam como pontos no mapa).
+voos reais — 15/09/2026 teve 5 sondas no SondeHub e o app listava 2.
 
-- **`/api/sonde-archive?serials=A,B`** — proxy de
-  `radiosondy.info/sonde_archive.php?sondenumber=X`, que é a única fonte do
-  **primeiro quadro recebido** de cada sonda (`First Frame [UTC]`). Tem que ser
-  server-side: a página devolve **403** sem User-Agent de navegador e é HTML
-  puro sem CORS. Cache em memória por instância (24 h pra voo encerrado, 10 min
-  pra voo recente, 1 h pra "sem página").
-- **`app/lib/sondeArchive.ts`** — cliente com cache em memória +
-  `localStorage` (`sondas_sonde_archive_v1`), lotes de 8 serials por
-  requisição, no máximo 40 por chamada.
-- **`app/lib/sondeLaunches.ts`** (puro) — `pointToLaunch` transforma um
-  `SondePoint` em `Launch`; `launchesWithSondes` devolve os lançamentos da
-  Wyoming **mais uma entrada por sonda** que não casou com nenhum deles.
-  `launchSortMs` ordena pelo primeiro quadro (tem minutos; `launchInstantMs`
-  só conhece a hora sinótica cheia).
-- **`useSondeLaunches`** (`app/historico/hooks/`) — junta tudo em segundo
-  plano, no mesmo estilo do `useRecoveredLaunches`: devolve o cache na hora e
-  completa depois, sem atrasar o desenho. Usado por `/painel` ("Últimos
-  lançamentos") e `/historico` (`byMonth` → acordeão e gráfico mensal).
-- **Exibição**: `launchDisplayTime(l)` (`launchUtils.ts`) devolve
-  `{ time, exact }` — `firstFrameUtc` convertido pra GMT-3 quando existe,
-  senão o `time_local` nominal prefixado por `~`. `Launch.time_local`/`time_utc`
-  **continuam sendo a identidade** do lançamento (chave de cache, merge,
-  `radiosondyMatch`): nunca sobrescreva com o primeiro quadro.
-- Sondas sem página no radiosondy.info (só SondeHub) ficam com o horário
-  sinótico aproximado: o `/sonde/{serial}` do SondeHub **não** serve como
-  fallback de "primeiro dado" — a janela ao vivo é truncada e o primeiro frame
-  dela pode estar a 11 km de altitude (caso real: W3770721, 15/09/2026).
-- As entradas extras são **só exibição**: não entram no YearStore do R2 nem no
-  cache local do ano, que seguem sendo a verdade da Wyoming.
+- `launchesWithSondes(launches, points, records)` — lançamentos da Wyoming com
+  o registro aplicado (`applyRegistryToLaunches`: 1º quadro, receptores,
+  último sinal, status) **mais uma entrada por sonda** que não casou com
+  nenhum deles (`pointToLaunch`). `launchSortMs` ordena pelo 1º quadro.
+  Hook: `useSondeLaunches(launches, points, records)`.
+- **Exibição**: `launchDisplayTime(l)` (`launchUtils.ts`) devolve `{ time,
+  exact }` — `firstFrameUtc` em GMT-3 quando existe, senão o `time_local`
+  nominal com `~`. `Launch.time_local`/`time_utc` **continuam sendo a
+  identidade** do lançamento (cache, merge, `radiosondyMatch`): nunca
+  sobrescreva com o primeiro quadro.
+- As entradas extras são **só exibição**: não entram no YearStore nem no cache
+  local do ano, que seguem sendo a verdade da Wyoming.
+
+### Mapa do /painel = mapa do histórico anual
+
+`useYearSondePoints(station, year, launches)` (`app/historico/hooks/`) é a
+coleta de todas as fontes de um ano inteiro (radiosondy.info de todos os
+meses, SondeHub recente, arquivo S3 onde falta posição), antes escondida
+dentro do `YearMap`. O `YearMap` e o `/painel` usam o MESMO hook, a MESMA base
+de lançamentos (`useYearData`, cache-primeiro) e o MESMO registro — por isso
+os dois mostram o mesmo conjunto (257 sondas de 2026 em Natal, conferido no
+navegador). O `MissionMap` tem um filtro Mês/Ano próprio (padrão: Ano,
+lembrado em `sondas_painel_map_period`). Bug real que isso corrigiu: o painel
+usava só os lançamentos do mês (`positionedMonth`), uma sonda por slot
+sinótico, com o horário nominal — e parecia "mostrar só as minhas".
 
 ### Recuperações do SondeHub (`app/lib/sondehubRecovery.ts`)
 
@@ -386,7 +488,7 @@ lista por um parcial menor.
 - O cache em memória do servidor, o cache localStorage do cliente e o Blob store são três camadas independentes; uma correção numa não se propaga pras outras.
 - O feed ao vivo do radiosondy.info (`export_map.php?live_map=1`) retorna timestamps `report` com um `z` minúsculo no final (ex.: `"2026-06-23 12:57:32z"`) — acrescentar outro `Z` pro `Date` parsear produz uma data inválida silenciosamente. Sempre remova o `z`/`Z` existente antes de reacrescentar um (ver o padrão correto em `gmt3DateStr`/`formatGmt3`).
 - `TodayFlight.isLive === false` significa só "parou de transmitir", **não** "pousou" — a sonda some do SondeHub quando desce abaixo do horizonte dos receptores, às vezes ainda a km do chão (caso real: W3770310, último frame a 1.249 m caindo a 6 m/s). Nunca rotule `!isLive` direto como "Pousada": use `flightStatus()`/`FLIGHT_STATUS_LABEL` (`app/lib/radiosondy.ts`), que só diz pousada com evidência (recuperação no radiosondy.info, último frame < 500 m ou velocidade vertical ~0) e cai em "Sinal perdido" no resto. Não troque isso por um limiar só de altitude absoluta — estações altas (La Paz ~4.000 m) quebrariam.
-- O horário mostrado de um lançamento vem de `launchDisplayTime()`, não de `l.time_local` direto — ver a seção do primeiro quadro recebido. `time_local`/`time_utc` são identidade interna; sobrescrevê-los com o horário real quebra caches, merges e `radiosondyMatch`.
+- O horário mostrado de um lançamento vem de `launchDisplayTime()`, não de `l.time_local` direto — ver "Uma entrada de lançamento por sonda". `time_local`/`time_utc` são identidade interna; sobrescrevê-los com o horário real quebra caches, merges e `radiosondyMatch`.
 - `Launch` mora em `app/lib/types.ts` (import compartilhado) — ao adicionar um campo, deixe-o opcional pra que os YearStores já persistidos no R2 continuem válidos.
 - Não amplie `MAX_MATCH_WINDOW_MS` (`app/lib/radiosondy.ts`, atualmente 4h) sem reverificar contra dados reais do radiosondy.info — uma janela larga demais produz silenciosamente matches *errados mas plausíveis* (roubando a recuperação do próximo lançamento) em vez de um honesto "sem match".
 - O auto-OTA do firmware (`/api/firmware/[receiver]/upload`) atualiza quando a versão é **DIFERENTE**, não "mais nova" — nunca deixe um `.bin` desatualizado publicado depois de uma correção no firmware, ou o receptor se reverte pra ele a cada boot. Ver `docs/AUTO_OTA_GUIDE.md` no repo do firmware.

@@ -78,6 +78,11 @@ export function cachedRecovery(serial: string): SondeRecovery | null | undefined
   return cached(serial)?.rec
 }
 
+/** Consulta direta, sem cache (servidor: o registro no R2 já controla a frequência). */
+export async function fetchRecoveryDirect(serial: string): Promise<SondeRecovery | null> {
+  return fetchOne(serial)
+}
+
 async function fetchOne(serial: string): Promise<SondeRecovery | null> {
   const res = await fetch(`https://api.v2.sondehub.org/recovered?serial=${encodeURIComponent(serial)}`, { cache: 'no-store' })
   if (!res.ok) throw new Error(`Erro ${res.status} ao consultar recuperação no sondehub.org`)
@@ -181,15 +186,4 @@ export function cachedRecoveriesFor(serials: string[]): Map<string, SondeRecover
     if (rec) out.set(s, rec)
   }
   return out
-}
-
-function escapeHtml(value: string): string {
-  return value.replace(/[&<>'"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[c] ?? c))
-}
-
-/** Linhas extras de popup (HTML) com quem recuperou e a nota. */
-export function recoveryPopupHtml(recoveredBy?: string, note?: string): string {
-  if (!recoveredBy && !note) return ''
-  return (recoveredBy ? `<div><b>Recuperada por:</b> ${escapeHtml(recoveredBy)}</div>` : '') +
-    (note ? `<div style="font-size:11px;font-style:italic;max-width:240px">“${escapeHtml(note)}”</div>` : '')
 }

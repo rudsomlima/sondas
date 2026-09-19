@@ -44,7 +44,7 @@ export function gmt3DateWithMonthGuard(utcMs: number): Date {
 }
 
 // Horário de lançamento a exibir. Desde que o app passou a ler o primeiro
-// quadro recebido de cada sonda (app/lib/sondeArchive.ts), é esse o horário
+// quadro recebido de cada sonda (registro de sondas, app/lib/sondeRegistry.ts), é esse o horário
 // mostrado; `time_local` (slot sinótico da Wyoming, 00Z/12Z) fica como
 // identidade interna e como fallback quando a sonda não tem página no
 // radiosondy.info. `exact` = veio do primeiro quadro de verdade.

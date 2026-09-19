@@ -10,6 +10,7 @@ import { isValidPosition } from '@/app/lib/launchData'
 import type { Station } from '@/app/lib/stations'
 import type { Launch, LaunchPosition } from '@/app/lib/types'
 import type { SondePoint } from '@/app/lib/sondePoints'
+import type { SondeRecord } from '@/app/lib/sondeRegistry'
 
 interface MonthAccordionProps {
   year: number
@@ -27,6 +28,7 @@ interface MonthAccordionProps {
   onRequestDeleteMonth: (m: number | null) => void
   onConfirmDeleteMonth: () => void
   monthPoints?: SondePoint[] // sondas de todas as fontes do mês aberto
+  records?: Map<string, SondeRecord> // registro de sondas (R2) — dados mais completos por sonda
   onLaunchPosition?: (launch: Launch, position: LaunchPosition) => void
   onYearPoints?: (points: SondePoint[]) => void
 }
@@ -40,7 +42,7 @@ export default function MonthAccordion({
   noMatchLaunches, setNoMatchLaunches,
   showYearMap, setShowYearMap,
   deleteMonthConfirm, onRequestDeleteMonth, onConfirmDeleteMonth,
-  monthPoints, onLaunchPosition, onYearPoints,
+  monthPoints, records, onLaunchPosition, onYearPoints,
 }: MonthAccordionProps) {
   return (
     <div className="panel overflow-hidden mb-6">
@@ -209,6 +211,7 @@ export default function MonthAccordion({
                       launch={selectedLaunch}
                       station={station.id}
                       contextPoints={monthPoints}
+                      records={records}
                       onPosition={onLaunchPosition}
                       onClose={() => setSelectedLaunch(null)}
                       onResult={found => {

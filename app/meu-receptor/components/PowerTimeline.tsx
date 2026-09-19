@@ -8,6 +8,7 @@ import type { RdzConfig } from '@/app/lib/rdzConfig'
 import { parsePowerPlan, planDaySegments, LVL_DEEP } from '@/app/lib/powerPlan'
 import { POWER_COLORS } from '@/app/lib/powerColors'
 import HistoryRecordingToggle, { RecordingPausedNote } from './HistoryRecordingToggle'
+import { PanelTitle } from './Collapsible'
 
 // Um estado só é "assumido" contínuo até aqui além de sua última observação
 // (heartbeat ou transição). Além disso, tratamos como lacuna sem dado (ver
@@ -373,10 +374,9 @@ export default function PowerTimeline({ history, config, mqttConnected, onDelete
   return (
     <div className="panel p-5 mb-6">
       <div className="flex items-start justify-between gap-3 mb-1">
-        <h2 className="text-sm font-semibold text-white flex items-center gap-2">
-          <Battery size={14} className="text-blue-400" />
+        <PanelTitle icon={<Battery size={14} className="text-blue-400" />}>
           Deep Sleep / Power — últimos {DAYS} dias
-        </h2>
+        </PanelTitle>
         <div className="flex items-center gap-1 flex-shrink-0">
           <HistoryRecordingToggle recording={recording} onChange={onRecordingChange} />
           <button

@@ -11,7 +11,8 @@ import { isValidPosition, launchInstantMs, mergeLaunchCollections, sourceCounts 
 import { launchKey, sameLaunch } from '@/app/lib/launchUtils'
 import { useRecoveredLaunches } from './hooks/useRecoveredLaunches'
 import { useSondeLaunches } from './hooks/useSondeLaunches'
-import { attachPositions, mergeSondePoints, pointsFromLaunches, type SondePoint } from '@/app/lib/sondePoints'
+import { useSondeRegistry } from './hooks/useSondeRegistry'
+import { attachPositions, isPointInMonth, mergeSondePoints, mergeWithRegistry, pointsFromLaunches, type SondePoint } from '@/app/lib/sondePoints'
 import { useYearData } from './hooks/useYearData'
 import { useSondePoints } from './hooks/useSondePoints'
 import { useTodayData } from './hooks/useTodayData'
@@ -99,13 +100,24 @@ export default function HistoricoPage() {
   // lançamentos sem posição e ficam como contexto no mapa do lançamento.
   const clock = nowGMT3()
   const pointsMonth = expandedMonth ?? (year === clock.getUTCFullYear() ? clock.getUTCMonth() + 1 : null)
-  const { points: sondePoints } = useSondePoints(station, year, pointsMonth)
+  const { points: rawSondePoints } = useSondePoints(station, year, pointsMonth)
   // Status de recuperação do SondeHub nas posições UNKNOWN (só exibição; a
   // rede é consultada só pro mês aberto/corrente, o cache vale pro ano todo).
   const recoveredLaunches = useRecoveredLaunches(data?.launches ?? NO_LAUNCHES, pointsMonth)
-  // Uma entrada por sonda + horário do primeiro quadro recebido (só exibição:
+  // Registro permanente de sondas (R2): o ano inteiro da estação vem de uma
+  // vez (completa todos os meses); as fontes pesadas só são consultadas pras
+  // sondas do mês aberto.
+  const registrySerials = useMemo(() => [
+    ...rawSondePoints.map(p => p.serial),
+    ...recoveredLaunches.filter(l => l.month === pointsMonth && l.position).map(l => l.position!.sondeNumber),
+  ], [rawSondePoints, recoveredLaunches, pointsMonth])
+  const records = useSondeRegistry(station.id, [year], registrySerials)
+  const sondePoints = useMemo(() => pointsMonth == null ? rawSondePoints : mergeWithRegistry(rawSondePoints, records,
+    (r, p) => !!r.stations?.includes(station.id) && isPointInMonth(p, year, pointsMonth)),
+  [rawSondePoints, records, station.id, year, pointsMonth])
+  // Uma entrada por sonda + 1º quadro, receptores e último sinal (só exibição:
   // o YearStore/cache do ano continuam sendo a verdade da Wyoming).
-  const displayLaunches = useSondeLaunches(recoveredLaunches, sondePoints)
+  const displayLaunches = useSondeLaunches(recoveredLaunches, sondePoints, records)
   const dataRef = useRef(data)
   dataRef.current = data
 
@@ -348,6 +360,7 @@ export default function HistoricoPage() {
             onRequestDeleteMonth={setDeleteMonthConfirm}
             onConfirmDeleteMonth={handleConfirmDeleteMonth}
             monthPoints={monthContextPoints}
+            records={records}
             onLaunchPosition={handleLaunchPosition}
             onYearPoints={handleYearPoints}
           />

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from 'react'
 import 'leaflet/dist/leaflet.css'
+import { launchSitePopupHtml, POPUP_OPTIONS, simplePopupHtml } from '@/app/lib/mapPopups'
 import { createBaseMap } from '@/app/lib/leafletBase'
 import { LANDING_CELL_DEG, type LandingCell } from '@/app/lib/metrics'
 import type { Station } from '@/app/lib/stations'
@@ -80,7 +81,7 @@ export default function LandingHeatmap({ station, cells }: LandingHeatmapProps) 
     // Estação
     L.circleMarker([station.lat, station.lon], {
       radius: 6, color: '#3b82f6', fillColor: '#3b82f6', fillOpacity: 0.7, weight: 2,
-    }).addTo(layer).bindPopup(`<b>${station.name}</b>`)
+    }).addTo(layer).bindPopup(launchSitePopupHtml(station), POPUP_OPTIONS)
 
     if (cells.length === 0) return
     const max = Math.max(...cells.map(c => c.count))
@@ -94,7 +95,11 @@ export default function LandingHeatmap({ station, cells }: LandingHeatmapProps) 
         fillColor: cellColor(c.count, max),
         fillOpacity: 0.25 + 0.45 * (c.count / max),
         weight: 1,
-      }).addTo(layer).bindPopup(`${c.count} pouso${c.count > 1 ? 's' : ''} nesta área`)
+      }).addTo(layer).bindPopup(simplePopupHtml({
+        title: `${c.count} pouso${c.count > 1 ? 's' : ''}`, subtitle: 'nesta área do mapa de calor',
+        icon: 'layers', color: cellColor(c.count, max),
+        rows: [{ icon: 'pin', label: 'Centro da área', value: `${c.lat.toFixed(4)}, ${c.lon.toFixed(4)}` }],
+      }), POPUP_OPTIONS)
     }
 
     const lats = [...cells.map(c => c.lat), station.lat]

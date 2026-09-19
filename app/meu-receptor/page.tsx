@@ -13,6 +13,7 @@ import BatteryChart from './components/BatteryChart'
 import FirmwareOtaPanel from './components/FirmwareOtaPanel'
 import PowerBoostPanel from './components/PowerBoostPanel'
 import ReceptionQualityPanel from './components/ReceptionQualityPanel'
+import { CollapsibleSection } from './components/Collapsible'
 import type { RdzConfig } from '@/app/lib/rdzConfig'
 
 export default function MeuReceptorPage() {
@@ -165,6 +166,9 @@ export default function MeuReceptorPage() {
         </p>
       </div>
 
+      {/* Cada painel pode ser recolhido pelo título; a escolha fica salva
+          no navegador (Collapsible.tsx). */}
+      <CollapsibleSection id="receptor">
       <ReceiverSettingsPanel
         settings={config}
         updateSettings={updateSettings}
@@ -176,6 +180,7 @@ export default function MeuReceptorPage() {
         onAddReceiver={addReceiver}
         onEditFirmwareConfig={scrollToFirmwareConfig}
       />
+      </CollapsibleSection>
 
       {firmwareConfig.loading && (
         <div className="panel p-5 mb-6 flex items-center gap-2 text-sm text-gray-400">
@@ -198,14 +203,17 @@ export default function MeuReceptorPage() {
       )}
 
       {activePrefix && (
-        <PowerBoostPanel
-          power={receiver.power}
-          reportMin={firmwareConfig.config?.['power.report_min'] ? Number(firmwareConfig.config['power.report_min']) || null : null}
-        />
+        <CollapsibleSection id="turbo">
+          <PowerBoostPanel
+            power={receiver.power}
+            reportMin={firmwareConfig.config?.['power.report_min'] ? Number(firmwareConfig.config['power.report_min']) || null : null}
+          />
+        </CollapsibleSection>
       )}
 
       {firmwareConfig.config && (
         <div id="config-completa" className="scroll-mt-4">
+          <CollapsibleSection id="config">
           <FullConfigEditor
             config={firmwareConfig.config}
             loadedAt={firmwareConfig.loadedAt}
@@ -215,20 +223,26 @@ export default function MeuReceptorPage() {
             onApply={firmwareConfig.apply}
             onPowerChanges={setPowerDraft}
           />
+          </CollapsibleSection>
         </div>
       )}
 
       {/* Diagnóstico de antena/recepção: posição e callsign vêm do firmware
           (espelhados nas preferências acima); rxalt é a altitude do receptor. */}
-      <ReceptionQualityPanel
-        callsign={config.uploaderCallsign}
-        rxLat={config.homeLat ?? null}
-        rxLon={config.homeLon ?? null}
-        rxAltM={Number(firmwareConfig.config?.['rxalt'] ?? 0) || 0}
-      />
+      <CollapsibleSection id="recepcao">
+        <ReceptionQualityPanel
+          callsign={config.uploaderCallsign}
+          rxLat={config.homeLat ?? null}
+          rxLon={config.homeLon ?? null}
+          rxAltM={Number(firmwareConfig.config?.['rxalt'] ?? 0) || 0}
+        />
+      </CollapsibleSection>
 
-      <FirmwareOtaPanel receiverKey={receiverKey(activePrefix)} pollMs={reportIntervalMs} />
+      <CollapsibleSection id="firmware">
+        <FirmwareOtaPanel receiverKey={receiverKey(activePrefix)} pollMs={reportIntervalMs} />
+      </CollapsibleSection>
 
+      <CollapsibleSection id="bateria">
       <BatteryChart
         history={receiver.batteryHistory}
         config={effectiveConfig}
@@ -236,7 +250,9 @@ export default function MeuReceptorPage() {
         recording={receiver.historyRecording.batt}
         onRecordingChange={v => receiver.setHistoryRecording({ batt: v })}
       />
+      </CollapsibleSection>
 
+      <CollapsibleSection id="energia">
       <PowerTimeline
         history={receiver.powerHistory}
         config={effectiveConfig}
@@ -245,6 +261,7 @@ export default function MeuReceptorPage() {
         recording={receiver.historyRecording.power}
         onRecordingChange={v => receiver.setHistoryRecording({ power: v })}
       />
+      </CollapsibleSection>
     </div>
   )
 }

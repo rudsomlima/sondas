@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Station } from '@/app/lib/stations'
-import { fetchMonthSondePoints, enrichPointsWithRecoveries, applyRecoveriesToPoints, type SondePoint } from '@/app/lib/sondePoints'
+import { fetchMonthSondePoints, enrichPointsWithRecoveries, applyRecoveriesToPoints, pointToRecord, type SondePoint } from '@/app/lib/sondePoints'
+import { reportSondes } from '@/app/lib/sondeRegistryClient'
 import { cachedRecovery, type SondeRecovery } from '@/app/lib/sondehubRecovery'
 import { nowGMT3 } from '@/app/lib/types'
 
@@ -74,6 +75,8 @@ export function useSondePoints(station: Station, year: number, month: number | n
       // Recuperações do SondeHub pros que ainda estão UNKNOWN: em segundo
       // plano, depois de o mapa já estar desenhado.
       const enriched = await enrichPointsWithRecoveries(base)
+      // Tudo que veio das fontes vai pro registro permanente no R2.
+      reportSondes(enriched.map(pointToRecord).filter((r): r is NonNullable<typeof r> => !!r), station.id)
       if (request !== requestRef.current || enriched === base) return
       setPoints(enriched)
       writeStoredPoints(station.id, year, month, enriched)

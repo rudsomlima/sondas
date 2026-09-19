@@ -6,8 +6,8 @@
  * Em Natal isso escondia voos reais — 15/09/2026 teve 5 sondas no SondeHub e
  * o app mostrava 2 lançamentos. Aqui as sondas que não casaram com nenhum
  * lançamento viram entradas próprias, e todas ganham o horário do primeiro
- * quadro recebido (app/lib/sondeArchive.ts) quando o radiosondy.info tem a
- * página da sonda.
+ * quadro recebido, os receptores e o último sinal — tudo vindo do registro
+ * permanente de sondas no R2 (app/lib/sondeRegistry.ts).
  *
  * Módulo puro (sem browser): as entradas extras são só de EXIBIÇÃO — não
  * entram no YearStore do R2 nem no cache local do ano, que continuam sendo a
@@ -17,19 +17,39 @@ import type { Launch } from './types'
 import { isValidPosition, launchInstantMs } from './launchData'
 import { gmt3DateWithMonthGuard } from './launchUtils'
 import { roundToSynopticHour } from './radiosondy'
-import { parseFrameDate, type SondeArchiveInfo } from './sondeArchive'
+import type { SondeRecord } from './sondeRegistry'
 import type { SondePoint } from './sondePoints'
 
 const pad = (n: number) => String(n).padStart(2, '0')
+
+function parseIso(s: string | undefined): Date | null {
+  if (!s) return null
+  const d = new Date(s.includes('T') ? s : s.replace(' ', 'T').replace(/z$/i, '') + 'Z')
+  return isNaN(d.getTime()) ? null : d
+}
 
 /** Serials já representados por algum lançamento da lista. */
 export function launchSerials(launches: Launch[]): string[] {
   return launches.flatMap(l => isValidPosition(l.position) && l.position.sondeNumber !== '?' ? [l.position.sondeNumber] : [])
 }
 
-/** Todos os serials que valem consultar no arquivo do radiosondy.info. */
-export function archiveSerials(launches: Launch[], points: SondePoint[]): string[] {
+/** Todos os serials de lançamentos + pontos (os que valem buscar no registro). */
+export function registrySerials(launches: Launch[], points: SondePoint[]): string[] {
   return [...new Set([...launchSerials(launches), ...points.map(p => p.serial)])].filter(s => s && s !== '?')
+}
+
+/** Campos de exibição que o registro acrescenta a um lançamento. */
+function launchFieldsFromRecord(r: SondeRecord | undefined): Partial<Launch> {
+  if (!r) return {}
+  const receivers = r.receivers?.map(x => x.callsign)
+  const withFrames = r.receivers?.filter(x => x.frames) ?? []
+  return {
+    firstFrameUtc: r.firstFrameUtc,
+    receivers: receivers?.length ? receivers : undefined,
+    receiverFrames: withFrames.length ? Object.fromEntries(withFrames.map(x => [x.callsign, x.frames!])) : undefined,
+    lastReceiver: r.lastReceiver,
+    lastReceiverAt: r.lastReceiverAt,
+  }
 }
 
 /**
@@ -37,12 +57,12 @@ export function archiveSerials(launches: Launch[], points: SondePoint[]): string
  * sem ele, cai no horário sinótico mais próximo abaixo do último reporte
  * (mesma aproximação de fetchRadiosondyLaunches) e fica marcado `approx`.
  */
-export function pointToLaunch(p: SondePoint, info?: SondeArchiveInfo): Launch {
-  const first = parseFrameDate(info?.firstFrameUtc)
-  const exact = !!first
+export function pointToLaunch(p: SondePoint, rec?: SondeRecord): Launch {
+  const first = parseIso(rec?.firstFrameUtc ?? p.firstFrameUtc)
   const utcMs = (first ?? roundToSynopticHour(p.date)).getTime()
   const utcDate = new Date(utcMs)
   const localDate = gmt3DateWithMonthGuard(utcMs)
+  const fromRecord = launchFieldsFromRecord(rec)
   return {
     date: `${localDate.getUTCFullYear()}-${pad(localDate.getUTCMonth() + 1)}-${pad(localDate.getUTCDate())}`,
     time_local: `${pad(localDate.getUTCHours())}:${pad(localDate.getUTCMinutes())}`,
@@ -51,9 +71,13 @@ export function pointToLaunch(p: SondePoint, info?: SondeArchiveInfo): Launch {
     month: localDate.getUTCMonth() + 1,
     year: localDate.getUTCFullYear(),
     source: p.sources.includes('radiosondy') ? 'radiosondy' : 'sondehub',
-    approx: exact ? undefined : true,
+    approx: first ? undefined : true,
     association: p.geographic ? 'geographic' : p.sources.includes('radiosondy') ? 'startplace' : 'station',
-    firstFrameUtc: info?.firstFrameUtc,
+    firstFrameUtc: fromRecord.firstFrameUtc ?? p.firstFrameUtc,
+    receivers: fromRecord.receivers ?? p.receivers,
+    receiverFrames: fromRecord.receiverFrames ?? p.receiverFrames,
+    lastReceiver: fromRecord.lastReceiver ?? p.lastReceiver,
+    lastReceiverAt: fromRecord.lastReceiverAt ?? p.lastReceiverAt,
     position: {
       lat: p.lat, lon: p.lon, sondeNumber: p.serial, status: p.status,
       altitude: p.altitude, recoveredBy: p.recoveredBy, recoveryNote: p.recoveryNote,
@@ -64,37 +88,61 @@ export function pointToLaunch(p: SondePoint, info?: SondeArchiveInfo): Launch {
 // Ordenação: o instante do primeiro quadro tem minutos; launchInstantMs só
 // conhece a hora sinótica cheia (é derivado do slot da Wyoming).
 export function launchSortMs(l: Launch): number {
-  return parseFrameDate(l.firstFrameUtc)?.getTime() ?? launchInstantMs(l)
+  return parseIso(l.firstFrameUtc)?.getTime() ?? launchInstantMs(l)
 }
 
-/** Copia o primeiro quadro conhecido pra dentro dos lançamentos que já existem. */
-export function applyArchivesToLaunches(launches: Launch[], archives: Map<string, SondeArchiveInfo>): Launch[] {
-  if (archives.size === 0) return launches
+/**
+ * Copia do registro pra dentro dos lançamentos que já existem: 1º quadro,
+ * receptores, último sinal e — se a posição ainda é UNKNOWN — o status e o
+ * relato de recuperação.
+ */
+export function applyRegistryToLaunches(launches: Launch[], records: Map<string, SondeRecord>): Launch[] {
+  if (records.size === 0) return launches
   let changed = false
   const out = launches.map(l => {
     if (!isValidPosition(l.position)) return l
-    const first = archives.get(l.position.sondeNumber)?.firstFrameUtc
-    if (!first || l.firstFrameUtc === first) return l
+    const rec = records.get(l.position.sondeNumber)
+    if (!rec) return l
+    const f = launchFieldsFromRecord(rec)
+    const position = l.position.status === 'UNKNOWN' && rec.status && rec.status !== 'UNKNOWN'
+      ? {
+          ...l.position,
+          status: rec.status,
+          ...(rec.status === 'FOUND' && rec.recoveryPos ? { lat: rec.recoveryPos.lat, lon: rec.recoveryPos.lon } : {}),
+          recoveredBy: l.position.recoveredBy ?? rec.recoveredBy,
+          recoveryNote: l.position.recoveryNote ?? rec.recoveryNote,
+        }
+      : l.position
+    const next: Launch = {
+      ...l,
+      firstFrameUtc: f.firstFrameUtc ?? l.firstFrameUtc,
+      receivers: f.receivers ?? l.receivers,
+      receiverFrames: f.receiverFrames ?? l.receiverFrames,
+      lastReceiver: f.lastReceiver ?? l.lastReceiver,
+      lastReceiverAt: f.lastReceiverAt ?? l.lastReceiverAt,
+      position,
+    }
+    if (JSON.stringify(next) === JSON.stringify(l)) return l
     changed = true
-    return { ...l, firstFrameUtc: first }
+    return next
   })
   return changed ? out : launches
 }
 
 /**
- * Lançamentos da Wyoming (com o horário real aplicado) + uma entrada por
- * sonda do mês que não casou com nenhum deles, tudo ordenado por horário.
+ * Lançamentos da Wyoming (com o registro aplicado) + uma entrada por sonda do
+ * período que não casou com nenhum deles, tudo ordenado por horário.
  */
 export function launchesWithSondes(
-  launches: Launch[], points: SondePoint[], archives: Map<string, SondeArchiveInfo>,
+  launches: Launch[], points: SondePoint[], records: Map<string, SondeRecord>,
 ): Launch[] {
-  const base = applyArchivesToLaunches(launches, archives)
+  const base = applyRegistryToLaunches(launches, records)
   const known = new Set(launchSerials(base))
   const extras: Launch[] = []
   for (const p of points) {
     if (!p.serial || p.serial === '?' || known.has(p.serial)) continue
     known.add(p.serial)
-    extras.push(pointToLaunch(p, archives.get(p.serial)))
+    extras.push(pointToLaunch(p, records.get(p.serial)))
   }
   if (extras.length === 0) return base
   return [...base, ...extras].sort((a, b) => launchSortMs(a) - launchSortMs(b))
