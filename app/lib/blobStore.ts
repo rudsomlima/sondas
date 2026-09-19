@@ -869,3 +869,22 @@ export function updateReceiverStations(
 ): Promise<ReceiverStationsFile | null> {
   return updateJsonConditional(RECEIVER_STATIONS_KEY, () => ({ updatedAt: 0, stations: {} }), apply)
 }
+
+// ---------------------------------------------------------------------------
+// Configurações globais do app (valem pra todos os navegadores/aparelhos) —
+// ver app/lib/appSettings.ts.
+
+export interface AppGlobalSettings {
+  wyomingEnabled: boolean
+  updatedAt: number
+}
+
+const APP_SETTINGS_KEY = 'sondas/app-settings.json'
+
+export async function readAppGlobalSettings(): Promise<AppGlobalSettings | null> {
+  return (await readJsonWithEtag<AppGlobalSettings>(APP_SETTINGS_KEY).catch(() => ({ data: null }))).data
+}
+
+export async function writeAppGlobalSettings(settings: AppGlobalSettings): Promise<void> {
+  await updateJsonConditional<AppGlobalSettings>(APP_SETTINGS_KEY, () => settings, () => settings)
+}

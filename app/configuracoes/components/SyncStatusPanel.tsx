@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { RefreshCw, Loader2, Radio, CheckCircle2, Clock, XCircle } from 'lucide-react'
 import type { SyncStatus } from '@/app/lib/types'
+import { useWyomingEnabled } from '@/app/lib/appSettings'
 
 function formatWhen(ts: number): string {
   const diffMs = Date.now() - ts
@@ -19,6 +20,7 @@ function formatWhen(ts: number): string {
 // roda em segundo plano (Vercel Cron, diariamente às 06:00 UTC / 03:00 GMT-3)
 // e resolve os lançamentos que a Wyoming já publicou, mas ainda sem posição.
 export default function SyncStatusPanel() {
+  const wyomingOn = useWyomingEnabled()
   const [status, setStatus] = useState<SyncStatus | null>(null)
   const [configured, setConfigured] = useState(true)
   const [loaded, setLoaded] = useState(false)
@@ -94,6 +96,12 @@ export default function SyncStatusPanel() {
         lançamento específico, ele aparece como <b>aguardando</b> nos badges
         de confiança.
       </p>
+      {!wyomingOn && (
+        <p className="text-[11px] text-yellow-400/90 mb-3">
+          A consulta à Wyoming está desligada: este job trabalha sobre os lançamentos que ela publicou,
+          então o resultado abaixo não aparece em nenhuma seção enquanto ela estiver desligada.
+        </p>
+      )}
 
       {!loaded ? (
         <p className="text-xs text-dim">Carregando…</p>

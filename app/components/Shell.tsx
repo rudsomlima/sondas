@@ -8,12 +8,14 @@ import {
   Wind, ChevronRight, Satellite, Antenna
 } from 'lucide-react'
 import { getSelectedStation, DEFAULT_STATION, Station } from '@/app/lib/stations'
+import { useWyomingEnabled } from '@/app/lib/appSettings'
 
 // Shell da aplicação: sidebar (colapsável no mobile) + topbar mobile.
 export default function Shell({ children }: { children: React.ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [station, setStation] = useState<Station>(DEFAULT_STATION)
   const pathname = usePathname()
+  const wyomingOn = useWyomingEnabled()
 
   useEffect(() => {
     setStation(getSelectedStation())
@@ -96,7 +98,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
         <div className="px-4 py-4 border-t border-border">
           <div className="flex items-center gap-2 text-xs text-dim">
             <Wind size={12} />
-            <span>Wyoming · radiosondy · SondeHub</span>
+            <span>{wyomingOn ? 'Wyoming · radiosondy · SondeHub' : 'radiosondy · SondeHub'}</span>
           </div>
           <div className="text-xs text-dim mt-1 mono">GMT-3</div>
         </div>

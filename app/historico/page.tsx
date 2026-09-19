@@ -12,6 +12,7 @@ import { launchKey, sameLaunch } from '@/app/lib/launchUtils'
 import { useRecoveredLaunches } from './hooks/useRecoveredLaunches'
 import { useSondeLaunches } from './hooks/useSondeLaunches'
 import { useSondeRegistry } from './hooks/useSondeRegistry'
+import { cacheStationKey, useWyomingEnabled, wyomingQuery } from '@/app/lib/appSettings'
 import { attachPositions, isPointInMonth, mergeSondePoints, mergeWithRegistry, pointsFromLaunches, type SondePoint } from '@/app/lib/sondePoints'
 import { useYearData } from './hooks/useYearData'
 import { useSondePoints } from './hooks/useSondePoints'
@@ -46,6 +47,8 @@ export default function HistoricoPage() {
   }, [])
 
   const { data, setData, error, statusMsg, syncing, failedMonths, lastUpdatedAt, fetchData, syncMonths } = useYearData(year, station)
+  // Liga/desliga da Wyoming (Configurações) — esconde tudo que é dela.
+  const wyomingOn = useWyomingEnabled()
   const { todayData, todayLoading, todayError, lastFetchAt } = useTodayData(station)
   const { todayFlights, liveFlightChecked, liveError, sourceHealth } = useLiveFlights(station, todayData?.today)
   const viewKey = `${station.id}:${year}`
@@ -127,7 +130,7 @@ export default function HistoricoPage() {
     // Só atualiza meses já presentes no cache local: criar uma entrada nova
     // faria o useYearData pular a busca desse mês no servidor.
     for (const m of new Set(withPosition.map(l => l.month))) {
-      const entry = getCacheByYear(year, station.id).find(c => c.month === m)
+      const entry = getCacheByYear(year, cacheStationKey(station.id)).find(c => c.month === m)
       if (!entry) continue
       writeCache({ ...entry, launches: mergeLaunchCollections(entry.launches as Launch[], withPosition.filter(l => l.month === m)) })
     }
@@ -173,7 +176,7 @@ export default function HistoricoPage() {
   const handleConfirmDeleteMonth = useCallback(() => {
     if (deleteMonthConfirm === null) return
     const targetMonth = deleteMonthConfirm
-    clearMonth(year, targetMonth, station.id)
+    clearMonth(year, targetMonth, cacheStationKey(station.id))
     setData(prev => prev ? {
       ...prev,
       launches: prev.launches.filter(l => l.month !== targetMonth),
@@ -187,14 +190,14 @@ export default function HistoricoPage() {
     setRechecking(true)
     setRecheckMsg(null)
     try {
-      const res = await fetch(`/api/sounding?action=recheck&year=${year}&station=${station.id}`)
+      const res = await fetch(`/api/sounding?action=recheck&year=${year}&station=${station.id}${wyomingQuery()}`)
       const json = await res.json()
       if (json.error) throw new Error(json.error)
       if (json.downgraded > 0) {
         // Alguns launches passaram de "confirmado" para "erro" — o cache
         // local (localStorage) ficaria com o dado antigo até o próximo
         // clique manual em "Atualizar", então recarrega direto da API.
-        clearYear(year, station.id)
+        clearYear(year, cacheStationKey(station.id))
         await fetchData(year)
         setRecheckMsg(`${json.downgraded} de ${json.checked} lançamento(s) atualizado(s): a Wyoming não confirma mais os dados.`)
       } else {
@@ -208,7 +211,7 @@ export default function HistoricoPage() {
   }, [year, station.id, fetchData])
 
   const handleConfirmDeleteYear = useCallback(() => {
-    clearYear(year, station.id)
+    clearYear(year, cacheStationKey(station.id))
     setDeleteYearConfirm(false)
     fetchData(year)
   }, [year, station.id, fetchData])
@@ -272,14 +275,14 @@ export default function HistoricoPage() {
             >
               <HardDrive size={14} />
             </Link>
-            <button
+            {wyomingOn && <button
               onClick={handleRecheckWyoming}
               disabled={rechecking}
               className="flex items-center gap-2 px-3 py-2.5 bg-surface border border-border rounded-md text-sm text-gray-400 hover:text-white hover:border-border-strong transition-all disabled:opacity-50"
               title="A Wyoming às vezes muda de ideia depois de confirmar uma sondagem (fica indisponível). Reverifica os lançamentos já marcados como confirmados neste ano."
             >
               {rechecking ? <Loader2 size={14} className="animate-spin" /> : <ShieldCheck size={14} />}
-            </button>
+            </button>}
           </div>
         </div>
 
@@ -334,7 +337,9 @@ export default function HistoricoPage() {
           <SummaryCards data={data} />
           <div className="panel px-4 py-3 mb-6 flex items-center gap-x-5 gap-y-2 flex-wrap text-[11px]">
             <span className="text-dim">Cobertura</span>
-            <span className="text-src-wyoming mono">W {sourceCounts(data.launches).wyoming}</span>
+            {wyomingOn
+              ? <span className="text-src-wyoming mono">W {sourceCounts(data.launches).wyoming}</span>
+              : <span className="text-faint" title="Consulta à Wyoming desativada em Configurações">Wyoming desativada</span>}
             <span className="text-src-radiosondy mono">R {sourceCounts(data.launches).radiosondy}</span>
             <span className="text-src-sondehub mono">S {sourceCounts(data.launches).sondehub}</span>
             <span className="text-gray-300 mono">posições {sourceCounts(data.launches).positioned}/{data.count}</span>

@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
+import { useWyomingEnabled, wyomingQuery } from '@/app/lib/appSettings'
 import { ChevronDown, Trash2, Download, Loader2, RefreshCw, AlertTriangle, HardDrive } from 'lucide-react'
 import {
   clearMonth, clearYear, clearAllCache, clearStation,
@@ -20,6 +21,7 @@ type DeleteConfirm = { type: 'month' | 'year' | 'all' | 'station'; month?: numbe
 // Painel do cache localStorage: resumo, tabela por estação/ano, sync em massa,
 // export/import JSON e exclusões.
 export default function LocalCachePanel({ stationId, onMutate }: LocalCachePanelProps) {
+  const wyomingOn = useWyomingEnabled()
   const currentYear = new Date().getFullYear()
   const [cacheStats, setCacheStats] = useState<any>(null)
   const [cacheStatsByStation, setCacheStatsByStation] = useState<StationCacheStats[]>([])
@@ -85,7 +87,7 @@ export default function LocalCachePanel({ stationId, onMutate }: LocalCachePanel
     for (let y = bulkSyncFrom; y <= currentYear; y++) {
       setBulkSyncStatus(`Sincronizando ${y}…`)
       try {
-        await fetch(`/api/sounding?action=year&station=${stationId}&year=${y}`)
+        await fetch(`/api/sounding?action=year&station=${stationId}&year=${y}${wyomingQuery()}`)
       } catch {
         // falha pontual — próximo run retentará
       }
@@ -163,7 +165,9 @@ export default function LocalCachePanel({ stationId, onMutate }: LocalCachePanel
       )}
 
       <div className="mb-4 p-3 bg-bg border border-border rounded">
-        <p className="text-xs text-gray-400 mb-2">Sincronizar histórico com a Wyoming (1 mês por request)</p>
+        <p className="text-xs text-gray-400 mb-2">
+          {wyomingOn ? 'Sincronizar histórico com a Wyoming (1 mês por request)' : 'Sincronizar histórico (radiosondy.info + SondeHub — Wyoming desligada)'}
+        </p>
         <div className="flex items-center gap-2 flex-wrap">
           <label className="text-xs text-gray-400">De</label>
           <select

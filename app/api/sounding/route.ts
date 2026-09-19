@@ -5,7 +5,8 @@ import { fetchRadiosondyLaunches } from '@/app/lib/radiosondy'
 import { fetchSondeHubApproxLaunches, fetchSondeHubArchiveLaunches } from '@/app/lib/sondehub'
 import { nowGMT3, Launch, YearStore } from '@/app/lib/types'
 import { gmt3DateWithMonthGuard } from '@/app/lib/launchUtils'
-import { mergeLaunchCollections } from '@/app/lib/launchData'
+import { mergeLaunchCollections, withoutWyoming } from '@/app/lib/launchData'
+import { isWyomingEnabled } from '@/app/lib/appSettingsServer'
 
 export const maxDuration = 60
 
@@ -347,6 +348,24 @@ async function fetchApproxLaunches(
   return [...byKey.values()]
 }
 
+// Wyoming DESLIGADA nas configurações (ver app/lib/appSettings.ts): o mês vem
+// só de radiosondy.info + SondeHub (arquivo e ao vivo), sem ler nem gravar o
+// YearStore — que é da Wyoming e continua intacto pra quando ela for religada.
+// Meses passados não mudam: ficam em memória pela vida da instância; o mês
+// corrente, por 10 min.
+const noWyomingCache = new Map<string, { launches: Launch[]; at: number }>()
+
+async function monthWithoutWyoming(
+  station: string, year: number, month: number, isCurrentMonth: boolean,
+): Promise<Launch[]> {
+  const key = `${station}_${year}_${month}`
+  const hit = noWyomingCache.get(key)
+  if (hit && (!isCurrentMonth || Date.now() - hit.at < 10 * 60_000)) return hit.launches
+  const launches = withoutWyoming(await fetchApproxLaunches(findStation(station), year, month, isCurrentMonth))
+  noWyomingCache.set(key, { launches, at: Date.now() })
+  return launches
+}
+
 // Complementa a Wyoming no mês corrente com fontes "ao vivo" (radiosondy.info
 // + feed ao vivo do sondehub.org) — não o arquivo S3 do sondehub.org, que tem
 // meses de atraso e só vale a pena pra preencher estações sem Wyoming de uma
@@ -465,6 +484,10 @@ export async function GET(request: NextRequest) {
   const todayStr = `${local.getUTCFullYear()}-${pad2(local.getUTCMonth() + 1)}-${pad2(local.getUTCDate())}`
 
   try {
+    // Liga/desliga global da Wyoming: o navegador manda wyoming=0|1; sem o
+    // parâmetro vale o que está salvo no R2.
+    const wyomingOn = await isWyomingEnabled(searchParams)
+
     if (action === 'today') {
       const year = local.getUTCFullYear()
       const month = local.getUTCMonth() + 1
@@ -472,7 +495,17 @@ export async function GET(request: NextRequest) {
       let launches: Launch[]
       let partial = false
       const sourceStatus: Record<string, string> = {}
-      if (stationInfo?.wyomingSupported === false) {
+      if (!wyomingOn) {
+        try {
+          launches = await monthWithoutWyoming(station, year, month, true)
+          sourceStatus.alternatives = 'ok'
+        } catch {
+          launches = []
+          partial = true
+          sourceStatus.alternatives = 'unavailable'
+        }
+        sourceStatus.wyoming = 'disabled'
+      } else if (stationInfo?.wyomingSupported === false) {
         launches = await fetchApproxLaunches(stationInfo, year, month, true)
         sourceStatus.wyoming = 'not-supported'
         sourceStatus.alternatives = 'ok'
@@ -553,6 +586,10 @@ export async function GET(request: NextRequest) {
       }
 
       const isCurrentMonth = year === currentYear && month === currentMonth
+      if (!wyomingOn) {
+        const launches = await monthWithoutWyoming(station, year, month, isCurrentMonth)
+        return NextResponse.json({ year, month, station, count: launches.length, launches, cached: false, wyoming: 'disabled' })
+      }
       const store = (await readYearStore(station, year)) ?? { year, launches: [] as Launch[], monthsComplete: [] as number[], updatedAt: 0 }
       const sanitized = sanitizeStore(store, currentYear, currentMonth)
       const { launches, updated } = await syncMonth(store, station, year, month, isCurrentMonth)
@@ -582,6 +619,17 @@ export async function GET(request: NextRequest) {
       }
 
       const maxMonth = year === currentYear ? currentMonth : 12
+      if (!wyomingOn) {
+        const all: Launch[] = []
+        for (let m = 1; m <= maxMonth; m++) {
+          try {
+            all.push(...await monthWithoutWyoming(station, year, m, year === currentYear && m === currentMonth))
+          } catch (e: any) {
+            errors.push({ month: m, error: e.message })
+          }
+        }
+        return NextResponse.json({ year, station, count: all.length, launches: all, errors, cached: false, wyoming: 'disabled' })
+      }
       const store = (await readYearStore(station, year)) ?? { year, launches: [] as Launch[], monthsComplete: [] as number[], updatedAt: 0 }
       let changed = sanitizeStore(store, currentYear, currentMonth)
 
@@ -616,6 +664,9 @@ export async function GET(request: NextRequest) {
       // checagem original (na sync) passou, mas a Wyoming, não-determinística
       // do lado dela, agora recusa a mesma sondagem individual (400).
       const year = parseInt(searchParams.get('year') ?? String(local.getUTCFullYear()))
+      if (!wyomingOn) {
+        return NextResponse.json({ error: 'A consulta à Wyoming está desativada nas configurações.' }, { status: 409 })
+      }
       const store = await readYearStore(station, year)
       if (!store) {
         return NextResponse.json({ year, station, rechecked: 0, downgraded: 0 })

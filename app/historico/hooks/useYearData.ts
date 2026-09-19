@@ -5,13 +5,22 @@ import { getCacheByYear, writeCache, clearMonth } from '@/app/lib/cache'
 import type { Station } from '@/app/lib/stations'
 import { nowGMT3 } from '@/app/lib/types'
 import type { Launch, YearData } from '@/app/lib/types'
-import { mergeLaunchCollections, sameMission } from '@/app/lib/launchData'
+import { mergeLaunchCollections, sameMission, withoutWyoming } from '@/app/lib/launchData'
+import { cacheStationKey, isWyomingEnabled, useWyomingEnabled, wyomingQuery } from '@/app/lib/appSettings'
 
 const MONTHS_FULL = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro']
 
 // Cache-first annual state with provider retries and race protection when the
 // user changes station/year. Rich cached fields survive a leaner API response.
+// Wyoming desligada (Configurações): as consultas vão com wyoming=0, o cache
+// local usa um espaço separado (cacheStationKey) e qualquer lançamento vindo
+// dela é descartado (withoutWyoming). Trocar a opção refaz tudo na hora.
+function clean(launches: Launch[]): Launch[] {
+  return isWyomingEnabled() ? launches : withoutWyoming(launches)
+}
+
 export function useYearData(year: number, station: Station, onCacheChange?: () => void) {
+  const wyomingOn = useWyomingEnabled()
   const clock = nowGMT3()
   const currentYear = clock.getUTCFullYear()
   const currentMonth = clock.getUTCMonth() + 1
@@ -21,24 +30,25 @@ export function useYearData(year: number, station: Station, onCacheChange?: () =
   const [syncing, setSyncing] = useState(false)
   const [failedMonths, setFailedMonths] = useState<Set<number>>(new Set())
   const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null)
-  const activeKeyRef = useRef(`${station.id}:${year}`)
+  const activeKeyRef = useRef(`${station.id}:${year}:${wyomingOn}`)
 
   const syncMonths = useCallback(async (y: number, months: number[]): Promise<number[]> => {
     if (months.length === 0) return []
-    const requestKey = `${station.id}:${y}`
+    const requestKey = `${station.id}:${y}:${wyomingOn}`
     setSyncing(true)
     const failed: number[] = []
     for (const m of months) {
       if (activeKeyRef.current !== requestKey) break
       setStatusMsg(`Buscando ${MONTHS_FULL[m - 1]}/${y}…`)
       try {
-        const res = await fetch(`/api/sounding?action=month&year=${y}&month=${m}&station=${station.id}`, { cache: 'no-store' })
+        const res = await fetch(`/api/sounding?action=month&year=${y}&month=${m}&station=${station.id}${wyomingQuery()}`, { cache: 'no-store' })
         const json = await res.json()
         if (!res.ok || json.error) throw new Error(json.error || `Erro ${res.status}`)
         if (activeKeyRef.current !== requestKey) break
 
-        const cached = getCacheByYear(y, station.id).find(c => c.month === m)?.launches as Launch[] | undefined
-        const serverLaunches = Array.isArray(json.launches) ? json.launches as Launch[] : []
+        const cachedRaw = getCacheByYear(y, cacheStationKey(station.id)).find(c => c.month === m)?.launches as Launch[] | undefined
+        const cached = cachedRaw ? clean(cachedRaw) : undefined
+        const serverLaunches = Array.isArray(json.launches) ? clean(json.launches as Launch[]) : []
         const mergedAll = mergeLaunchCollections(cached ?? [], serverLaunches)
         // Empty/partial provider results do not erase useful evidence. For a
         // non-empty response, server membership is authoritative while richer
@@ -47,7 +57,7 @@ export function useYearData(year: number, station: Station, onCacheChange?: () =
           ? mergeLaunchCollections(cached ?? [])
           : mergedAll.filter(l => serverLaunches.some(s => sameMission(l, s)))
 
-        writeCache({ year: y, month: m, launches, timestamp: Date.now(), version: 1, station: station.id })
+        writeCache({ year: y, month: m, launches, timestamp: Date.now(), version: 1, station: cacheStationKey(station.id) })
         setData(prev => {
           if (!prev || prev.year !== y || prev.station !== station.id) return prev
           const all = mergeLaunchCollections(prev.launches.filter(l => l.month !== m), launches)
@@ -74,21 +84,22 @@ export function useYearData(year: number, station: Station, onCacheChange?: () =
       onCacheChange?.()
     }
     return failed
-  }, [currentYear, currentMonth, station.id, onCacheChange])
+  }, [currentYear, currentMonth, station.id, onCacheChange, wyomingOn])
 
   const fetchData = useCallback(async (y: number) => {
-    const requestKey = `${station.id}:${y}`
+    const requestKey = `${station.id}:${y}:${wyomingOn}`
     activeKeyRef.current = requestKey
     setError(null)
     setFailedMonths(new Set())
     const maxMonth = y === currentYear ? currentMonth : (y > currentYear ? 0 : 12)
 
-    const cachedMonthsAll = getCacheByYear(y, station.id)
+    const cacheKey = cacheStationKey(station.id)
+    const cachedMonthsAll = getCacheByYear(y, cacheKey)
     const cachedMonths = cachedMonthsAll.filter(c => c.month <= maxMonth)
     for (const stale of cachedMonthsAll) {
-      if (stale.month > maxMonth) clearMonth(y, stale.month, station.id)
+      if (stale.month > maxMonth) clearMonth(y, stale.month, cacheKey)
     }
-    const launches = mergeLaunchCollections(...cachedMonths.map(c => c.launches as Launch[]))
+    const launches = clean(mergeLaunchCollections(...cachedMonths.map(c => c.launches as Launch[])))
     setData({ year: y, station: station.id, count: launches.length, launches, errors: [] })
     setLastUpdatedAt(cachedMonths.length ? Math.max(...cachedMonths.map(c => c.timestamp)) : null)
 
@@ -105,7 +116,7 @@ export function useYearData(year: number, station: Station, onCacheChange?: () =
       if (activeKeyRef.current !== requestKey) return
       pending = await syncMonths(y, pending)
     }
-  }, [currentYear, currentMonth, syncMonths, station.id])
+  }, [currentYear, currentMonth, syncMonths, station.id, wyomingOn])
 
   useEffect(() => {
     fetchData(year)

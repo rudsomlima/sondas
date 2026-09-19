@@ -18,6 +18,37 @@ Não há suíte de testes configurada. Nenhuma variável de ambiente é obrigat�
 
 App Next.js 15 (App Router) + TypeScript que monitora lançamentos de radiossondas (balões meteorológicos) em estações da América do Sul, com padrão em Natal/INMET 82599. Extrai horários de lançamento do arquivo de sondagens da University of Wyoming e cruza com o radiosondy.info pra plotar posições de recuperação no mapa.
 
+### Liga/desliga da Wyoming (`app/lib/appSettings.ts`, `/api/app-settings`)
+
+Configuração GLOBAL (R2 `sondas/app-settings.json`, igual em todos os
+aparelhos) com espelho no navegador (`sondas_app_settings_v1`) pra valer na
+hora: `setWyomingEnabled` avisa os componentes da aba (evento interno) e as
+outras abas (`storage`), e cada seção refaz suas consultas sem recarregar.
+Interruptor em Configurações → "Fontes de dados" (`DataSourcesPanel`), que só
+libera o clique depois de saber o valor real (`useWyomingSetting().ready`) —
+antes ele mostra o padrão e um clique inverteria o valor errado.
+
+Desligada, em TODO o app:
+- **Nenhuma consulta**: toda chamada a `/api/sounding` leva `wyomingQuery()`
+  (`wyoming=0|1`, lido na hora da chamada — nunca do estado do hook, que na
+  1ª renderização ainda é o padrão). No servidor, `isWyomingEnabled(params)`
+  (`appSettingsServer.ts`): o parâmetro vence; sem ele, vale o R2. Desligada,
+  `month`/`year`/`today` usam só `monthWithoutWyoming` (radiosondy.info +
+  SondeHub, cache em memória) **sem ler nem gravar o YearStore** (que é da
+  Wyoming e fica intacto pra quando religar); `recheck` responde 409.
+- **Nenhum dado dela na tela**: `withoutWyoming()` (`launchData.ts`) descarta
+  lançamentos sem `source` e apaga `sources.wyoming`/`wyomingDataOk` dos
+  demais — aplicado em useYearData, useTodayData, painel, analytics e
+  comparação. Selo W some (`SourceBadges`), `computeConfidence(l, supported,
+  wyomingEnabled)` marca `disabled`, contagens/links/botão "Reverificar" e o
+  rodapé escondem a Wyoming.
+- **Cache local separado**: `cacheStationKey(id)` (`82599~sem-wyoming`) — sem
+  isso o cache com Wyoming apareceria, ou seria sobrescrito sem ela.
+- Os lançamentos passam a vir das sondas (uma entrada por sonda,
+  `launchesWithSondes`). Nova chamada a `/api/sounding` precisa de
+  `wyomingQuery()` e `withoutWyoming()`; componente novo que mostre algo da
+  Wyoming precisa de `useWyomingEnabled()`.
+
 ### Suporte a múltiplas estações
 
 - **`app/lib/stations.ts`** — lista estática de ~40 estações da América do Sul (`SOUTH_AMERICA_STATIONS`), cada uma com `{ id (STNM), name, lat, lon, radiosondyStartplace? }`. `radiosondyStartplace` liga uma estação Wyoming ao nome do site de lançamento correspondente no radiosondy.info, quando conhecido — os dois sistemas usam nomes *diferentes e sem relação* pro mesmo local físico (ex.: "Natal Aeroporto" na Wyoming ↔ "Barreira do Inferno Launch Center (BR)" no radiosondy.info). Esses pares foram derivados por proximidade geográfica (lat/lon), não por semelhança de nome — cerca de metade das estações não tem correspondente conhecido no radiosondy.info e fica sem mapeamento (`getRadiosondyStartplace()` retorna `null`).
@@ -154,6 +185,10 @@ hardware do usuário; tudo mais é leitura de fontes públicas.
   operações — o receptor pode reportar a cada 10 s) e os hooks do navegador
   param de acrescentar leituras locais; o live-status continua. A preferência
   tem cache de 1 min por instância do servidor.
+- Gráfico de bateria (`BatteryChart.tsx`): a linha tracejada de tendência
+  (liga leituras espaçadas do Silencioso/Pulsado) usa o mesmo dado da linha
+  cheia, então fica fora do tooltip (`tooltipType="none"`) — senão a tensão
+  aparecia duas vezes. Cartões e marcadores de mínima/máxima do dia exibido.
 - O gráfico de bateria grava cada ponto com o **carimbo do reporte**
   (`live.lastLiveMessageAt`), não com `Date.now()`: sem isso o heartbeat de
   `MAX_SILENT_MS` regravava a mesma tensão a cada 5 min e o gráfico parecia

@@ -4,6 +4,7 @@ import { Database, MapPin, RefreshCw } from 'lucide-react'
 import type { Launch } from '@/app/lib/types'
 import type { LiveSourceHealth } from '@/app/historico/hooks/useLiveFlights'
 import { sourceCounts } from '@/app/lib/launchData'
+import { useWyomingEnabled } from '@/app/lib/appSettings'
 
 interface Props {
   launches: Launch[]
@@ -19,6 +20,7 @@ const stateClass = (ok: boolean) => ok ? 'text-emerald-400' : 'text-yellow-400'
 
 export default function DataCoveragePanel({ launches, monthLoading, monthError, todayError, liveError, sourceHealth, onRefresh }: Props) {
   const counts = sourceCounts(launches)
+  const wyomingOn = useWyomingEnabled()
   const hasErrors = !!(monthError || todayError || liveError)
   return (
     <div className="panel p-4">
@@ -33,7 +35,9 @@ export default function DataCoveragePanel({ launches, monthLoading, monthError, 
         <div className="rounded bg-bg border border-border p-2"><span className="text-faint block">Com posição</span><span className="mono text-white text-sm">{counts.positioned}/{launches.length}</span></div>
       </div>
       <div className="mt-3 space-y-1.5 text-[11px]">
-        <div className="flex justify-between"><span className="text-dim">Wyoming</span><span className={stateClass(counts.wyoming > 0)}>{counts.wyoming} registros</span></div>
+        <div className="flex justify-between"><span className="text-dim">Wyoming</span>{wyomingOn
+          ? <span className={stateClass(counts.wyoming > 0)}>{counts.wyoming} registros</span>
+          : <span className="text-faint" title="Ligue em Configurações">desativada</span>}</div>
         <div className="flex justify-between"><span className="text-dim">radiosondy.info</span><span className={stateClass(sourceHealth.radiosondy === 'ok')}>{sourceHealth.radiosondy === 'not-configured' ? 'sem vínculo' : sourceHealth.radiosondy === 'ok' ? 'respondendo' : 'em fallback'}</span></div>
         <div className="flex justify-between"><span className="text-dim">SondeHub</span><span className={stateClass(sourceHealth.sondehub === 'ok')}>{sourceHealth.sondehub === 'ok' ? 'respondendo' : 'em fallback'}</span></div>
         {counts.approximate > 0 && <div className="flex justify-between"><span className="text-dim">Horários aproximados</span><span className="text-yellow-400">{counts.approximate}</span></div>}

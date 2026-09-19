@@ -11,6 +11,7 @@ import type { Station } from '@/app/lib/stations'
 import type { Launch, LaunchPosition } from '@/app/lib/types'
 import type { SondePoint } from '@/app/lib/sondePoints'
 import type { SondeRecord } from '@/app/lib/sondeRegistry'
+import { useWyomingEnabled } from '@/app/lib/appSettings'
 
 interface MonthAccordionProps {
   year: number
@@ -44,6 +45,7 @@ export default function MonthAccordion({
   deleteMonthConfirm, onRequestDeleteMonth, onConfirmDeleteMonth,
   monthPoints, records, onLaunchPosition, onYearPoints,
 }: MonthAccordionProps) {
+  const wyomingOn = useWyomingEnabled()
   return (
     <div className="panel overflow-hidden mb-6">
       <div className="px-5 py-4 border-b border-border flex items-center justify-between gap-3">
@@ -174,6 +176,8 @@ export default function MonthAccordion({
                                   : l.approx
                                   ? l.association === 'geographic'
                                     ? 'Candidato aproximado do sondehub.org por proximidade geográfica; pode pertencer a outra estação'
+                                  : !wyomingOn
+                                    ? `Horário aproximado via ${sourceLabel} — consulta à Wyoming desativada em Configurações`
                                   : station.wyomingSupported === false
                                     ? `Horário aproximado via ${sourceLabel} — Wyoming não cobre esta estação`
                                     : `Horário aproximado via ${sourceLabel} — Wyoming ainda não publicou este lançamento`
@@ -197,7 +201,7 @@ export default function MonthAccordion({
                                   >
                                     {isDaytime(display.time) ? <Sun size={10} /> : <Moon size={10} />}
                                     {!display.exact && '~'}{display.time}
-                                    <SourceBadges confidence={computeConfidence(l, station.wyomingSupported !== false)} />
+                                    <SourceBadges confidence={computeConfidence(l, station.wyomingSupported !== false, wyomingOn)} />
                                   </button>
                                 )
                               })}

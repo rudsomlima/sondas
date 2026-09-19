@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from 'react'
 import { BarChart3, Radio } from 'lucide-react'
 import { Station, DEFAULT_STATION, getSelectedStation, setSelectedStation } from '@/app/lib/stations'
 import { getCacheByYear } from '@/app/lib/cache'
+import { cacheStationKey, isWyomingEnabled, useWyomingEnabled, wyomingQuery } from '@/app/lib/appSettings'
+import { withoutWyoming } from '@/app/lib/launchData'
 import { computeYearMetrics, landingDensity } from '@/app/lib/metrics'
 import type { Launch } from '@/app/lib/types'
 import StationPicker from '../historico/components/StationPicker'
@@ -24,21 +26,25 @@ export default function AnalyticsPage() {
     setStation(getSelectedStation())
   }, [])
 
+  // Liga/desliga da Wyoming (Configurações): refaz tudo na hora.
+  const wyomingOn = useWyomingEnabled()
+
   // Pinta do cache local; complementa com o servidor (positions/flightStats
   // vêm do YearStore, que o cron enriquece).
   useEffect(() => {
-    const cached = getCacheByYear(year, station.id).flatMap(c => c.launches)
+    const clean = (ls: Launch[]) => isWyomingEnabled() ? ls : withoutWyoming(ls)
+    const cached = clean(getCacheByYear(year, cacheStationKey(station.id)).flatMap(c => c.launches as Launch[]))
     setLaunches(cached)
 
     let cancelled = false
     async function sync() {
       setLoading(true)
       try {
-        const res = await fetch(`/api/sounding?action=year&station=${station.id}&year=${year}`)
+        const res = await fetch(`/api/sounding?action=year&station=${station.id}&year=${year}${wyomingQuery()}`)
         if (!res.ok) return
         const json = await res.json()
         if (cancelled || json.error) return
-        if (Array.isArray(json.launches)) setLaunches(json.launches)
+        if (Array.isArray(json.launches)) setLaunches(clean(json.launches))
       } catch {
         // cache local já pintou
       } finally {
@@ -47,7 +53,7 @@ export default function AnalyticsPage() {
     }
     sync()
     return () => { cancelled = true }
-  }, [year, station.id])
+  }, [year, station.id, wyomingOn])
 
   const metrics = useMemo(() => computeYearMetrics(launches, station), [launches, station])
   const cells = useMemo(() => landingDensity(launches), [launches])

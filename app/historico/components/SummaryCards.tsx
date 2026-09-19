@@ -4,12 +4,15 @@ import { BarChart3, Calendar, TrendingUp, MapPin, Layers3 } from 'lucide-react'
 import Stat from '@/app/components/ui/Stat'
 import type { YearData } from '@/app/lib/types'
 import { sourceCounts } from '@/app/lib/launchData'
+import { useWyomingEnabled } from '@/app/lib/appSettings'
 
 export default function SummaryCards({ data }: { data: YearData }) {
   const monthsWithData = new Set(data.launches.map(l => l.month)).size
   const counts = sourceCounts(data.launches)
+  // Wyoming desligada: a confirmação dela não conta pra "multi-fonte".
+  const wyomingOn = useWyomingEnabled()
   const multiSource = data.launches.filter(l =>
-    [l.sources?.wyoming, l.sources?.radiosondy, l.sources?.sondehub].filter(Boolean).length >= 2
+    [wyomingOn && l.sources?.wyoming, l.sources?.radiosondy, l.sources?.sondehub].filter(Boolean).length >= 2
   ).length
   return (
     <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-6">

@@ -25,6 +25,7 @@ import { useReceiverStations } from '@/app/lib/receiverStationsClient'
 import { drawReceiverStations, receptorsFromPoints } from '@/app/lib/receiverStationsLayer'
 import { getSettings } from '@/app/lib/settings'
 import { useFullscreen } from '@/app/lib/useFullscreen'
+import { isWyomingEnabled } from '@/app/lib/appSettings'
 import { GMT3 } from '@/app/lib/types'
 import { fetchLiveTrajectory, fetchArchiveTrajectory, analyzeTrajectory, FlightAnalysis } from '@/app/lib/trajectory'
 import { drawTrajectory } from '@/app/components/TrajectoryLayer'
@@ -438,7 +439,8 @@ export default function LaunchMap({ launch, onClose, onResult, onPosition, conte
       }
 
       async function fallbackToSondeHub(_reason: string) {
-        setSourceUrl(buildSourceUrl())
+        // Link pra sondagem na Wyoming só com a consulta a ela ligada.
+        setSourceUrl(isWyomingEnabled() ? buildSourceUrl() : null)
         const launchInstant = launchUtcInstant(launch.year, launch.month, launch.day, launch.time_utc, launch.time_local)
         if (startplace && isWithinMatchWindow(launchInstant)) {
           setStatus('Consultando feed ao vivo do radiosondy.info…')

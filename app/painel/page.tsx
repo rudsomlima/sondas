@@ -4,13 +4,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Station, DEFAULT_STATION, getSelectedStation, setSelectedStation } from '@/app/lib/stations'
 import { getCacheByYear, writeCache } from '@/app/lib/cache'
 import { useGeolocation } from '@/app/lib/chase'
-import { mergeLaunchCollections, sameMission } from '@/app/lib/launchData'
+import { mergeLaunchCollections, sameMission, withoutWyoming } from '@/app/lib/launchData'
 import { nowGMT3 } from '@/app/lib/types'
 import type { Launch } from '@/app/lib/types'
 import { useTodayData } from '../historico/hooks/useTodayData'
 import { useLiveFlights } from '../historico/hooks/useLiveFlights'
 import { useYearSondePoints } from '../historico/hooks/useYearSondePoints'
 import { useYearData } from '../historico/hooks/useYearData'
+import { cacheStationKey, isWyomingEnabled, useWyomingEnabled, wyomingQuery } from '@/app/lib/appSettings'
 import { useSondeRegistry } from '../historico/hooks/useSondeRegistry'
 import { useRecoveredLaunches } from '../historico/hooks/useRecoveredLaunches'
 import { useSondeLaunches } from '../historico/hooks/useSondeLaunches'
@@ -115,27 +116,31 @@ export default function PainelPage() {
   // Wyoming), com 1º quadro, receptores e último sinal do registro.
   const sondeLaunches = useSondeLaunches(positionedMonth, monthPoints, records)
 
+  // Liga/desliga da Wyoming (Configurações): o mês é recarregado na hora.
+  const wyomingOn = useWyomingEnabled()
   const loadMonth = useCallback(async () => {
     const request = ++monthRequestRef.current
     const now = nowGMT3()
     const year = now.getUTCFullYear()
     const month = now.getUTCMonth() + 1
-    const cached = getCacheByYear(year, station.id).find(c => c.month === month)
-    const cachedLaunches = mergeLaunchCollections((cached?.launches ?? []) as Launch[])
+    const clean = (ls: Launch[]) => isWyomingEnabled() ? ls : withoutWyoming(ls)
+    const cacheKey = cacheStationKey(station.id)
+    const cached = getCacheByYear(year, cacheKey).find(c => c.month === month)
+    const cachedLaunches = clean(mergeLaunchCollections((cached?.launches ?? []) as Launch[]))
     setMonthLaunches(cachedLaunches)
     setMonthLoading(true)
     setMonthError(null)
     try {
-      const res = await fetch(`/api/sounding?action=month&year=${year}&month=${month}&station=${station.id}`, { cache: 'no-store' })
+      const res = await fetch(`/api/sounding?action=month&year=${year}&month=${month}&station=${station.id}${wyomingQuery()}`, { cache: 'no-store' })
       const json = await res.json()
       if (!res.ok || json.error) throw new Error(json.error || `Erro ${res.status}`)
       if (request !== monthRequestRef.current) return
-      const server = Array.isArray(json.launches) ? json.launches as Launch[] : []
+      const server = Array.isArray(json.launches) ? clean(json.launches as Launch[]) : []
       const all = mergeLaunchCollections(cachedLaunches, server)
       const launches = server.length === 0 && cachedLaunches.length > 0
         ? cachedLaunches
         : all.filter(l => server.some(s => sameMission(l, s)))
-      writeCache({ year, month, launches, timestamp: Date.now(), version: 1, station: station.id })
+      writeCache({ year, month, launches, timestamp: Date.now(), version: 1, station: cacheKey })
       setMonthLaunches(launches)
     } catch (e: any) {
       if (request !== monthRequestRef.current) return
@@ -143,7 +148,7 @@ export default function PainelPage() {
     } finally {
       if (request === monthRequestRef.current) setMonthLoading(false)
     }
-  }, [station.id])
+  }, [station.id, wyomingOn])
 
   useEffect(() => {
     loadMonth()

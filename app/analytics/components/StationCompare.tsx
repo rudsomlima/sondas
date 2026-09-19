@@ -1,6 +1,8 @@
 'use client'
 
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
+import { isWyomingEnabled, useWyomingEnabled, wyomingQuery } from '@/app/lib/appSettings'
+import { withoutWyoming } from '@/app/lib/launchData'
 import { GitCompareArrows, Loader2, Plus, X } from 'lucide-react'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer } from 'recharts'
 import { CHART } from '@/app/lib/tokens'
@@ -26,6 +28,10 @@ interface StationCompareProps {
 // Comparativo de até 3 estações: lançamentos/mês + métricas de voo.
 export default function StationCompare({ year, baseStation, baseLaunches }: StationCompareProps) {
   const [entries, setEntries] = useState<CompareEntry[]>([])
+  // Estações comparadas foram carregadas com a opção antiga da Wyoming:
+  // ao trocar, limpa (o usuário readiciona já no modo novo).
+  const wyomingOn = useWyomingEnabled()
+  useEffect(() => { setEntries([]) }, [wyomingOn])
   const [adding, setAdding] = useState(false)
   const [loading, setLoading] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -48,10 +54,11 @@ export default function StationCompare({ year, baseStation, baseLaunches }: Stat
     setLoading(id)
     setError(null)
     try {
-      const res = await fetch(`/api/sounding?action=year&station=${id}&year=${year}`)
+      const res = await fetch(`/api/sounding?action=year&station=${id}&year=${year}${wyomingQuery()}`)
       if (!res.ok) throw new Error(`Erro ${res.status}`)
       const json = await res.json()
-      const launches: Launch[] = json.launches ?? []
+      const raw: Launch[] = json.launches ?? []
+      const launches = isWyomingEnabled() ? raw : withoutWyoming(raw)
       setEntries(prev => [...prev, {
         station: st,
         metrics: computeYearMetrics(launches, st),

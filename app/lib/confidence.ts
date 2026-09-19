@@ -5,7 +5,8 @@
  */
 import type { Launch } from './types'
 
-export type SourceState = 'confirmed' | 'absent' | 'pending' | 'error'
+// 'disabled' = a consulta à fonte está desligada em Configurações (só Wyoming).
+export type SourceState = 'confirmed' | 'absent' | 'pending' | 'error' | 'disabled'
 
 export interface LaunchConfidence {
   wyoming: SourceState
@@ -17,14 +18,17 @@ export interface LaunchConfidence {
 
 const ONE_DAY_MS = 1 * 24 * 60 * 60 * 1000
 
-export function computeConfidence(l: Launch, wyomingSupported = true): LaunchConfidence {
+export function computeConfidence(l: Launch, wyomingSupported = true, wyomingEnabled = true): LaunchConfidence {
   const ageMs = Date.now() - new Date(`${l.date}T12:00:00Z`).getTime()
   const isRecent = ageMs < ONE_DAY_MS
   const notes: string[] = []
 
   // Wyoming: registro sem `source` veio dela; com `source`, ela não publicou (ainda).
   let wyoming: SourceState
-  if (l.sources?.wyoming !== undefined) {
+  if (!wyomingEnabled) {
+    // Desligada em Configurações: nada dela conta (nem pro nível de confiança).
+    wyoming = 'disabled'
+  } else if (l.sources?.wyoming !== undefined) {
     wyoming = l.sources.wyoming ? 'confirmed' : (isRecent && wyomingSupported ? 'pending' : 'absent')
   } else if (!l.source) {
     // Listado no inventário da Wyoming, mas a sondagem individual (TEXT:LIST)

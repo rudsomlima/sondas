@@ -1,10 +1,10 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { Battery, ChevronLeft, ChevronRight, Trash2, ZoomIn, ZoomOut } from 'lucide-react'
+import { Battery, ChevronLeft, ChevronRight, Trash2, ZoomIn, ZoomOut, ArrowDownToLine, ArrowUpToLine } from 'lucide-react'
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer,
-  ReferenceLine, ReferenceArea, CartesianGrid,
+  ReferenceLine, ReferenceArea, ReferenceDot, CartesianGrid,
 } from 'recharts'
 import { CHART } from '@/app/lib/tokens'
 import { GMT3 } from '@/app/lib/types'
@@ -154,6 +154,18 @@ export default function BatteryChart({ history, config, onDeleteDay, recording, 
   const yMax = 6
 
   const latest   = dayData.length > 0 ? dayData[dayData.length - 1] : null
+
+  // Mínima e máxima do dia selecionado (com o horário de cada uma).
+  const dayStats = useMemo(() => {
+    const valid = dayData.filter(e => Number.isFinite(e.v))
+    if (valid.length === 0) return null
+    let min = valid[0], max = valid[0]
+    for (const e of valid) {
+      if (e.v < min.v) min = e
+      if (e.v > max.v) max = e
+    }
+    return { min, max, count: valid.length }
+  }, [dayData])
   const curColor = latest ? lineColor(latest.v, vcrit, vlow) : '#34d399'
 
   // Handlers de zoom por arrasto
@@ -257,6 +269,30 @@ export default function BatteryChart({ history, config, onDeleteDay, recording, 
         )}
       </div>
 
+      {/* Mínima / máxima do dia */}
+      {dayStats && (
+        <div className="grid grid-cols-3 gap-2 mb-3">
+          <div className="rounded-md border border-border bg-bg px-2.5 py-1.5">
+            <div className="text-[10px] text-faint flex items-center gap-1"><ArrowDownToLine size={10} className="text-sky-400" /> Mínima do dia</div>
+            <div className="text-sm font-mono font-semibold" style={{ color: lineColor(dayStats.min.v, vcrit, vlow) }}>
+              {dayStats.min.v.toFixed(3)} V <span className="text-[10px] text-faint font-normal">às {fmtTime(dayStats.min.at)}</span>
+            </div>
+          </div>
+          <div className="rounded-md border border-border bg-bg px-2.5 py-1.5">
+            <div className="text-[10px] text-faint flex items-center gap-1"><ArrowUpToLine size={10} className="text-emerald-400" /> Máxima do dia</div>
+            <div className="text-sm font-mono font-semibold" style={{ color: lineColor(dayStats.max.v, vcrit, vlow) }}>
+              {dayStats.max.v.toFixed(3)} V <span className="text-[10px] text-faint font-normal">às {fmtTime(dayStats.max.at)}</span>
+            </div>
+          </div>
+          <div className="rounded-md border border-border bg-bg px-2.5 py-1.5">
+            <div className="text-[10px] text-faint">Variação · leituras</div>
+            <div className="text-sm font-mono font-semibold text-white">
+              {(dayStats.max.v - dayStats.min.v).toFixed(3)} V <span className="text-[10px] text-faint font-normal">· {dayStats.count}</span>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Gráfico */}
       {dayData.length === 0 ? (
         <p className="text-xs text-faint py-8 text-center">Sem dados para este dia.</p>
@@ -344,6 +380,11 @@ export default function BatteryChart({ history, config, onDeleteDay, recording, 
               strokeDasharray="3 4"
               strokeOpacity={0.4}
               dot={false}
+              activeDot={false}
+              // Mesmo dado da linha cheia: fora do tooltip (senão a tensão
+              // aparecia duas vezes).
+              tooltipType="none"
+              legendType="none"
               isAnimationActive={false}
               connectNulls
             />
@@ -363,6 +404,15 @@ export default function BatteryChart({ history, config, onDeleteDay, recording, 
               isAnimationActive={false}
               connectNulls={false}
             />
+            {/* Marcadores da mínima e da máxima do dia. */}
+            {dayStats && dayStats.count > 1 && dayStats.max.v !== dayStats.min.v && (
+              <>
+                <ReferenceDot x={dayStats.max.at} y={dayStats.max.v} r={4} fill="#34d399" stroke="#0b0e13" strokeWidth={1.5}
+                  label={{ value: `máx ${dayStats.max.v.toFixed(2)}`, position: 'top', fill: '#34d399', fontSize: 9 }} />
+                <ReferenceDot x={dayStats.min.at} y={dayStats.min.v} r={4} fill="#38bdf8" stroke="#0b0e13" strokeWidth={1.5}
+                  label={{ value: `mín ${dayStats.min.v.toFixed(2)}`, position: 'bottom', fill: '#38bdf8', fontSize: 9 }} />
+              </>
+            )}
           </LineChart>
         </ResponsiveContainer>
       )}

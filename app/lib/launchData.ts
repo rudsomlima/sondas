@@ -119,3 +119,18 @@ export function sourceCounts(launches: Launch[]) {
     approximate: launches.filter(l => l.approx).length,
   }
 }
+
+/**
+ * Lançamentos sem nada da Wyoming (liga/desliga em Configurações, ver
+ * app/lib/appSettings.ts): descarta os que vieram dela (`!source`) e apaga o
+ * que ela disse dos demais (confirmação W, checagem da sondagem).
+ */
+export function withoutWyoming(launches: Launch[]): Launch[] {
+  return launches
+    .filter(l => !!l.source)
+    .map(l => {
+      if (l.sources?.wyoming === undefined && l.wyomingDataOk === undefined) return l
+      const { wyomingDataOk: _drop, ...rest } = l
+      return { ...rest, sources: l.sources ? { ...l.sources, wyoming: undefined } : undefined }
+    })
+}

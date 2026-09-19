@@ -9,8 +9,11 @@ import StationPicker from '../historico/components/StationPicker'
 import LocalCachePanel from './components/LocalCachePanel'
 import R2Panel from './components/R2Panel'
 import SyncStatusPanel from './components/SyncStatusPanel'
+import DataSourcesPanel from './components/DataSourcesPanel'
+import { useWyomingEnabled } from '@/app/lib/appSettings'
 
 export default function ConfiguracoesPage() {
+  const wyomingOn = useWyomingEnabled()
   const [config, setConfig] = useState<AppSettings>(DEFAULT_SETTINGS)
   const [station, setStation] = useState<Station>(DEFAULT_STATION)
   const [showStationPicker, setShowStationPicker] = useState(false)
@@ -67,6 +70,9 @@ export default function ConfiguracoesPage() {
           A estação escolhida vale para todas as páginas (painel, histórico, análises).
         </p>
       </div>
+
+      {/* Fontes de dados (liga/desliga Wyoming — vale na hora, em todo o app) */}
+      <DataSourcesPanel />
 
       {/* Preferências */}
       <div className="panel p-5 mb-6">
@@ -159,8 +165,10 @@ export default function ConfiguracoesPage() {
           Sobre os dados
         </h2>
         <p className="text-xs text-gray-400 leading-relaxed">
-          Horários de lançamento vêm da{' '}
-          <a href="https://weather.uwyo.edu/wsgi/sounding" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">University of Wyoming</a>.
+          {wyomingOn ? <>
+            Horários de lançamento vêm da{' '}
+            <a href="https://weather.uwyo.edu/wsgi/sounding" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">University of Wyoming</a>.
+          </> : <>Horários de lançamento vêm do 1º dado recebido de cada sonda (consulta à Wyoming desligada).</>}
           Posições e trajetórias vêm do{' '}
           <a href="https://radiosondy.info" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">radiosondy.info</a>{' '}
           (recuperações físicas) e do{' '}
