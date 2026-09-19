@@ -13,6 +13,8 @@ import { inflateRawSync } from 'node:zlib'
 import { fetchRecoveryDirect, recoveryStatus } from './sondehubRecovery'
 import { toIsoUtc, type ReceiverStat, type SondeRecord } from './sondeRegistry'
 import { parseUploaderPosition, stationKey, type ReceiverStation } from './receiverStations'
+import { analyzeTrajectory, type TrajectoryPoint } from './trajectory'
+import type { RegistryFlight } from './sondeRegistry'
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'
 const TIMEOUT_MS = 20_000
@@ -34,6 +36,55 @@ async function fetchWithTimeout(url: string, init: RequestInit = {}): Promise<Re
   } finally {
     clearTimeout(timer)
   }
+}
+
+/**
+ * Estatísticas do voo a partir da trilha inteira. `complete` exige o 1º ponto
+ * perto do chão — a janela da fonte pode começar no meio do voo (caso real:
+ * W3770721 começava a 11,8 km), e aí duração/deriva não valem como do voo.
+ */
+function flightFromPoints(points: TrajectoryPoint[], source: RegistryFlight['source']): RegistryFlight | undefined {
+  const pts = points
+    .filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lon) && Number.isFinite(p.alt) && Number.isFinite(p.timeMs))
+    .sort((a, b) => a.timeMs - b.timeMs)
+  if (pts.length < 2) return undefined
+  const a = analyzeTrajectory(pts)
+  const round1 = (v: number | null) => v == null ? undefined : Math.round(v * 10) / 10
+  return {
+    burstAltM: Math.round(a.maxAltM),
+    durationMin: a.durationMin ?? undefined,
+    distanceKm: round1(a.distanceKm),
+    bearingDeg: a.bearingDeg == null ? undefined : Math.round(a.bearingDeg),
+    ascentRateMs: round1(a.ascentRateMs),
+    descentRateMs: round1(a.descentRateMs),
+    points: pts.length,
+    complete: pts[0].alt < 3000,
+    source,
+  }
+}
+
+/**
+ * O voo propriamente dito dentro de uma lista de quadros: separa em blocos
+ * onde há mais de 2 h sem quadro e fica com o bloco que tem a maior altitude.
+ * Existe porque as fontes guardam quadros soltos de muito depois — casos
+ * reais: V5041139 voou em 11/2025 e U0460617 em 2022, mas o SondeHub tem
+ * quadros delas em 2026 (sonda achada e religada). Sem isso duração, deriva,
+ * último sinal e até o ano do registro saíam absurdos.
+ */
+const FLIGHT_GAP_MS = 2 * 3600_000
+export function mainFlightSegment<T extends { timeMs: number; alt: number }>(items: T[]): T[] {
+  const sorted = items.filter(i => Number.isFinite(i.timeMs)).sort((a, b) => a.timeMs - b.timeMs)
+  if (sorted.length === 0) return sorted
+  const segments: T[][] = [[sorted[0]]]
+  for (let i = 1; i < sorted.length; i++) {
+    if (sorted[i].timeMs - sorted[i - 1].timeMs > FLIGHT_GAP_MS) segments.push([])
+    segments[segments.length - 1].push(sorted[i])
+  }
+  const peak = (seg: T[]) => Math.max(...seg.map(x => (Number.isFinite(x.alt) ? x.alt : -Infinity)))
+  return segments.reduce((best, seg) => {
+    const pb = peak(best), ps = peak(seg)
+    return ps > pb || (ps === pb && seg.length > best.length) ? seg : best
+  })
 }
 
 function base(serial: string, source: SondeRecord['sources'][number]): SondeRecord {
@@ -168,6 +219,13 @@ export function parseRadiosondyCsv(serial: string, csv: string): SondeRecord | n
   const iAlt = idx('ALTITUDE'), iDesc = idx('DESCRIPTION')
   if (iStation < 0 || iTime < 0) return null
 
+  // Linhas → quadros com instante, e só o trecho principal do voo.
+  const rows = mainFlightSegment(lines.slice(1).map(line => {
+    const c = splitCsvLine(line)
+    const at = toIsoUtc(c[iTime]?.trim())
+    return { c, at, timeMs: at ? new Date(at).getTime() : NaN, alt: parseFloat(c[iAlt]) }
+  }).filter(r => r.at))
+
   const stats = new Map<string, ReceiverStat>()
   let first: { at: string; lat: number; lon: number; alt: number } | null = null
   let last: { at: string; lat: number; lon: number; alt: number; station: string } | null = null
@@ -175,10 +233,10 @@ export function parseRadiosondyCsv(serial: string, csv: string): SondeRecord | n
   let freq: number | undefined
   let type: string | undefined
   let frames = 0
-  for (const line of lines.slice(1)) {
-    const c = splitCsvLine(line)
+  const track: TrajectoryPoint[] = []
+  for (const { c, at: rowAt } of rows) {
     const station = c[iStation]?.trim()
-    const at = toIsoUtc(c[iTime]?.trim())
+    const at = rowAt
     if (!station || !at) continue
     frames++
     const lat = parseFloat(c[iLat]), lon = parseFloat(c[iLon]), alt = parseFloat(c[iAlt])
@@ -190,6 +248,7 @@ export function parseRadiosondyCsv(serial: string, csv: string): SondeRecord | n
     stats.set(station, s)
     if (Number.isFinite(alt) && alt > maxAlt) maxAlt = alt
     if (Number.isFinite(lat) && Number.isFinite(lon)) {
+      if (Number.isFinite(alt)) track.push({ lat, lon, alt, velV: 0, timeMs: t })
       if (!first || t < new Date(first.at).getTime()) first = { at, lat, lon, alt }
       if (!last || t > new Date(last.at).getTime()) last = { at, lat, lon, alt, station }
     }
@@ -206,6 +265,7 @@ export function parseRadiosondyCsv(serial: string, csv: string): SondeRecord | n
   rec.maxAltM = maxAlt || undefined
   rec.frequencyMHz = freq
   rec.type = type
+  rec.flight = flightFromPoints(track, 'radiosondy-data')
   if (first) {
     rec.firstFrameUtc = first.at
     rec.launchPos = { lat: first.lat, lon: first.lon, alt: first.alt, at: first.at }
@@ -248,9 +308,11 @@ export async function fetchSondeHubTelemetry(serial: string): Promise<{ record: 
   if (!res.ok) throw new Error(`sondehub.org respondeu ${res.status}`)
   const data: unknown = await res.json()
   const list: any[] = Array.isArray(data) ? data : Object.values(data ?? {})
-  const frames = list.filter(f => f && typeof f.lat === 'number' && typeof f.lon === 'number' && f.datetime)
+  const valid = list.filter(f => f && typeof f.lat === 'number' && typeof f.lon === 'number' && f.datetime)
+  const frames = mainFlightSegment(valid.map(f => ({
+    ...f, timeMs: new Date(f.datetime).getTime(), alt: typeof f.alt === 'number' ? f.alt : NaN,
+  })))
   if (frames.length === 0) return null
-  frames.sort((a, b) => String(a.datetime).localeCompare(String(b.datetime)))
 
   const stats = new Map<string, ReceiverStat>()
   // Posição de cada estação no quadro mais recente dela (frames já em ordem).
@@ -298,6 +360,9 @@ export async function fetchSondeHubTelemetry(serial: string): Promise<{ record: 
     rec.lastReceiverAt = rec.lastFrameUtc
   }
   rec.stationsCaptured = true
+  rec.flight = flightFromPoints(frames.map(f => ({
+    lat: f.lat, lon: f.lon, alt: typeof f.alt === 'number' ? f.alt : NaN, velV: 0, timeMs: new Date(f.datetime).getTime(),
+  })), 'sondehub-telemetry')
   return { record: rec, stations: [...stations.values()] }
 }
 

@@ -334,15 +334,17 @@ export default function HistoricoPage() {
 
       {data ? (
         <>
-          <SummaryCards data={data} />
+          {/* Resumo com os lançamentos já completados pelo registro de sondas
+              (fontes que confirmam, uma entrada por sonda). */}
+          <SummaryCards data={{ ...data, launches: displayLaunches, count: displayLaunches.length }} />
           <div className="panel px-4 py-3 mb-6 flex items-center gap-x-5 gap-y-2 flex-wrap text-[11px]">
             <span className="text-dim">Cobertura</span>
             {wyomingOn
-              ? <span className="text-src-wyoming mono">W {sourceCounts(data.launches).wyoming}</span>
+              ? <span className="text-src-wyoming mono">W {sourceCounts(displayLaunches).wyoming}</span>
               : <span className="text-faint" title="Consulta à Wyoming desativada em Configurações">Wyoming desativada</span>}
-            <span className="text-src-radiosondy mono">R {sourceCounts(data.launches).radiosondy}</span>
-            <span className="text-src-sondehub mono">S {sourceCounts(data.launches).sondehub}</span>
-            <span className="text-gray-300 mono">posições {sourceCounts(data.launches).positioned}/{data.count}</span>
+            <span className="text-src-radiosondy mono">R {sourceCounts(displayLaunches).radiosondy}</span>
+            <span className="text-src-sondehub mono">S {sourceCounts(displayLaunches).sondehub}</span>
+            <span className="text-gray-300 mono">posições {sourceCounts(displayLaunches).positioned}/{displayLaunches.length}</span>
             {failedMonths.size > 0 && <span className="text-yellow-400">{failedMonths.size} mês(es) aguardando nova tentativa</span>}
             <span className="ml-auto text-faint">
               {lastUpdatedAt ? `cache atualizado ${new Date(lastUpdatedAt).toLocaleString('pt-BR')}` : 'sem cache local'} · ao vivo {sourceHealth.cache === 'ok' ? 'via snapshot' : 'via fontes diretas'}

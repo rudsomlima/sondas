@@ -10,7 +10,7 @@ import {
  * Lançamentos com o status de recuperação do SondeHub aplicado nas posições
  * ainda UNKNOWN (ver sondehubRecovery.ts). Devolve na hora o que já está em
  * cache e completa em segundo plano — nunca atrasa o desenho. Só leitura: não
- * grava nada (a persistência no R2 é do cron radiosondy-sync).
+ * grava nada (a persistência no R2 é do registro de sondas, ver sondeRegistry.ts).
  *
  * queryMonth: só CONSULTA a rede pros lançamentos desse mês (o ano inteiro
  * podia virar centenas de requisições ao SondeHub); o cache vale pra todos.

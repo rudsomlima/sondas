@@ -13,7 +13,7 @@
  * entram no YearStore do R2 nem no cache local do ano, que continuam sendo a
  * verdade da Wyoming (ver mergeLaunchCollections em launchData.ts).
  */
-import type { Launch } from './types'
+import type { FlightStats, Launch, LaunchSources } from './types'
 import { isValidPosition, launchInstantMs } from './launchData'
 import { gmt3DateWithMonthGuard } from './launchUtils'
 import { roundToSynopticHour } from './radiosondy'
@@ -38,6 +38,30 @@ export function registrySerials(launches: Launch[], points: SondePoint[]): strin
   return [...new Set([...launchSerials(launches), ...points.map(p => p.serial)])].filter(s => s && s !== '?')
 }
 
+/** Estatísticas do voo guardadas no registro → formato do Launch (Análises). */
+export function flightStatsFromRecord(r: SondeRecord | undefined): FlightStats | undefined {
+  const f = r?.flight
+  if (!f) return undefined
+  // Trilha truncada (fonte começou no meio do voo): só o estouro é confiável.
+  return f.complete
+    ? { burstAltM: f.burstAltM, durationMin: f.durationMin, distanceKm: f.distanceKm, bearingDeg: f.bearingDeg }
+    : { burstAltM: f.burstAltM }
+}
+
+/**
+ * Quais fontes confirmam a sonda, segundo o registro: tem dado de uma fonte
+ * = confirmada; a fonte já foi consultada e não tinha nada = ausente; ainda
+ * não consultada = indefinido (o selo fica "aguardando"). Wyoming não é
+ * tocada aqui — continua vindo do próprio lançamento.
+ */
+export function sourcesFromRecord(r: SondeRecord | undefined, current?: LaunchSources): LaunchSources | undefined {
+  if (!r) return current
+  const has = (prefix: string) => r.sources.some(s => s.startsWith(prefix))
+  const radiosondy = has('radiosondy') ? true : r.checked?.radiosondy ? false : current?.radiosondy
+  const sondehub = has('sondehub') ? true : r.checked?.sondehub ? false : current?.sondehub
+  return { ...current, radiosondy, sondehub }
+}
+
 /** Campos de exibição que o registro acrescenta a um lançamento. */
 function launchFieldsFromRecord(r: SondeRecord | undefined): Partial<Launch> {
   if (!r) return {}
@@ -49,6 +73,7 @@ function launchFieldsFromRecord(r: SondeRecord | undefined): Partial<Launch> {
     receiverFrames: withFrames.length ? Object.fromEntries(withFrames.map(x => [x.callsign, x.frames!])) : undefined,
     lastReceiver: r.lastReceiver,
     lastReceiverAt: r.lastReceiverAt,
+    flightStats: flightStatsFromRecord(r),
   }
 }
 
@@ -78,6 +103,11 @@ export function pointToLaunch(p: SondePoint, rec?: SondeRecord): Launch {
     receiverFrames: fromRecord.receiverFrames ?? p.receiverFrames,
     lastReceiver: fromRecord.lastReceiver ?? p.lastReceiver,
     lastReceiverAt: fromRecord.lastReceiverAt ?? p.lastReceiverAt,
+    flightStats: fromRecord.flightStats,
+    sources: sourcesFromRecord(rec, {
+      radiosondy: p.sources.includes('radiosondy') || undefined,
+      sondehub: p.sources.includes('sondehub') || p.sources.includes('archive') || undefined,
+    }),
     position: {
       lat: p.lat, lon: p.lon, sondeNumber: p.serial, status: p.status,
       altitude: p.altitude, recoveredBy: p.recoveredBy, recoveryNote: p.recoveryNote,
@@ -120,6 +150,8 @@ export function applyRegistryToLaunches(launches: Launch[], records: Map<string,
       receiverFrames: f.receiverFrames ?? l.receiverFrames,
       lastReceiver: f.lastReceiver ?? l.lastReceiver,
       lastReceiverAt: f.lastReceiverAt ?? l.lastReceiverAt,
+      flightStats: f.flightStats ?? l.flightStats,
+      sources: sourcesFromRecord(rec, l.sources),
       position,
     }
     if (JSON.stringify(next) === JSON.stringify(l)) return l

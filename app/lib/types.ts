@@ -36,8 +36,9 @@ export interface FlightStats {
   bearingDeg?: number
 }
 
-// Quais fontes confirmaram este lançamento (campo opcional, gravado pelo
-// cron radiosondy-sync; ausente = derivar por heurística em confidence.ts).
+// Quais fontes confirmaram este lançamento — preenchido a partir do registro
+// de sondas (sourcesFromRecord em sondeLaunches.ts); ausente = derivar por
+// heurística em confidence.ts.
 export interface LaunchSources {
   wyoming?: boolean
   radiosondy?: boolean
@@ -51,7 +52,9 @@ export interface Launch {
   day: number
   month: number
   year: number
-  // Preenchido pelo sync em segundo plano (app/api/radiosondy-sync).
+  // Legado: gravado pelo antigo cron radiosondy-sync (removido em 2026-09 —
+  // substituído pelo registro de sondas, ver sourcesFromRecord em
+  // sondeLaunches.ts). Ainda lido se existir em YearStores antigos.
   radiosondyMatch?: 'yes' | 'no'
   // Posição final da sonda (radiosondy.info ou sondehub.org), já resolvida.
   position?: LaunchPosition
@@ -116,24 +119,6 @@ export interface TodayData {
   sourceStatus?: Record<string, string>
 }
 
-// Status da última execução do cron radiosondy-sync (app/api/radiosondy-sync)
-// — persistido no R2 pra dar visibilidade de "bastidores" ao usuário: o que
-// foi checado, quantos lançamentos ganharam posição, quantos ficaram
-// pendentes (ainda dentro da janela de voo ou aguardando a próxima execução).
-export interface SyncStationStatus {
-  checked: number
-  yes: number
-  no: number
-  pending: number
-}
-
-export interface SyncStatus {
-  lastRunAt: number
-  durationMs: number
-  year: number
-  stations: Record<string, SyncStationStatus>
-}
-
 // Lista de receptores que já reportaram algo pelo canal HTTP direto (ver
 // /api/receiver-report), independente de MQTT — populada automaticamente a
 // cada report, pra o navegador de QUALQUER usuário descobrir sozinho um
@@ -162,5 +147,12 @@ export interface PollStatus {
   liveFlights: {
     stations: Record<string, PollStationStatus>
     errors:   number
+  }
+  // Passo do registro de sondas (backfillRegistry) nesta execução.
+  registry?: {
+    seeded: number    // posições de lançamento novas semeadas no registro
+    checked: string[] // sondas consultadas nas fontes
+    listeners?: number // estações ativas atualizadas (a cada 6 h)
+    error?: string
   }
 }

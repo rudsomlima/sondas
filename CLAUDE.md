@@ -86,16 +86,26 @@ Módulo puro (sem `'use client'`), então é importável tanto por componentes c
 - `findRecoveredMatch` é proposital síncrona/sem rede (opera sobre `features` já buscadas) pra que quem chama possa evitar a busca pesada do feed ao vivo a menos que realmente necessário — `LaunchMap.tsx` só chama `fetchRadiosondyFeatures` por (startplace, mês), nunca por clique dentro de um mês já em cache, e nunca toca em `fetchLiveFlights` (esse caminho de fallback foi deliberadamente removido do mapa interativo — ver histórico do git se o match "ainda em voo" precisar voltar).
 - Constrói divIcons customizados do Leaflet (`buildBalloonIcon`/`buildHighlightBalloonIcon`) coloridos por status de recuperação, cada um com um rótulo de dia-do-mês + dia/noite (sol/lua) embutido no HTML do ícone via `gmt3IconLabel()`/`IconLabel`.
 
-### Sincronização em segundo plano com radiosondy.info (`app/api/radiosondy-sync/route.ts`)
+### Antigo cron radiosondy-sync (removido em 2026-09)
 
-Um Cron job da Vercel (ver `vercel.json`, atualmente `0 6 * * *`, sem autenticação) que pré-calcula, por lançamento, se existe correspondência no radiosondy.info — gravado de volta em cada `Launch.radiosondyMatch` (`'yes' | 'no' | undefined`) no year store persistido em Blob. Objetivos: evitar que o cliente faça isso reativamente a cada clique (que antes significava uma busca de vários segundos antes do mapa poder renderizar), e deixar a grade do calendário mostrar selos de "sem correspondência" antes mesmo do usuário abrir o mapa.
-
-- Só processa estações com `radiosondyStartplace` conhecido e o ano atual.
-- Nunca reconfere um lançamento que já tem `radiosondyMatch` definido (idempotente/retomável entre execuções do cron, caso uma delas estoure o tempo — `maxDuration = 60`).
-- Busca `fetchRadiosondyFeatures` uma vez por (estação, mês) com lançamentos pendentes, não uma vez por lançamento.
-- Busca o feed ao vivo (~1MB) no máximo uma vez por *execução inteira* (preguiçoso, só se algum lançamento pendente ainda estiver dentro da janela de match), compartilhado entre todas as estações/meses daquela execução.
-- Lançamentos ainda dentro da janela de match sem resultado ainda ficam sem valor definido (reconferidos na próxima execução) em vez de marcados `'no'`, já que podem simplesmente ainda não ter sido processados.
-- `LaunchMap.tsx` lê `launch.radiosondyMatch === 'no'` pra pular a busca no radiosondy.info por completo e ir direto pra um link de fallback pra página de sondagem da Wyoming daquele dia/hora exatos (`region=samer&TYPE=TEXT:LIST&FROM={DD}{HH}&TO={DD}{HH}&STNM={station}`) — prova de que um lançamento aconteceu mesmo sem posição rastreada.
+Existia um Vercel Cron (`/api/radiosondy-sync`) que gravava em cada lançamento
+da Wyoming `radiosondyMatch`, `sources` e `flightStats`, com um painel
+"Sincronização multi-fonte (bastidores)" em Configurações. Foi removido
+porque: consultava o radiosondy.info sem User-Agent de navegador (403), o que
+gravava não chegava aos dados servidos (0 de 243 lançamentos de 2026 tinham os
+campos, mesmo com o status dizendo "264 checados, 263 não"), e tudo que ele
+fazia o registro de sondas faz melhor. Hoje:
+- **fontes que confirmam** (selos R/S, "Multi-fonte") → `sourcesFromRecord`
+  (`sondeLaunches.ts`) a partir do registro: tem dado = confirmada; fonte já
+  consultada sem nada = ausente; não consultada = aguardando;
+- **estouro, duração, deriva** (Análises) → `SondeRecord.flight`, calculado no
+  enriquecimento a partir da trilha inteira (CSV do radiosondy ou telemetria do
+  SondeHub), exposto como `Launch.flightStats` por `flightStatsFromRecord`
+  (trilha truncada → só o estouro);
+- **status** → painel "Registro de sondas (bastidores)"
+  (`RegistryStatusPanel`, `/api/sonde-registry/status`), com botão
+  "Completar agora" (`POST /api/sonde-registry/backfill`).
+`Launch.radiosondyMatch` segue lido se existir em YearStores antigos.
 
 ### Refatoração "mission control" (branch mission-control)
 
@@ -382,6 +392,17 @@ completo que qualquer fonte sozinha, e é **ele que completa todos os mapas**.
   leitura-mescla-gravação com `If-Match` no ETag (`If-None-Match: *` quando o
   arquivo não existe) e tenta de novo em 412 — sem isso duas abas/requisições
   perdiam dados uma da outra.
+- **Só o trecho principal do voo** (`mainFlightSegment`, `sondeSources.ts`):
+  as fontes guardam quadros soltos de muito depois (V5041139 voou em 11/2025 e
+  U0460617 em 2022, mas o SondeHub tem quadros delas em 2026 — sonda achada e
+  religada). Tudo (1º/último quadro, receptores, último sinal, dados de voo) é
+  calculado só no bloco contínuo com a maior altitude.
+- **O registro fica no ano onde já mora** (`findRecordsWithYear`/`saveRecords`
+  com `yearOf`): sem isso a W3770290 (lançada 31/12/2025 23:38 UTC) era gravada
+  em 2025 pelo enriquecimento e a cópia de 2026 era reconsultada a cada ping.
+- **`enrichVersion`** (`ENRICH_VERSION` em `sondeRegistry.ts`): quando o app
+  passa a extrair algo novo das fontes, suba a versão — registros antigos são
+  relidos UMA vez, sem esperar a regra de 24 h.
 - **Quando reconsultar** (`needsEnrichment`): voo nas últimas 6 h, a cada 10
   min; voo encerrado e completo, nunca mais; fonte que já disse "não tenho"
   num voo de mais de 7 dias, nunca mais; relato de recuperação, a cada 6 h
@@ -500,9 +521,9 @@ relato) ou LOST (foi buscar e não achou); `planned` não muda nada.
   não achada 6 h, sem relato 3 h.
 - Aplicado em segundo plano, nunca bloqueando o desenho: `useSondePoints`
   (pontos do mês), `useRecoveredLaunches` (lançamentos; no /historico só
-  consulta a rede pro mês aberto), `YearMap` (no fim) e o cron
-  `radiosondy-sync` (grava no R2; lançamentos dos últimos 60 dias, 40 seriais
-  por execução).
+  consulta a rede pro mês aberto), `YearMap` (no fim) e o registro de sondas
+  (`/api/poll` → `backfillRegistry`, a cada 6 h por 30 dias enquanto não for
+  FOUND).
 - `mergePair` (`launchData.ts`): para a mesma sonda, FOUND/LOST sobrevive a
   UNKNOWN da outra cópia, independente do rank da fonte.
 

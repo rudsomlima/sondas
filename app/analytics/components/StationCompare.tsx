@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { isWyomingEnabled, useWyomingEnabled, wyomingQuery } from '@/app/lib/appSettings'
 import { withoutWyoming } from '@/app/lib/launchData'
+import { fetchRegistryYear } from '@/app/lib/sondeRegistryClient'
+import { applyRegistryToLaunches } from '@/app/lib/sondeLaunches'
 import { GitCompareArrows, Loader2, Plus, X } from 'lucide-react'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer } from 'recharts'
 import { CHART } from '@/app/lib/tokens'
@@ -58,7 +60,9 @@ export default function StationCompare({ year, baseStation, baseLaunches }: Stat
       if (!res.ok) throw new Error(`Erro ${res.status}`)
       const json = await res.json()
       const raw: Launch[] = json.launches ?? []
-      const launches = isWyomingEnabled() ? raw : withoutWyoming(raw)
+      // Dados de voo e posições do registro de sondas (R2) daquela estação.
+      const records = new Map((await fetchRegistryYear(year, id)).map(r => [r.serial, r]))
+      const launches = applyRegistryToLaunches(isWyomingEnabled() ? raw : withoutWyoming(raw), records)
       setEntries(prev => [...prev, {
         station: st,
         metrics: computeYearMetrics(launches, st),

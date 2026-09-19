@@ -8,7 +8,7 @@ import { AppSettings, DEFAULT_SETTINGS, getSettings, setSettings } from '@/app/l
 import StationPicker from '../historico/components/StationPicker'
 import LocalCachePanel from './components/LocalCachePanel'
 import R2Panel from './components/R2Panel'
-import SyncStatusPanel from './components/SyncStatusPanel'
+import RegistryStatusPanel from './components/RegistryStatusPanel'
 import DataSourcesPanel from './components/DataSourcesPanel'
 import { useWyomingEnabled } from '@/app/lib/appSettings'
 
@@ -133,9 +133,9 @@ export default function ConfiguracoesPage() {
         <ChevronRight size={16} className="text-gray-500 flex-shrink-0" />
       </Link>
 
-      {/* Sincronização multi-fonte (bastidores) */}
+      {/* Registro de sondas no R2 (bastidores) */}
       <div className="panel p-5 mb-6">
-        <SyncStatusPanel />
+        <RegistryStatusPanel stationId={station.id} />
       </div>
 
       {/* Dados & Armazenamento */}

@@ -39,6 +39,22 @@ export interface ReceiverStat {
   lastAt?: string  // ISO UTC
 }
 
+// Estatísticas do voo, calculadas no enriquecimento a partir da trilha
+// inteira (CSV do radiosondy.info ou telemetria do SondeHub) — alimentam a
+// página de Análises. `complete` = a trilha começa perto do chão (senão
+// duração/deriva ficam subestimadas: a janela da fonte pode começar no meio).
+export interface RegistryFlight {
+  burstAltM: number
+  durationMin?: number
+  distanceKm?: number
+  bearingDeg?: number
+  ascentRateMs?: number
+  descentRateMs?: number
+  points: number
+  complete: boolean
+  source: 'radiosondy-data' | 'sondehub-telemetry'
+}
+
 export interface SondeRecord {
   serial: string
   type?: string
@@ -65,6 +81,11 @@ export interface SondeRecord {
   // receptora (receiverStations.ts). Registros antigos, de antes disso, são
   // relidos uma vez só pra desenhar as estações nos mapas.
   stationsCaptured?: boolean
+  flight?: RegistryFlight
+  // Versão do enriquecimento que gerou o registro (ENRICH_VERSION). Quando o
+  // app passa a extrair algo novo das fontes, sobe a versão e os registros
+  // antigos são relidos UMA vez, sem esperar a regra de 24 h.
+  enrichVersion?: number
   sources: SondeRecordSource[]
   // Última tentativa de consulta pesada por fonte (epoch ms) — evita rebaixar
   // 1-2 MB a cada visita. Ver needsEnrichment.
@@ -147,6 +168,14 @@ function mergeReceivers(a?: ReceiverStat[], b?: ReceiverStat[]): ReceiverStat[] 
 
 const STATUS_RANK: Record<string, number> = { FOUND: 3, LOST: 2, UNKNOWN: 1 }
 
+// Trilha completa vence a truncada; entre iguais, a com mais pontos.
+function betterFlight(a?: RegistryFlight, b?: RegistryFlight): RegistryFlight | undefined {
+  if (!a) return b
+  if (!b) return a
+  if (a.complete !== b.complete) return a.complete ? a : b
+  return b.points > a.points ? b : a
+}
+
 /**
  * Mescla aditiva: nunca apaga um dado conhecido por falta dele na outra cópia.
  * Primeiro quadro = o mais antigo; último quadro/posição/último receptor = o
@@ -184,6 +213,8 @@ export function mergeSondeRecords(a: SondeRecord | undefined, b: SondeRecord): S
     lastReceiverAt: receiverFromB ? b.lastReceiverAt : a.lastReceiverAt ?? b.lastReceiverAt,
     frames: Math.max(a.frames ?? 0, b.frames ?? 0) || undefined,
     stationsCaptured: a.stationsCaptured || b.stationsCaptured || undefined,
+    flight: betterFlight(a.flight, b.flight),
+    enrichVersion: Math.max(a.enrichVersion ?? 0, b.enrichVersion ?? 0) || undefined,
     sources: union(a.sources, b.sources) ?? [],
     checked: { ...a.checked, ...b.checked },
     updatedAt: Math.max(a.updatedAt, b.updatedAt),
@@ -267,6 +298,8 @@ export function sanitizeRecord(input: unknown): SondeRecord | null {
 
 const HOUR = 3600_000
 const RECENT_FLIGHT_MS = 6 * HOUR
+// 2 = dados de voo (estouro/duração/deriva) + só o trecho principal do voo.
+export const ENRICH_VERSION = 2
 
 /**
  * O que ainda vale consultar nas fontes pesadas pra este registro. Voo
@@ -279,19 +312,30 @@ export function needsEnrichment(r: SondeRecord | undefined, now = Date.now()): {
   const retry = (checkedAt: number | undefined, freshMs: number) => !checkedAt || now - checkedAt > freshMs
   const hasReceivers = !!r?.receivers?.length && !!r?.lastReceiver
   const hasFirst = !!r?.firstFrameUtc
+  // Registros de antes dos dados de voo existirem são relidos uma vez.
+  const hasFlight = !!r?.flight
   // Voo antigo que a fonte já disse não conhecer (consultada, sem dados):
   // não vai aparecer lá depois de uma semana — para de perguntar.
   const oldFlight = !recent && Number.isFinite(last) && now - last > 7 * 24 * HOUR
   const radiosondyGaveUp = oldFlight && !!r?.checked?.radiosondy && !r.sources.includes('radiosondy-archive')
   const sondehubGaveUp = oldFlight && !!r?.checked?.sondehub && !r.sources.includes('sondehub-telemetry')
+  // Registro de versão antiga: relê as fontes que ele tem, uma vez só.
+  const outdated = !!r && (r.enrichVersion ?? 0) < ENRICH_VERSION
+  if (outdated && !recent) {
+    return {
+      radiosondy: !radiosondyGaveUp,
+      sondehub: !sondehubGaveUp,
+      recovered: r.status !== 'FOUND' && retry(r.checked?.recovered, 6 * HOUR),
+    }
+  }
   return {
     radiosondy: recent ? retry(r?.checked?.radiosondy, 10 * 60_000)
-      : !radiosondyGaveUp && !(hasReceivers && hasFirst && r?.sources.includes('radiosondy-data')) &&
+      : !radiosondyGaveUp && !(hasReceivers && hasFirst && hasFlight && r?.sources.includes('radiosondy-data')) &&
         retry(r?.checked?.radiosondy, 24 * HOUR),
     // O /sonde/{serial} do SondeHub guarda o voo inteiro, com o uploader de
     // cada quadro, por meses (conferido em 2026-09 com voos de janeiro).
     sondehub: recent ? retry(r?.checked?.sondehub, 10 * 60_000)
-      : !sondehubGaveUp && !(hasReceivers && r?.sources.includes('sondehub-telemetry') && r?.stationsCaptured) &&
+      : !sondehubGaveUp && !(hasReceivers && hasFlight && r?.sources.includes('sondehub-telemetry') && r?.stationsCaptured) &&
         retry(r?.checked?.sondehub, 24 * HOUR),
     recovered: r?.status !== 'FOUND' && (!Number.isFinite(last) || now - last < 30 * 24 * HOUR) &&
       retry(r?.checked?.recovered, 6 * HOUR),

@@ -7,6 +7,9 @@ import { getCacheByYear } from '@/app/lib/cache'
 import { cacheStationKey, isWyomingEnabled, useWyomingEnabled, wyomingQuery } from '@/app/lib/appSettings'
 import { withoutWyoming } from '@/app/lib/launchData'
 import { computeYearMetrics, landingDensity } from '@/app/lib/metrics'
+import { launchesWithSondes } from '@/app/lib/sondeLaunches'
+import { pointFromRecord, type SondePoint } from '@/app/lib/sondePoints'
+import { useSondeRegistry } from '../historico/hooks/useSondeRegistry'
 import type { Launch } from '@/app/lib/types'
 import StationPicker from '../historico/components/StationPicker'
 import FlightMetricsCards from './components/FlightMetricsCards'
@@ -55,8 +58,25 @@ export default function AnalyticsPage() {
     return () => { cancelled = true }
   }, [year, station.id, wyomingOn])
 
-  const metrics = useMemo(() => computeYearMetrics(launches, station), [launches, station])
-  const cells = useMemo(() => landingDensity(launches), [launches])
+  // Registro de sondas (R2): altitude de estouro, duração, deriva e posição
+  // de pouso de cada sonda — calculados no enriquecimento a partir da trilha
+  // inteira. Sem pedir enriquecimento aqui (os mapas/cron já fazem isso).
+  const records = useSondeRegistry(station.id, [year], [], false)
+  // Uma entrada por sonda, como no resto do app: os lançamentos da consulta
+  // anual + toda sonda da estação no registro que não casou com nenhum deles.
+  // Assim as Análises não dependem da consulta anual (lenta com a Wyoming, ou
+  // desligada) pra ter dados.
+  const enriched = useMemo(() => {
+    const points: SondePoint[] = []
+    for (const r of records.values()) {
+      if (!r.stations?.includes(station.id)) continue
+      const p = pointFromRecord(r)
+      if (p && p.date.getUTCFullYear() === year) points.push(p)
+    }
+    return launchesWithSondes(launches, points, records)
+  }, [launches, records, station.id, year])
+  const metrics = useMemo(() => computeYearMetrics(enriched, station), [enriched, station])
+  const cells = useMemo(() => landingDensity(enriched), [enriched])
   const years = Array.from({ length: 5 }, (_, i) => currentYear - i)
 
   return (
@@ -109,7 +129,7 @@ export default function AnalyticsPage() {
         <DriftRose driftByOctant={metrics.driftByOctant} />
       </div>
 
-      <StationCompare year={year} baseStation={station} baseLaunches={launches} />
+      <StationCompare year={year} baseStation={station} baseLaunches={enriched} />
     </div>
   )
 }

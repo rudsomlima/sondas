@@ -12,7 +12,7 @@
  * Sem essas variáveis (ex.: dev local sem .env.local), as funções são no-op.
  */
 import { S3Client, GetObjectCommand, PutObjectCommand, ListObjectsV2Command, DeleteObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3'
-import type { YearStore, SyncStatus, PollStatus, KnownReceiverEntry } from './types'
+import type { YearStore, PollStatus, KnownReceiverEntry } from './types'
 import type { TodayFlight } from './radiosondy'
 import type { SondeRegistryYear } from './sondeRegistry'
 import type { ReceiverStationsFile } from './receiverStations'
@@ -185,24 +185,6 @@ export async function deleteR2Object(key: string): Promise<void> {
   }
 }
 
-const SYNC_STATUS_KEY = 'sondas/sync-status.json'
-
-// Status da última execução do cron radiosondy-sync — dá visibilidade dos
-// "bastidores" da sincronização (ver app/api/sync-status/route.ts).
-export async function readSyncStatus(): Promise<SyncStatus | null> {
-  const client = getClient()
-  if (!client) return null
-  try {
-    const res = await client.send(new GetObjectCommand({ Bucket: bucket(), Key: SYNC_STATUS_KEY }))
-    const body = await res.Body?.transformToString()
-    return body ? JSON.parse(body) : null
-  } catch (e: any) {
-    if (e?.name === 'NoSuchKey' || e?.$metadata?.httpStatusCode === 404) return null
-    console.error('[R2] readSyncStatus falhou:', e)
-    return null
-  }
-}
-
 // ──────────────────────────────────────────────────────────────────────────────
 // Histórico de bateria e power por receptor
 // Caminho: sondas/receivers/{receiverKey}/{type}-history.json
@@ -293,21 +275,6 @@ export async function deleteReceiverHistory(key: string): Promise<void> {
     ])
   } catch (e) {
     console.error('[R2] deleteReceiverHistory falhou:', e)
-  }
-}
-
-export async function writeSyncStatus(status: SyncStatus): Promise<void> {
-  const client = getClient()
-  if (!client) return
-  try {
-    await client.send(new PutObjectCommand({
-      Bucket: bucket(),
-      Key: SYNC_STATUS_KEY,
-      Body: JSON.stringify(status),
-      ContentType: 'application/json',
-    }))
-  } catch (e) {
-    console.error('[R2] writeSyncStatus falhou:', e)
   }
 }
 

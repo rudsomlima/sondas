@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { writePollStatus } from '@/app/lib/blobStore'
+import type { PollStatus } from '@/app/lib/types'
 import { refreshLiveFlightsCache } from '@/app/lib/liveFlightsCache'
 import { backfillRegistry } from '@/app/lib/sondeRegistryServer'
 
@@ -12,7 +13,7 @@ export const maxDuration = 60
  * Pensado pra ser chamado com frequência (a cada poucos minutos) por um
  * serviço externo (o cron nativo da Vercel no plano gratuito só roda 1x/dia
  * — ver vercel.json, que mantém esse cron diário como rede de segurança).
- * Por isso, diferente de /api/radiosondy-sync, esta rota tem uma URL
+ * Por isso esta rota tem uma URL
  * pública conhecida de terceiros e exige um segredo compartilhado.
  *
  * Branch mqtt-cfg-only: este cron também coletava telemetria MQTT dos
@@ -43,14 +44,14 @@ export async function GET(req: NextRequest) {
   // ~1-2 MB das fontes), sem depender de alguém abrir o app. Independentes:
   // a demora de um não come o tempo do outro.
   let liveFlights: Awaited<ReturnType<typeof refreshLiveFlightsCache>> = { stations: {}, errors: 0 }
-  let registry: Awaited<ReturnType<typeof backfillRegistry>> | { error: string } = { seeded: 0, checked: [] }
+  let registry: NonNullable<PollStatus['registry']> = { seeded: 0, checked: [] }
   await Promise.all([
     refreshLiveFlightsCache()
       .then(r => { liveFlights = r })
       .catch(e => { console.error('[poll] refreshLiveFlightsCache falhou:', e) }),
     backfillRegistry(4)
       .then(r => { registry = r })
-      .catch((e: any) => { console.error('[poll] backfillRegistry falhou:', e); registry = { error: e?.message ?? 'falhou' } }),
+      .catch((e: any) => { console.error('[poll] backfillRegistry falhou:', e); registry = { seeded: 0, checked: [], error: String(e?.message ?? 'falhou') } }),
   ])
 
   await writePollStatus({
@@ -58,6 +59,7 @@ export async function GET(req: NextRequest) {
     durationMs: Date.now() - startedAt,
     receivers: { total: receivers.total, updated: receivers.updated, errors: receivers.errors },
     liveFlights,
+    registry,
   })
 
   return NextResponse.json({ ok: true, receivers, liveFlights, registry })

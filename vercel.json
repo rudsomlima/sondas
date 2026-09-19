@@ -2,10 +2,6 @@
   "framework": "nextjs",
   "crons": [
     {
-      "path": "/api/radiosondy-sync",
-      "schedule": "0 6 * * *"
-    },
-    {
       "path": "/api/poll",
       "schedule": "30 6 * * *"
     }

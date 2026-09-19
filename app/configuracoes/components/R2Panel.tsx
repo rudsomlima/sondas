@@ -43,7 +43,7 @@ function fmtDate(iso: string): string {
 }
 
 const FILE_DESCRIPTIONS: Record<string, string> = {
-  'sondas/sync-status.json': 'Status do último cron de sincronização radiosondy',
+  'sondas/sync-status.json': 'Status do antigo cron radiosondy-sync (removido — pode apagar)',
 }
 
 const TYPE_LABELS: Record<'power' | 'batt', string> = {

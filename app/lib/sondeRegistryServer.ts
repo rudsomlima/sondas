@@ -5,7 +5,7 @@
  * app aberto).
  */
 import { readReceiverStations, readSondeRegistry, readYearStore, updateReceiverStations, updateSondeRegistry } from './blobStore'
-import { mergeSondeRecords, needsEnrichment, recordYear, sameRecord, toIsoUtc, type SondeRecord } from './sondeRegistry'
+import { ENRICH_VERSION, mergeSondeRecords, needsEnrichment, recordYear, sameRecord, toIsoUtc, type SondeRecord } from './sondeRegistry'
 import { launchInstantMs } from './launchData'
 import {
   fetchRadiosondyArchivePage, fetchRadiosondyData, fetchSondeHubListeners, fetchSondeHubRecovered, fetchSondeHubTelemetry,
@@ -24,6 +24,7 @@ export async function enrichRecord(
   const now = Date.now()
   const parts: SondeRecord[] = []
   const checked: NonNullable<SondeRecord['checked']> = {}
+  let networkFailed = false
 
   // Cada fonte isolada: falha de rede não derruba as outras nem marca
   // "consultado" (assim é tentada de novo na próxima vez).
@@ -40,11 +41,11 @@ export async function enrichRecord(
             try {
               const data = await fetchRadiosondyData(serial, page.type || existing?.type || 'RS41')
               if (data) parts.push(data)
-            } catch { return /* a página valeu; o zip tenta de novo depois */ }
+            } catch { networkFailed = true; return /* a página valeu; o zip tenta de novo depois */ }
           }
         }
         checked.radiosondy = now
-      } catch { /* rede */ }
+      } catch { networkFailed = true }
     })())
   }
   if (plan.sondehub) {
@@ -53,7 +54,7 @@ export async function enrichRecord(
         const tel = await fetchSondeHubTelemetry(serial)
         if (tel) { parts.push(tel.record); stationsOut?.push(...tel.stations) }
         checked.sondehub = now
-      } catch { /* rede */ }
+      } catch { networkFailed = true }
     })())
   }
   if (plan.recovered) {
@@ -69,31 +70,51 @@ export async function enrichRecord(
 
   let merged: SondeRecord = existing ?? { serial, sources: [], updatedAt: now }
   for (const part of parts) merged = mergeSondeRecords(merged, part)
-  return { ...merged, checked: { ...merged.checked, ...checked } }
+  return {
+    ...merged,
+    checked: { ...merged.checked, ...checked },
+    // Só marca a versão nova se as fontes pesadas responderam (falha de rede
+    // = tenta de novo depois).
+    enrichVersion: networkFailed ? merged.enrichVersion : Math.max(merged.enrichVersion ?? 0, ENRICH_VERSION),
+  }
 }
 
-/** Registros conhecidos (ano corrente e anterior) pros serials pedidos. */
+/**
+ * Registros conhecidos (ano corrente e anterior) pros serials pedidos, com o
+ * ANO do arquivo onde cada um mora — a gravação volta pro mesmo arquivo.
+ * Sem isso, uma sonda lançada na virada do ano (W3770290: 31/12/2025 23:38
+ * UTC, registrada em 2026) era gravada em 2025 pelo enriquecimento e a cópia
+ * de 2026 ficava eternamente "incompleta", reconsultada a cada ping.
+ */
 export async function findRecords(serials: string[]): Promise<Map<string, SondeRecord>> {
-  const known = new Map<string, SondeRecord>()
+  return (await findRecordsWithYear(serials)).records
+}
+
+async function findRecordsWithYear(serials: string[]): Promise<{ records: Map<string, SondeRecord>; years: Map<string, number> }> {
+  const records = new Map<string, SondeRecord>()
+  const years = new Map<string, number>()
   const thisYear = new Date().getUTCFullYear()
   for (const year of [thisYear, thisYear - 1]) {
     try {
       const reg = await readSondeRegistry(year)
       for (const s of serials) {
         const r = reg?.records?.[s]
-        if (r && !known.has(s)) known.set(s, r)
+        if (r && !records.has(s)) { records.set(s, r); years.set(s, year) }
       }
     } catch { /* R2 fora: segue só com as fontes */ }
   }
-  return known
+  return { records, years }
 }
 
 /** Grava (mesclando) no R2, agrupado por ano; ignora o que não mudou. */
-export async function saveRecords(records: SondeRecord[], known?: Map<string, SondeRecord>): Promise<void> {
+export async function saveRecords(
+  records: SondeRecord[], known?: Map<string, SondeRecord>, yearOf?: Map<string, number>,
+): Promise<void> {
   const byYear = new Map<number, SondeRecord[]>()
   for (const rec of records) {
     if (known && sameRecord(known.get(rec.serial), rec)) continue
-    const year = recordYear(rec)
+    // Mora onde já morava; registro novo vai pro ano do 1º dado.
+    const year = yearOf?.get(rec.serial) ?? recordYear(rec)
     if (year == null) continue
     const list = byYear.get(year)
     if (list) list.push(rec); else byYear.set(year, [rec])
@@ -117,7 +138,7 @@ export async function saveRecords(records: SondeRecord[], known?: Map<string, So
 export async function enrichAndSave(
   serials: string[], opts: { station?: string; force?: boolean } = {},
 ): Promise<SondeRecord[]> {
-  const known = await findRecords(serials)
+  const { records: known, years } = await findRecordsWithYear(serials)
   const results = new Map<string, SondeRecord>()
   const stations: ReceiverStation[] = []
   const queue = [...serials]
@@ -132,7 +153,7 @@ export async function enrichAndSave(
       results.set(serial, rec)
     }
   }))
-  try { await saveRecords([...results.values()], known) } catch { /* grava na próxima */ }
+  try { await saveRecords([...results.values()], known, years) } catch { /* grava na próxima */ }
   try { await saveStations(stations) } catch { /* grava na próxima */ }
   return [...results.values()]
 }
