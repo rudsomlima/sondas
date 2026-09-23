@@ -11,15 +11,18 @@
  * estação — em vez do que useLiveFlights.ts faz hoje (um fetch do feed
  * inteiro por estação, repetido a cada usuário/aba).
  */
-import { SOUTH_AMERICA_STATIONS } from './stations'
+import { SOUTH_AMERICA_STATIONS, DEFAULT_STATION } from './stations'
 import {
-  fetchLiveFlights, fetchRadiosondyFeatures, matchesStartplace, matchesStartplaceExact,
+  fetchLiveFlights, fetchRadiosondyFeatures, flightStatus, matchesStartplace, matchesStartplaceExact,
   parsePopupTelemetry, toReportStr, type TodayFlight,
 } from './radiosondy'
 import { fetchSondeHubLastFrames, filterSondeHubFlights, type SondeHubLastFrame } from './sondehub'
+import { haversineKm } from './geo'
 import { gmt3DateStr } from './launchUtils'
-import { writeLiveFlights } from './blobStore'
+import { writeLiveFlights, readTelegramSettings } from './blobStore'
+import { notifyFlightEvent } from './telegramEvents'
 import type { PollStationStatus } from './types'
+import { DEFAULT_WATCH_RADIUS_KM } from './telegramTypes'
 import { nowGMT3 } from './types'
 
 function todayStr(): string {
@@ -39,6 +42,9 @@ export async function refreshLiveFlightsCache(): Promise<LiveFlightsCacheSummary
   const stations = SOUTH_AMERICA_STATIONS
 
   const summary: LiveFlightsCacheSummary = { stations: {}, errors: 0 }
+  const tgSettings = await readTelegramSettings().catch(() => null)
+  const watched = new Set(tgSettings?.watchedStationIds ?? [DEFAULT_STATION.id])
+  const radiusOf = (id: string) => tgSettings?.stationRadiusKm?.[id] ?? DEFAULT_WATCH_RADIUS_KM
 
   let liveFeed: Awaited<ReturnType<typeof fetchLiveFlights>> = []
   let sondeHubFrames: Map<string, SondeHubLastFrame> = new Map()
@@ -99,6 +105,20 @@ export async function refreshLiveFlightsCache(): Promise<LiveFlightsCacheSummary
 
       const flights = [...bySondeNumber.values()]
       await writeLiveFlights(station.id, { updatedAt: Date.now(), flights })
+      // Avisos de lançamento/pouso no Telegram sem depender do /painel aberto
+      // (estações escolhidas em /telegram; o dedup em R2 evita repetir com o
+      // detector do navegador). Só eventos recentes: na 1ª execução não
+      // dispara aviso de algo que subiu/pousou horas atrás.
+      if (watched.has(station.id)) {
+        // Alcance próprio da estação (pode passar dos 300 km do cache).
+        const radiusKm = radiusOf(station.id)
+        const inRange = new Map<string, TodayFlight>()
+        for (const f of flights) if (haversineKm(station.lat, station.lon, f.lat, f.lon) <= radiusKm) inRange.set(f.sondeNumber, f)
+        for (const f of filterSondeHubFlights(sondeHubFrames, station.lat, station.lon, today, radiusKm)) {
+          if (!inRange.has(f.sondeNumber)) inRange.set(f.sondeNumber, f)
+        }
+        await notifyRecentEvents(station, [...inRange.values()])
+      }
       summary.stations[station.id] = {
         radiosondy: flights.filter(f => f.source.startsWith('radiosondy')).length,
         sondehub:   flights.filter(f => f.source.startsWith('sondehub')).length,
@@ -110,4 +130,31 @@ export async function refreshLiveFlightsCache(): Promise<LiveFlightsCacheSummary
   }
 
   return summary
+}
+
+const LAUNCH_MAX_AGE_MS = 20 * 60_000
+const LANDING_MAX_AGE_MS = 3 * 60 * 60_000
+
+function reportAgeMs(f: TodayFlight): number {
+  return Date.now() - new Date(f.lastReportUtc.replace(/z$/i, '').replace(' ', 'T') + 'Z').getTime()
+}
+
+async function notifyRecentEvents(station: { id: string; name: string; lat: number; lon: number }, flights: TodayFlight[]) {
+  for (const f of flights) {
+    const age = reportAgeMs(f)
+    let event: 'launch' | 'landing' | null = null
+    if (f.isLive && age < LAUNCH_MAX_AGE_MS) event = 'launch'
+    else if (flightStatus(f) === 'landed' && age < LANDING_MAX_AGE_MS) event = 'landing'
+    if (!event) continue
+    try {
+      const r = await notifyFlightEvent({
+        event, sondeNumber: f.sondeNumber, lat: f.lat, lon: f.lon, altitude: f.altitude, climbing: f.climbing,
+        frequencyMHz: f.frequencyMHz, source: f.source, lastReceiver: f.lastReceiver, lastReportUtc: f.lastReportUtc,
+        stationId: station.id, stationName: station.name, stationLat: station.lat, stationLon: station.lon,
+      })
+      if (!r.ok) console.error('[liveFlightsCache] aviso Telegram falhou:', r.error)
+    } catch (e) {
+      console.error('[liveFlightsCache] aviso Telegram falhou:', e)
+    }
+  }
 }

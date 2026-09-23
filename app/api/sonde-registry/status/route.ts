@@ -40,6 +40,6 @@ export async function GET(req: NextRequest) {
       active: stations.filter(s => s.lastSeenAt && now - new Date(s.lastSeenAt).getTime() < 24 * 3600_000).length,
       listenersCheckedAt: stationsFile?.listenersCheckedAt ?? 0,
     },
-    lastPoll: poll ? { lastRunAt: poll.lastRunAt, durationMs: poll.durationMs, registry: poll.registry ?? null } : null,
+    lastPoll: poll ? { lastRunAt: poll.lastRunAt, durationMs: poll.durationMs, registry: poll.registry ?? null, receiverAlerts: poll.receiverAlerts ?? null } : null,
   }, { headers: { 'Cache-Control': 'no-store' } })
 }

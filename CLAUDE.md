@@ -344,6 +344,35 @@ contato (desde `dev20260915.5`: logo que o WiFi conecta e a cada 10 min,
   pra a história completa e os três mecanismos de proteção (`ota.auto` no
   firmware, "Despublicar" aqui, disciplina de bump de versão).
 
+### Avisos no Telegram (`/telegram`)
+
+Tudo mora no R2 (nada em localStorage): `sondas/telegram-settings.json`
+(token, chat, liga/desliga de cada aviso, `watchedStationIds`,
+`stationRadiusKm`), `sondas/telegram-geofences.json` (áreas de interesse
+desenhadas), `sondas/telegram-notify-state.json` (dedup de lançamento/pouso) e
+`sondas/telegram-receiver-alert-state.json` (nível offline/bateria por
+receptor). O token nunca volta pro navegador.
+
+- **Lançamento/pouso sem app aberto**: o cron `/api/poll` (cron-job.org, ~1
+  min) chama `notifyRecentEvents` em `liveFlightsCache.ts` pra cada estação em
+  `watchedStationIds` (padrão: só a 82599). Vale qualquer sonda do feed
+  (SondeHub/radiosondy.info) dentro do raio da estação (`stationRadiusKm`,
+  padrão 300 km, 10–1000) — não depende de qual receptor a captou. Só eventos
+  recentes (lançamento: último sinal < 20 min; pouso: < 3 h).
+- **Regra única de envio**: `notifyFlightEvent` (`telegramEvents.ts`), usada
+  também por `/api/telegram-notify` (detector do navegador,
+  `useLaunchLandingWatcher`). O dedup `markNotifiedIfNew` (por sonda+evento,
+  24 h) impede mensagem dupla entre cron e abas.
+- **Alertas do receptor** (`receiverAlerts.ts`): só mandam quando o NÍVEL muda.
+  O estado é gravado antes do envio; se o envio falha, ele é desfeito pra o
+  próximo ping tentar de novo. Resultado do último ciclo em
+  `lastPoll.receiverAlerts` de `/api/sonde-registry/status`.
+- **Mapa de Áreas de interesse** (`GeofenceMap.tsx`): além das áreas (laranja),
+  desenha todas as estações; clique liga/desliga o monitoramento (ignorado
+  enquanto se desenha/edita) e as monitoradas ganham círculo ciano sem
+  preenchimento com o raio de alcance. Áreas salvam na hora; estações/raios só
+  no botão Salvar das configurações.
+
 ### Páginas
 
 - `app/page.tsx` — redireciona pra `/painel`.

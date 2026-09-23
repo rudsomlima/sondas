@@ -26,6 +26,11 @@ export interface TelegramSettings {
   receiverOfflineMinutes: number
   notifyLowBattery: boolean
   lowBatteryVoltage: number
+  // Estações (id STNM) cujos lançamentos/pousos o servidor avisa sozinho, via
+  // cron /api/poll, sem ninguém com o app aberto. Ausente = só a estação padrão.
+  watchedStationIds?: string[]
+  // Raio de alcance (km) por estação monitorada; ausente = 300 km.
+  stationRadiusKm?: Record<string, number>
   updatedAt: number
 }
 
@@ -57,3 +62,5 @@ export interface Geofence {
   enabled?: boolean
   createdAt: number
 }
+
+export const DEFAULT_WATCH_RADIUS_KM = 300

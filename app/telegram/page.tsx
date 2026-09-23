@@ -2,8 +2,9 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { Send, Save, CheckCircle2, XCircle, Loader2, MapPin, Trash2, Rocket, PlaneLanding, Search, Radio, BatteryWarning } from 'lucide-react'
-import { Station, DEFAULT_STATION, getSelectedStation } from '@/app/lib/stations'
-import type { Geofence } from '@/app/lib/telegramTypes'
+import { Station, DEFAULT_STATION, getSelectedStation, SOUTH_AMERICA_STATIONS } from '@/app/lib/stations'
+import { findMatchingGeofence } from '@/app/lib/geofence'
+import { DEFAULT_WATCH_RADIUS_KM, type Geofence } from '@/app/lib/telegramTypes'
 import GeofenceMap from './components/GeofenceMap'
 
 interface TelegramSettingsView {
@@ -16,6 +17,8 @@ interface TelegramSettingsView {
   receiverOfflineMinutes: number
   notifyLowBattery: boolean
   lowBatteryVoltage: number
+  watchedStationIds: string[]
+  stationRadiusKm: Record<string, number>
   hasToken: boolean
   tokenPreview: string
 }
@@ -23,6 +26,7 @@ interface TelegramSettingsView {
 const EMPTY_SETTINGS: TelegramSettingsView = {
   chatId: '', enabled: false, notifyLaunch: true, notifyLanding: true, notifyAnywhere: true,
   notifyReceiverOffline: true, receiverOfflineMinutes: 30, notifyLowBattery: true, lowBatteryVoltage: 3.5,
+  watchedStationIds: [DEFAULT_STATION.id], stationRadiusKm: {},
   hasToken: false, tokenPreview: '',
 }
 
@@ -73,6 +77,8 @@ export default function TelegramPage() {
           receiverOfflineMinutes: settings.receiverOfflineMinutes,
           notifyLowBattery: settings.notifyLowBattery,
           lowBatteryVoltage: settings.lowBatteryVoltage,
+          watchedStationIds: settings.watchedStationIds,
+          stationRadiusKm: settings.stationRadiusKm,
         }),
       })
       const json = await res.json()
@@ -127,6 +133,24 @@ export default function TelegramPage() {
       setTesting(false)
     }
   }
+
+  const [stationFilter, setStationFilter] = useState('')
+  const watched = new Set(settings.watchedStationIds ?? [])
+  function toggleStation(id: string) {
+    setSettingsState(s => {
+      const cur = new Set(s.watchedStationIds ?? [])
+      if (cur.has(id)) cur.delete(id); else cur.add(id)
+      return { ...s, watchedStationIds: [...cur] }
+    })
+  }
+  const watchedRadii: Record<string, number> = {}
+  for (const id of settings.watchedStationIds ?? []) watchedRadii[id] = settings.stationRadiusKm?.[id] ?? DEFAULT_WATCH_RADIUS_KM
+  function setRadius(id: string, km: number) {
+    setSettingsState(s => ({ ...s, stationRadiusKm: { ...s.stationRadiusKm, [id]: km } }))
+  }
+  const stationsInAreas = SOUTH_AMERICA_STATIONS.filter(st => findMatchingGeofence(st.lat, st.lon, areas))
+  const visibleStations = SOUTH_AMERICA_STATIONS.filter(st =>
+    !stationFilter.trim() || `${st.name} ${st.id}`.toLowerCase().includes(stationFilter.trim().toLowerCase()))
 
   const persistAreas = useCallback(async (next: Geofence[]) => {
     setAreas(next)
@@ -402,7 +426,7 @@ export default function TelegramPage() {
           <div className="text-xs text-dim flex items-center gap-1.5 mb-4"><Loader2 size={12} className="animate-spin" /> Carregando áreas…</div>
         ) : (
           <div className="mb-4">
-            <GeofenceMap station={station} areas={areas} onChange={persistAreas} />
+            <GeofenceMap station={station} areas={areas} onChange={persistAreas} watchedRadii={watchedRadii} onToggleStation={toggleStation} />
           </div>
         )}
 
@@ -455,6 +479,55 @@ export default function TelegramPage() {
               {areasSaveMsg.ok ? <CheckCircle2 size={11} /> : <XCircle size={11} />} {areasSaveMsg.text}
             </span>
           )}
+        </div>
+
+        <div className="mt-5 pt-4 border-t border-border">
+          <h3 className="text-sm font-semibold text-white mb-1">Estações monitoradas</h3>
+          <p className="text-[11px] text-faint mb-3 leading-relaxed">
+            O servidor avisa lançamento e pouso das estações marcadas mesmo com o app fechado. Marque as da região
+            das suas áreas de interesse (também dá pra clicar nas estações no mapa). O círculo ciano no mapa é o alcance. Lembre de clicar em Salvar nas configurações acima.
+          </p>
+          <div className="flex flex-wrap items-center gap-2 mb-2">
+            <input
+              type="text"
+              value={stationFilter}
+              onChange={e => setStationFilter(e.target.value)}
+              placeholder="Buscar estação…"
+              className="flex-1 min-w-[140px] bg-surface-2 border border-border rounded px-2 py-1 text-xs text-white"
+            />
+            <button
+              type="button"
+              disabled={stationsInAreas.length === 0}
+              onClick={() => setSettingsState(s => ({
+                ...s, watchedStationIds: [...new Set([...(s.watchedStationIds ?? []), ...stationsInAreas.map(x => x.id)])],
+              }))}
+              className="text-xs px-2 py-1 rounded border border-border-strong text-gray-300 hover:text-white disabled:opacity-40"
+              title="Marca as estações que ficam dentro das áreas ativas desenhadas no mapa"
+            >
+              Marcar as dentro das áreas ({stationsInAreas.length})
+            </button>
+          </div>
+          <div className="max-h-56 overflow-y-auto space-y-1 pr-1">
+            {visibleStations.map(st => (
+              <label key={st.id} className="flex items-center gap-2 text-xs text-gray-300 cursor-pointer">
+                <input type="checkbox" checked={watched.has(st.id)} onChange={() => toggleStation(st.id)} />
+                <span className="flex-1">{st.name} <span className="text-faint">({st.id})</span></span>
+                {watched.has(st.id) && (
+                  <span className="flex items-center gap-1 text-faint" onClick={e => e.preventDefault()}>
+                    alcance
+                    <input
+                      type="number" min={10} max={1000} step={10}
+                      value={settings.stationRadiusKm?.[st.id] ?? DEFAULT_WATCH_RADIUS_KM}
+                      onChange={e => setRadius(st.id, Math.min(1000, Math.max(10, Number(e.target.value) || DEFAULT_WATCH_RADIUS_KM)))}
+                      className="w-16 bg-surface-2 border border-border rounded px-1 py-0.5 text-xs text-white"
+                    />
+                    km
+                  </span>
+                )}
+              </label>
+            ))}
+          </div>
+          <p className="text-[11px] text-faint mt-2">{watched.size} estação(ões) marcada(s).</p>
         </div>
       </div>
     </div>

@@ -60,11 +60,21 @@ export async function checkReceiverAlerts(): Promise<ReceiverAlertsSummary> {
         const text = buildReceiverAlertText(offline ? 'offline' : 'online', entry.prefix, { minutesSilent: minutesSilent ?? undefined })
         const r = await sendTelegramMessage(settings.botToken, settings.chatId, text)
         if (r.ok) sent++
+        else {
+          // O estado já foi gravado; desfaz pra o próximo ping tentar de novo
+          // em vez de perder o aviso pra sempre.
+          console.error('[receiverAlerts] envio offline/online falhou:', r.error)
+          await updateReceiverAlertState(key, { offline: !offline }).catch(() => {})
+        }
       }
       if (settings.notifyLowBattery && batteryChanged && lowBattery !== undefined) {
         const text = buildReceiverAlertText(lowBattery ? 'lowBattery' : 'batteryOk', entry.prefix, { vBatt })
         const r = await sendTelegramMessage(settings.botToken, settings.chatId, text)
         if (r.ok) sent++
+        else {
+          console.error('[receiverAlerts] envio de bateria falhou:', r.error)
+          await updateReceiverAlertState(key, { battery: !lowBattery }).catch(() => {})
+        }
       }
     }
 

@@ -1,9 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { readTelegramSettings, readGeofences, markNotifiedIfNew } from '@/app/lib/blobStore'
-import { sendTelegramMessage, sendTelegramPhoto } from '@/app/lib/telegramClient'
-import { findMatchingGeofence } from '@/app/lib/geofence'
-import { renderStaticMapPng } from '@/app/lib/staticMap'
-import { buildEventText } from '@/app/lib/telegramMessage'
+import { notifyFlightEvent } from '@/app/lib/telegramEvents'
 
 /**
  * Recebe um evento "lançamento"/"pouso" detectado no navegador (ver
@@ -29,48 +25,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'evento inválido' }, { status: 400 })
   }
 
-  const settings = await readTelegramSettings()
-  if (!settings?.enabled || !settings.botToken || !settings.chatId) {
-    return NextResponse.json({ ok: true, sent: false, reason: 'telegram desativado ou não configurado' })
-  }
-  if (event === 'launch' && settings.notifyLaunch === false) return NextResponse.json({ ok: true, sent: false })
-  if (event === 'landing' && settings.notifyLanding === false) return NextResponse.json({ ok: true, sent: false })
-
-  const hasPos = typeof lat === 'number' && typeof lon === 'number'
-  const hasStationPos = typeof stationLat === 'number' && typeof stationLon === 'number'
-
-  // Pouso: com "avisar em qualquer lugar" desligado, só notifica se caiu
-  // DENTRO de alguma área de interesse cadastrada — resolve isso ANTES do
-  // dedup pra não "queimar" o evento sem nunca ter mandado a mensagem.
-  const geofencesFile = event === 'landing' && hasPos ? await readGeofences() : null
-  const match = geofencesFile ? findMatchingGeofence(lat, lon, geofencesFile.areas ?? []) : null
-  if (event === 'landing' && settings.notifyAnywhere === false && !match) {
-    return NextResponse.json({ ok: true, sent: false, reason: 'fora das áreas de interesse cadastradas' })
-  }
-
-  const isNew = await markNotifiedIfNew(sondeNumber, event)
-  if (!isNew) return NextResponse.json({ ok: true, sent: false, reason: 'já notificado' })
-
-  const text = buildEventText({
+  const r = await notifyFlightEvent({
     event, sondeNumber, lat, lon, altitude, climbing, frequencyMHz, source, lastReceiver, lastReportUtc,
-    stationId, stationName, stationLat, stationLon, areaName: match?.name,
+    stationId, stationName, stationLat, stationLon,
   })
-
-  let sendResult: { ok: boolean; error?: string }
-  if (hasPos) {
-    const markers = [{ lat, lon, color: event === 'launch' ? '#22c55e' : '#ef4444' }]
-    if (hasStationPos) markers.push({ lat: stationLat, lon: stationLon, color: '#3b82f6' })
-    const png = await renderStaticMapPng({ centerLat: lat, centerLon: lon, markers })
-    sendResult = png
-      ? await sendTelegramPhoto(settings.botToken, settings.chatId, png, text)
-      : await sendTelegramMessage(settings.botToken, settings.chatId, text)
-    // Foto falhou por algum motivo do lado do Telegram (ex.: arquivo
-    // rejeitado) — tenta como texto puro antes de desistir do aviso.
-    if (!sendResult.ok && png) sendResult = await sendTelegramMessage(settings.botToken, settings.chatId, text)
-  } else {
-    sendResult = await sendTelegramMessage(settings.botToken, settings.chatId, text)
-  }
-
-  if (!sendResult.ok) return NextResponse.json({ error: sendResult.error }, { status: 502 })
-  return NextResponse.json({ ok: true, sent: true })
+  if (!r.ok) return NextResponse.json({ error: r.error }, { status: 502 })
+  return NextResponse.json(r)
 }

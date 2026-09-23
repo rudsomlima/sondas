@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { DEFAULT_STATION } from '@/app/lib/stations'
 import { readTelegramSettings, writeTelegramSettings } from '@/app/lib/blobStore'
 
 /**
@@ -19,6 +20,8 @@ export async function GET() {
     receiverOfflineMinutes: s?.receiverOfflineMinutes ?? 30,
     notifyLowBattery: s?.notifyLowBattery !== false,
     lowBatteryVoltage: s?.lowBatteryVoltage ?? 3.5,
+    watchedStationIds: s?.watchedStationIds ?? [DEFAULT_STATION.id],
+    stationRadiusKm: s?.stationRadiusKm ?? {},
     hasToken: !!s?.botToken,
     tokenPreview: s?.botToken ? `…${s.botToken.slice(-6)}` : '',
     updatedAt: s?.updatedAt ?? 0,
@@ -48,6 +51,14 @@ export async function POST(req: NextRequest) {
     receiverOfflineMinutes: numOr(body?.receiverOfflineMinutes, current?.receiverOfflineMinutes ?? 30),
     notifyLowBattery: body?.notifyLowBattery !== false,
     lowBatteryVoltage: numOr(body?.lowBatteryVoltage, current?.lowBatteryVoltage ?? 3.5),
+    watchedStationIds: Array.isArray(body?.watchedStationIds)
+      ? [...new Set<string>(body.watchedStationIds.filter((x: unknown): x is string => typeof x === 'string'))].slice(0, 60)
+      : (current?.watchedStationIds ?? [DEFAULT_STATION.id]),
+    stationRadiusKm: body?.stationRadiusKm && typeof body.stationRadiusKm === 'object'
+      ? Object.fromEntries(Object.entries(body.stationRadiusKm as Record<string, unknown>)
+          .filter(([, v]) => typeof v === 'number' && isFinite(v))
+          .map(([k, v]) => [k, Math.min(Math.max(v as number, 10), 1000)]))
+      : (current?.stationRadiusKm ?? {}),
     updatedAt: Date.now(),
   }
   try {
