@@ -527,6 +527,58 @@ export async function readInstalledFirmware(key: string): Promise<InstalledFirmw
   }
 }
 
+// Última falha de auto-OTA reportada pelo receptor (reportOtaFail em
+// conn-ota.cpp/conn-report.cpp) — sobrescrita a cada tentativa malsucedida,
+// não é histórico. Some sozinha quando uma atualização finalmente dá certo
+// (o boot novo reporta "installed" com a versão nova; ver limpeza no POST
+// do route de report, que apaga isto quando installed.version == published).
+export interface OtaFailInfo {
+  stage:      string
+  httpCode?:  number
+  len?:       number
+  remote?:    string
+  at:         number
+}
+
+function otaFailPath(key: string) { return `sondas/receivers/${key}/ota-fail.json` }
+
+export async function readOtaFail(key: string): Promise<OtaFailInfo | null> {
+  const client = getClient()
+  if (!client) return null
+  try {
+    const res = await client.send(new GetObjectCommand({ Bucket: bucket(), Key: otaFailPath(key) }))
+    const body = await res.Body?.transformToString()
+    return body ? JSON.parse(body) : null
+  } catch (e: any) {
+    if (e?.name === 'NoSuchKey' || e?.$metadata?.httpStatusCode === 404) return null
+    console.error('[R2] readOtaFail falhou:', e)
+    return null
+  }
+}
+
+export async function writeOtaFail(key: string, info: Omit<OtaFailInfo, 'at'>): Promise<void> {
+  const client = getClient()
+  if (!client) return
+  try {
+    const data: OtaFailInfo = { ...info, at: Date.now() }
+    await client.send(new PutObjectCommand({
+      Bucket: bucket(), Key: otaFailPath(key), Body: JSON.stringify(data), ContentType: 'application/json',
+    }))
+  } catch (e) {
+    console.error('[R2] writeOtaFail falhou:', e)
+  }
+}
+
+export async function deleteOtaFail(key: string): Promise<void> {
+  const client = getClient()
+  if (!client) return
+  try {
+    await client.send(new DeleteObjectCommand({ Bucket: bucket(), Key: otaFailPath(key) }))
+  } catch (e) {
+    console.error('[R2] deleteOtaFail falhou:', e)
+  }
+}
+
 export async function writeInstalledFirmware(key: string, version: string): Promise<void> {
   const client = getClient()
   if (!client) return
@@ -535,6 +587,8 @@ export async function writeInstalledFirmware(key: string, version: string): Prom
     await client.send(new PutObjectCommand({
       Bucket: bucket(), Key: installedVersionPath(key), Body: JSON.stringify(data), ContentType: 'application/json',
     }))
+    // Instalou algo novo: qualquer falha de OTA anterior perdeu o sentido.
+    await deleteOtaFail(key)
   } catch (e) {
     console.error('[R2] writeInstalledFirmware falhou:', e)
   }
@@ -549,13 +603,14 @@ export async function writeInstalledFirmware(key: string, version: string): Prom
 // conhecido", sobrescrito a cada report, merge por campo (um report só de
 // pmu não apaga o sleep/power já conhecidos).
 // ──────────────────────────────────────────────────────────────────────────────
-import type { RdzPmu, RdzSleep, RdzPower, RdzNet } from './mqtt'
+import type { RdzPmu, RdzSleep, RdzPower, RdzNet, RdzBoot } from './mqtt'
 
 export interface ReceiverLiveStatus {
   pmu?:       RdzPmu
   sleep?:     RdzSleep
   power?:     RdzPower
   net?:       RdzNet
+  boot?:      RdzBoot
   updatedAt:  number
 }
 
@@ -577,7 +632,7 @@ export async function readReceiverLiveStatus(key: string): Promise<ReceiverLiveS
 
 export async function writeReceiverLiveStatus(
   key: string,
-  data: { pmu?: RdzPmu; sleep?: RdzSleep; power?: RdzPower; net?: RdzNet },
+  data: { pmu?: RdzPmu; sleep?: RdzSleep; power?: RdzPower; net?: RdzNet; boot?: RdzBoot },
   // Mesmo instante usado por recordCollected (receiverCollect.ts) pro mesmo
   // reporte — sem isso, o live-status (lido pelo navegador, "reportedAt" em
   // useBatteryHistory) e o ponto gravado no histórico (R2) tinham cada um seu
@@ -597,6 +652,7 @@ export async function writeReceiverLiveStatus(
       power: data.power ?? prev?.power,
       // IP público vazio no report (ainda não descobriu) não apaga o já conhecido.
       net:   data.net ? { ...data.net, publicIp: data.net.publicIp ?? prev?.net?.publicIp } : prev?.net,
+      boot:  data.boot ?? prev?.boot,
       updatedAt: now,
     }
     await client.send(new PutObjectCommand({
@@ -854,4 +910,109 @@ export async function readAppGlobalSettings(): Promise<AppGlobalSettings | null>
 
 export async function writeAppGlobalSettings(settings: AppGlobalSettings): Promise<void> {
   await updateJsonConditional<AppGlobalSettings>(APP_SETTINGS_KEY, () => settings, () => settings)
+}
+
+// ---------------------------------------------------------------------------
+// Telegram: notificação de lançamento/pouso + áreas de interesse desenhadas
+// no mapa de /telegram. Ver app/lib/telegramTypes.ts, app/api/telegram-*.
+
+import type { TelegramSettings, Geofence } from './telegramTypes'
+
+const TELEGRAM_SETTINGS_KEY = 'sondas/telegram-settings.json'
+
+export async function readTelegramSettings(): Promise<TelegramSettings | null> {
+  return (await readJsonWithEtag<TelegramSettings>(TELEGRAM_SETTINGS_KEY)).data
+}
+
+export async function writeTelegramSettings(settings: TelegramSettings): Promise<void> {
+  await updateJsonConditional<TelegramSettings>(TELEGRAM_SETTINGS_KEY, () => settings, () => settings)
+}
+
+export interface GeofenceFile {
+  areas: Geofence[]
+  updatedAt: number
+}
+
+const GEOFENCES_KEY = 'sondas/telegram-geofences.json'
+
+export async function readGeofences(): Promise<GeofenceFile | null> {
+  return (await readJsonWithEtag<GeofenceFile>(GEOFENCES_KEY)).data
+}
+
+export async function writeGeofences(file: GeofenceFile): Promise<void> {
+  await updateJsonConditional<GeofenceFile>(GEOFENCES_KEY, () => file, () => file)
+}
+
+// Dedup das notificações de lançamento/pouso: mais de uma aba com o painel
+// aberto pode detectar a MESMA transição quase ao mesmo tempo (cada uma faz
+// seu próprio polling) — sem isso, o mesmo evento mandaria duas mensagens no
+// Telegram. Chave = "{sondeNumber}:{launch|landing}"; leitura-mescla-gravação
+// condicional (mesmo padrão do registro de sondas) evita corrida entre abas.
+interface NotifyStateFile {
+  notified: Record<string, number> // valor = timestamp da notificação
+}
+
+const NOTIFY_STATE_KEY = 'sondas/telegram-notify-state.json'
+const NOTIFY_DEDUP_MS = 24 * 60 * 60_000 // não renotifica o mesmo evento dentro de 24h
+const NOTIFY_STATE_MAX_AGE_MS = 7 * 24 * 60 * 60_000 // limpeza de entradas velhas
+
+// Retorna true se este é a 1ª vez (dentro da janela de dedup) que este evento
+// é visto — quem chamar só deve mandar a mensagem no Telegram nesse caso.
+export async function markNotifiedIfNew(sondeNumber: string, event: 'launch' | 'landing'): Promise<boolean> {
+  const key = `${sondeNumber}:${event}`
+  const now = Date.now()
+  let wasNew = false
+  await updateJsonConditional<NotifyStateFile>(NOTIFY_STATE_KEY, () => ({ notified: {} }), current => {
+    const last = current.notified[key]
+    if (last && now - last < NOTIFY_DEDUP_MS) { wasNew = false; return null }
+    wasNew = true
+    const notified: Record<string, number> = {}
+    for (const [k, ts] of Object.entries(current.notified)) {
+      if (now - ts < NOTIFY_STATE_MAX_AGE_MS) notified[k] = ts
+    }
+    notified[key] = now
+    return { notified }
+  })
+  return wasNew
+}
+
+// Estado dos alertas de "meu receptor" (offline / bateria baixa), checado
+// pelo poller do servidor (app/lib/receiverAlerts.ts, via /api/poll) — ao
+// contrário do dedup acima (evento pontual), offline/bateria são NÍVEIS: só
+// interessa mandar mensagem quando o nível MUDA (entrou/saiu do estado), não
+// a cada checagem — senão cada ping do cron-job.org reenviaria o mesmo aviso.
+interface ReceiverAlertStateFile {
+  states: Record<string, { offline?: boolean; battery?: boolean; updatedAt: number }>
+}
+
+const RECEIVER_ALERT_STATE_KEY = 'sondas/telegram-receiver-alert-state.json'
+const RECEIVER_ALERT_STATE_MAX_AGE_MS = 30 * 24 * 60 * 60_000 // limpeza de receptores não vistos há muito tempo
+
+// Atualiza o estado conhecido de um receptor e diz quais dos dois níveis
+// (offline/battery) MUDARAM desde a última checagem — só esses devem gerar
+// mensagem no Telegram. `offline`/`battery` undefined = não muda esse nível
+// (ex.: checagem de bateria pulada por falta de leitura de tensão).
+export async function updateReceiverAlertState(
+  key: string,
+  next: { offline?: boolean; battery?: boolean },
+): Promise<{ offlineChanged: boolean; batteryChanged: boolean }> {
+  const now = Date.now()
+  let offlineChanged = false
+  let batteryChanged = false
+  await updateJsonConditional<ReceiverAlertStateFile>(RECEIVER_ALERT_STATE_KEY, () => ({ states: {} }), current => {
+    const prev = current.states[key]
+    offlineChanged = next.offline !== undefined && !!prev?.offline !== next.offline
+    batteryChanged = next.battery !== undefined && !!prev?.battery !== next.battery
+    const states: ReceiverAlertStateFile['states'] = {}
+    for (const [k, s] of Object.entries(current.states)) {
+      if (now - s.updatedAt < RECEIVER_ALERT_STATE_MAX_AGE_MS) states[k] = s
+    }
+    states[key] = {
+      offline: next.offline ?? prev?.offline,
+      battery: next.battery ?? prev?.battery,
+      updatedAt: now,
+    }
+    return { states }
+  })
+  return { offlineChanged, batteryChanged }
 }

@@ -3,6 +3,7 @@ import { writePollStatus } from '@/app/lib/blobStore'
 import type { PollStatus } from '@/app/lib/types'
 import { refreshLiveFlightsCache } from '@/app/lib/liveFlightsCache'
 import { backfillRegistry } from '@/app/lib/sondeRegistryServer'
+import { checkReceiverAlerts } from '@/app/lib/receiverAlerts'
 
 export const maxDuration = 60
 
@@ -45,6 +46,7 @@ export async function GET(req: NextRequest) {
   // a demora de um não come o tempo do outro.
   let liveFlights: Awaited<ReturnType<typeof refreshLiveFlightsCache>> = { stations: {}, errors: 0 }
   let registry: NonNullable<PollStatus['registry']> = { seeded: 0, checked: [] }
+  let receiverAlerts: NonNullable<PollStatus['receiverAlerts']> = { checked: 0, sent: 0 }
   await Promise.all([
     refreshLiveFlightsCache()
       .then(r => { liveFlights = r })
@@ -52,6 +54,9 @@ export async function GET(req: NextRequest) {
     backfillRegistry(4)
       .then(r => { registry = r })
       .catch((e: any) => { console.error('[poll] backfillRegistry falhou:', e); registry = { seeded: 0, checked: [], error: String(e?.message ?? 'falhou') } }),
+    checkReceiverAlerts()
+      .then(r => { receiverAlerts = r })
+      .catch((e: any) => { console.error('[poll] checkReceiverAlerts falhou:', e); receiverAlerts = { checked: 0, sent: 0, error: String(e?.message ?? 'falhou') } }),
   ])
 
   await writePollStatus({
@@ -60,7 +65,8 @@ export async function GET(req: NextRequest) {
     receivers: { total: receivers.total, updated: receivers.updated, errors: receivers.errors },
     liveFlights,
     registry,
+    receiverAlerts,
   })
 
-  return NextResponse.json({ ok: true, receivers, liveFlights, registry })
+  return NextResponse.json({ ok: true, receivers, liveFlights, registry, receiverAlerts })
 }

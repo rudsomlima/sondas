@@ -2,10 +2,10 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { Antenna, Loader2, BatteryMedium, Moon, Radio, Clock, Cpu, Wifi, WifiOff } from 'lucide-react'
+import { Antenna, Loader2, BatteryMedium, Moon, Radio, Clock, Cpu, Wifi, WifiOff, AlertTriangle } from 'lucide-react'
 import { formatGmt3 } from '@/app/lib/launchUtils'
 import type { ReceiverStatus } from '@/app/lib/sondehub'
-import type { RdzPower } from '@/app/lib/mqtt'
+import { ABNORMAL_RESET_REASONS, type RdzPower, type RdzBoot } from '@/app/lib/mqtt'
 import { LEVEL_LABEL } from '@/app/lib/powerPlan'
 import type { MyReceiverSonde } from '../hooks/useReceiverStatus'
 import type { ReceiverSource } from '../hooks/useReceiver'
@@ -25,6 +25,7 @@ interface ReceiverPanelProps {
   waitingLate: { until: number; reason?: string } | null
   liveLastMessageAt: number | null // epoch (ms) do último report HTTP conhecido (pmu/sleep/power)
   power: RdzPower | null // CPU/WiFi/modo economia — reporte HTTP direto, ver DEEP_SLEEP_V2_GUIDE.md
+  boot: RdzBoot | null // motivo do reset deste boot — ver ABNORMAL_RESET_REASONS
   selected: SelectedTarget | null
   onSelect: (t: SelectedTarget | null) => void
 }
@@ -76,7 +77,7 @@ const PERIOD_LABEL: Record<string, string> = {
 export default function ReceiverPanel({
   status, mySondes, checked, enabled, callsign,
   source, liveConfigured, liveConnected, ttgoBattV, sleeping, waitingLate,
-  liveLastMessageAt, power,
+  liveLastMessageAt, power, boot,
   selected, onSelect,
 }: ReceiverPanelProps) {
   // Ticker próprio de 1s — não depende de re-renders de outras partes do
@@ -188,6 +189,18 @@ export default function ReceiverPanel({
             <p className="text-[10px] text-red-400 mb-2">
               Sem resposta do receptor (timeout) — ele precisa estar ligado e acordado.
               {lastSeenMs != null && ' Mostrando os últimos dados recebidos.'}
+            </p>
+          )}
+          {/* Reset anômalo (brownout/watchdog/panic) no boot atual — sinal de
+              que o receptor caiu sozinho, não por sleep programado nem por
+              ligar na tomada. É quando o display fica preso na tela de
+              WiFi/IP por até 20s até reconectar. */}
+          {boot && ABNORMAL_RESET_REASONS[boot.resetReason] && (
+            <p
+              className="text-[10px] text-amber-400 mb-2 flex items-center gap-1"
+              title="O receptor reiniciou sozinho neste boot — a causa mais provável com a célula sem BMS é queda de tensão sob carga."
+            >
+              <AlertTriangle size={11} /> Reiniciou sozinho: {ABNORMAL_RESET_REASONS[boot.resetReason]}
             </p>
           )}
           {/* Motivo da economia de energia — antes só aparecia escondido no

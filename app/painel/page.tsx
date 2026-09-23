@@ -21,6 +21,7 @@ import { reportSondes } from '@/app/lib/sondeRegistryClient'
 import { parseUtcDateStr } from '@/app/lib/launchUtils'
 import { useReceiver } from './hooks/useReceiver'
 import { useReceiverAlerts } from './hooks/useReceiverAlerts'
+import { useLaunchLandingWatcher } from './hooks/useLaunchLandingWatcher'
 import { getSettings } from '@/app/lib/settings'
 import StationPicker from '../historico/components/StationPicker'
 import TopStatusBar from './components/TopStatusBar'
@@ -57,6 +58,7 @@ export default function PainelPage() {
   const { todayFlights, liveFlightChecked, liveError, sourceHealth, refresh: refreshLive } = useLiveFlights(station, todayData?.today)
   const receiver = useReceiver()
   useReceiverAlerts(receiver.mySondes, receiver.checked, setSelected)
+  useLaunchLandingWatcher(todayFlights, station)
   const geo = useGeolocation()
 
   const mySerials = useMemo(() => new Set(receiver.mySondes.map(m => m.serial)), [receiver.mySondes])
@@ -209,7 +211,7 @@ export default function PainelPage() {
             enabled={receiver.enabled} callsign={callsign} source={receiver.source}
             liveConfigured={receiver.liveConfigured} liveConnected={receiver.liveConnected}
             ttgoBattV={receiver.ttgoBattV} sleeping={receiver.sleeping} waitingLate={receiver.waitingLate}
-            liveLastMessageAt={receiver.liveLastMessageAt} power={receiver.power}
+            liveLastMessageAt={receiver.liveLastMessageAt} power={receiver.power} boot={receiver.boot}
             selected={selected} onSelect={setSelected}
           />
           <LivePanel

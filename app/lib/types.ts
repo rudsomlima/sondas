@@ -155,4 +155,11 @@ export interface PollStatus {
     listeners?: number // estações ativas atualizadas (a cada 6 h)
     error?: string
   }
+  // Checagem de receptores offline/bateria baixa nesta execução (ver
+  // app/lib/receiverAlerts.ts) — independe de alguém com o app aberto.
+  receiverAlerts?: {
+    checked: number     // quantos receptores conhecidos foram avaliados
+    sent: number         // quantas mensagens foram mandadas pro Telegram
+    error?: string
+  }
 }

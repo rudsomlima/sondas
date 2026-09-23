@@ -8,6 +8,30 @@
  */
 import type { RdzSleep, RdzPower } from './mqtt'
 
+// Report HTTP chega no cadenciamento de mqtt.report_interval (default 60s),
+// não ~1s como o MQTT antigo — janela de frescor generosa evita marcar
+// "offline"/"sondehub" à toa entre dois reports.
+export const LIVE_FRESH_MS = 5 * 60_000
+// No nível Silencioso/Pulsado o receptor desliga o WiFi e só religa a cada
+// power.report_min minutos (report_s no estado de energia) — sem esticar a
+// janela de frescor, o card (ou o alerta do poller) acusaria "offline" entre
+// duas religadas.
+export const SILENT_SLACK_MS = 3 * 60_000
+
+// Verdadeiro se o último report conhecido ainda está "fresco" — mesma regra
+// usada pelo card ao vivo (useReceiver.ts) e pelo poller do servidor
+// (receiverAlerts.ts), pra não duplicar/divergir o que conta como offline.
+export function isReceiverFresh(
+  lastLiveMessageAt: number | null,
+  power: RdzPower | null,
+  now: number,
+): boolean {
+  if (lastLiveMessageAt == null) return false
+  const silentGapMs = (power?.reportS ?? 0) * 1000
+  const freshMs = Math.max(LIVE_FRESH_MS, silentGapMs > 0 ? silentGapMs + SILENT_SLACK_MS : 0)
+  return now - lastLiveMessageAt < freshMs
+}
+
 export interface SleepDerived {
   sleeping: { until: number; reason?: string } | null
   waitingLate: { until: number; reason?: string } | null

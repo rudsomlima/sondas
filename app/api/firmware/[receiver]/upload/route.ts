@@ -1,16 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { writeFirmwareBinary, readFirmwareMeta, readInstalledFirmware, deleteFirmware } from '@/app/lib/blobStore'
+import { writeFirmwareBinary, readFirmwareMeta, readInstalledFirmware, deleteFirmware, readOtaFail } from '@/app/lib/blobStore'
 
 // GET — metadados do firmware publicado pra este receptor + versão que ele
-// mesmo reportou ter instalada (ver conn-report.cpp/reportVersion), pro
-// painel "Meu Receptor" comparar publicado vs. instalado.
+// mesmo reportou ter instalada (ver conn-report.cpp/reportVersion) + a
+// última falha de auto-OTA reportada (reportOtaFail), se houver — pro painel
+// "Meu Receptor" comparar publicado vs. instalado e explicar por que não
+// atualizou sozinho, sem precisar de cabo serial.
 export async function GET(_req: Request, { params }: { params: Promise<{ receiver: string }> }) {
   const { receiver } = await params
-  const [meta, installed] = await Promise.all([
+  const [meta, installed, otaFail] = await Promise.all([
     readFirmwareMeta(receiver),
     readInstalledFirmware(receiver),
+    readOtaFail(receiver),
   ])
-  return NextResponse.json({ ok: true, meta, installed })
+  return NextResponse.json({ ok: true, meta, installed, otaFail })
 }
 
 // POST multipart/form-data { version: string, bin: File } — publica um novo

@@ -15,6 +15,25 @@ interface InstalledFirmware {
   reportedAt: number
 }
 
+interface OtaFailInfo {
+  stage:     string
+  httpCode?: number
+  len?:      number
+  remote?:   string
+  at:        number
+}
+
+// stage reportado por reportOtaFail (conn-ota.cpp) em pt., com a explicação
+// mais provável — "write" é o caso do sintoma comum (sinal fraco/rajada
+// curta cortando o download no meio, ver DEEP_SLEEP_V2_GUIDE.md).
+const OTA_FAIL_STAGE_LABEL: Record<string, string> = {
+  version: 'não conseguiu nem checar a versão publicada (rede/timeout)',
+  get: 'o download do binário não veio (rede/timeout)',
+  begin: 'não conseguiu abrir a partição OTA (sem espaço/erro de flash)',
+  write: 'download interrompido no meio (timeout — comum com sinal fraco)',
+  end: 'gravou mas a verificação final falhou (binário corrompido no ar)',
+}
+
 interface FirmwareOtaPanelProps {
   receiverKey: string // mesma chave do histórico power/batt (receiverKey(mqtt.prefix))
   pollMs?: number // cadência do polling em segundo plano (default 20s) — ver mqtt.report_interval
@@ -35,6 +54,7 @@ export default function FirmwareOtaPanel({ receiverKey, pollMs }: FirmwareOtaPan
   const effectivePollMs = pollMs ? Math.min(MAX_POLL_MS, Math.max(MIN_POLL_MS, pollMs)) : DEFAULT_POLL_MS
   const [meta, setMeta] = useState<FirmwareMeta | null>(null)
   const [installed, setInstalled] = useState<InstalledFirmware | null>(null)
+  const [otaFail, setOtaFail] = useState<OtaFailInfo | null>(null)
   const [loading, setLoading] = useState(true)
   const [version, setVersion] = useState('')
   const [file, setFile] = useState<File | null>(null)
@@ -50,7 +70,7 @@ export default function FirmwareOtaPanel({ receiverKey, pollMs }: FirmwareOtaPan
     if (!silent) setLoading(true)
     fetch(`/api/firmware/${receiverKey}/upload`)
       .then(r => r.json())
-      .then(d => { setMeta(d.meta ?? null); setInstalled(d.installed ?? null) })
+      .then(d => { setMeta(d.meta ?? null); setInstalled(d.installed ?? null); setOtaFail(d.otaFail ?? null) })
       .catch(() => {})
       .finally(() => { if (!silent) setLoading(false) })
   }
@@ -169,6 +189,21 @@ export default function FirmwareOtaPanel({ receiverKey, pollMs }: FirmwareOtaPan
           ) : (
             <p className="text-faint">
               Receptor ainda não reportou a versão instalada (precisa do firmware com conn-report.cpp/reportVersion).
+            </p>
+          )}
+          {/* Só faz sentido mostrar enquanto ainda está desatualizado — uma
+              atualização bem-sucedida apaga isto no servidor (ver
+              writeInstalledFirmware em blobStore.ts). */}
+          {otaFail && outOfDate && (
+            <p className="text-amber-400 flex items-start gap-1.5 mt-1">
+              <AlertTriangle size={12} className="flex-shrink-0 mt-0.5" />
+              <span>
+                Última tentativa de auto-OTA falhou ({new Date(otaFail.at).toLocaleString('pt-BR')}):{' '}
+                {OTA_FAIL_STAGE_LABEL[otaFail.stage] ?? otaFail.stage}
+                {otaFail.httpCode ? ` (HTTP ${otaFail.httpCode}` : ''}
+                {otaFail.len != null ? `${otaFail.httpCode ? ', ' : ' ('}${(otaFail.len / 1024).toFixed(0)} KB recebidos)` : otaFail.httpCode ? ')' : ''}
+                . Ele tenta de novo sozinho na próxima religada.
+              </span>
             </p>
           )}
         </div>

@@ -32,6 +32,23 @@ function writeStoredPoints(stationId: string, year: number, month: number, point
   try { localStorage.setItem(storageKey(stationId, year, month), JSON.stringify(points)) } catch { }
 }
 
+// Mescla um resultado parcial de uma fonte com o que já está na tela: por
+// sonda (serial), não pelo tamanho total da lista. Antes, uma fonte que
+// respondesse com menos pontos num ciclo (comum logo após o pouso, quando
+// uma fonte fica momentaneamente atrás) fazia o app descartar a atualização
+// inteira e manter a posição antiga de todas as sondas, inclusive as que já
+// tinham dado novo. Agora cada sonda é atualizada se o parcial trouxer um
+// reporte mais recente para ela, e as demais (não presentes nesse parcial)
+// continuam com o que já estava na tela.
+function mergePartial(prev: SondePoint[], partial: SondePoint[]): SondePoint[] {
+  const bySerial = new Map(prev.map(p => [p.serial, p]))
+  for (const p of partial) {
+    const existing = bySerial.get(p.serial)
+    if (!existing || p.date.getTime() >= existing.date.getTime()) bySerial.set(p.serial, p)
+  }
+  return [...bySerial.values()]
+}
+
 // Aplica só o que já está no cache de recuperações (sem rede) — pra os
 // pontos parciais já saírem com o status certo das sondas já consultadas.
 function withCachedRecoveries(points: SondePoint[]): SondePoint[] {
@@ -61,10 +78,10 @@ export function useSondePoints(station: Station, year: number, month: number | n
     try {
       // O arquivo S3 do SondeHub tem meses de atraso: só vale para meses antigos.
       const result = await fetchMonthSondePoints(station, year, month, { archive: !isRecent }, partial => {
-        // Desenha cada fonte assim que responde — nunca encolhe a lista que
-        // já está na tela (ex.: vinda do localStorage) por um parcial menor.
+        // Desenha cada fonte assim que responde, mesclando por sonda com o
+        // que já está na tela (ex.: vinda do localStorage) — ver mergePartial.
         if (request !== requestRef.current) return
-        setPoints(prev => partial.length >= prev.length ? withCachedRecoveries(partial) : prev)
+        setPoints(prev => withCachedRecoveries(mergePartial(prev, partial)))
       })
       if (request !== requestRef.current) return
       // Falha total de rede não apaga os pontos já conhecidos.

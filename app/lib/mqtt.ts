@@ -94,6 +94,68 @@ export function parseRdzNet(payload: string): RdzNet | null {
   return net.localIp || net.publicIp ? net : null
 }
 
+// Motivo do reset deste boot, reportado uma vez por boot (reportBoot em
+// conn-report.cpp): {"reset_reason": 9, "wake": "timer"|"power-on/reset", "count": 42}
+// esp_reset_reason_t: 1=power-on 3=software(ex. auto-OTA) 4=panic
+// 5/6/7=watchdog 8=deep sleep 9=brownout(queda de tensão).
+export interface RdzBoot {
+  resetReason: number
+  wake: 'timer' | 'power-on/reset'
+  count?: number
+}
+
+// Resets que não são o esperado (ligar na tomada = power-on/1, acordar do
+// deep sleep = wake:"timer"): indicam o receptor caindo sozinho no meio da
+// operação — o sintoma relatado foi o display preso na tela de WiFi/IP por
+// até 20s logo depois de um desses.
+export const ABNORMAL_RESET_REASONS: Record<number, string> = {
+  3: 'reinício por software (ex. auto-OTA)',
+  4: 'pane (panic)',
+  5: 'watchdog (tarefa travada)',
+  6: 'watchdog (tarefa travada)',
+  7: 'watchdog (int. travada)',
+  9: 'queda de tensão (brownout)',
+}
+
+export function parseRdzBoot(payload: string): RdzBoot | null {
+  let raw: Record<string, unknown>
+  try { raw = JSON.parse(payload) } catch { return null }
+  if (typeof raw !== 'object' || raw === null) return null
+  const resetReason = num(raw.reset_reason)
+  if (resetReason === undefined) return null
+  const wake = raw.wake === 'timer' ? 'timer' : 'power-on/reset'
+  return { resetReason, wake, count: num(raw.count) }
+}
+
+// Falha do auto-OTA (reportOtaFail em conn-ota.cpp/conn-report.cpp), enviada
+// quando checkAutoOta() detecta versão diferente mas não consegue aplicar —
+// antes só ia pro serial (Serial.printf "OTA: ..."), invisível sem cabo.
+// stage: "version" (nem conseguiu checar a versão publicada) | "get"
+// (download não veio) | "begin"/"write"/"end" (Update.* falhou — write é o
+// mais comum: timeout no meio do download em sinal fraco).
+export interface RdzOtaFail {
+  stage: string
+  httpCode?: number
+  len?: number
+  remote?: string
+  at: number // epoch ms de quando o app recebeu o report (não vem do firmware)
+}
+
+export function parseRdzOtaFail(payload: string, at: number): RdzOtaFail | null {
+  let raw: Record<string, unknown>
+  try { raw = JSON.parse(payload) } catch { return null }
+  if (typeof raw !== 'object' || raw === null) return null
+  const stage = typeof raw.stage === 'string' ? raw.stage : ''
+  if (!stage) return null
+  return {
+    stage,
+    httpCode: num(raw.http_code),
+    len: num(raw.len),
+    remote: typeof raw.remote === 'string' && raw.remote ? raw.remote : undefined,
+    at,
+  }
+}
+
 export function parseRdzSleep(payload: string): RdzSleep | null {
   let raw: Record<string, unknown>
   try { raw = JSON.parse(payload) } catch { return null }

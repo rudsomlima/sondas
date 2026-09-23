@@ -4,12 +4,12 @@ import { useMemo } from 'react'
 import { ReceiverStatus } from '@/app/lib/sondehub'
 import { useReceiverStatus, MyReceiverSonde } from './useReceiverStatus'
 import { useReceiverLiveStatus } from './useReceiverLiveStatus'
-import type { RdzPower } from '@/app/lib/mqtt'
+import type { RdzPower, RdzBoot } from '@/app/lib/mqtt'
 import { getSettings } from '@/app/lib/settings'
 import { receiverKey as toReceiverKey } from '@/app/lib/receiverKey'
 import { usePowerStateHistory, PowerHistoryEntry } from './usePowerStateHistory'
 import { useBatteryHistory, BattVoltageEntry } from './useBatteryHistory'
-import { deriveSleepState } from '@/app/lib/powerState'
+import { deriveSleepState, isReceiverFresh } from '@/app/lib/powerState'
 import { useHistorySettings, type HistoryRecording } from './useHistorySettings'
 
 export type { PowerHistoryEntry, BattVoltageEntry }
@@ -39,6 +39,9 @@ export interface ReceiverState {
   // Estado de energia (CPU/WiFi/economia por bateria crítica) reportado pelo
   // firmware — null se nunca recebido.
   power: RdzPower | null
+  // Motivo do reset do boot atual (esp_reset_reason), reportado uma vez por
+  // boot — null se nunca recebido. Ver ABNORMAL_RESET_REASONS em mqtt.ts.
+  boot: RdzBoot | null
   // Histórico local (localStorage) de transições dormindo/acordado/escutando/
   // economia, pra linha do tempo em app/meu-receptor — ver usePowerStateHistory.
   powerHistory: PowerHistoryEntry[]
@@ -49,16 +52,6 @@ export interface ReceiverState {
   historyRecording: HistoryRecording
   setHistoryRecording: (patch: Partial<HistoryRecording>) => void
 }
-
-// Report HTTP chega no cadenciamento de mqtt.report_interval (default 60s),
-// não ~1s como o MQTT antigo — janela de frescor generosa (mesma landmark de
-// heartbeat já usada por powerState.ts) evita marcar "sondehub" à toa entre
-// dois reports.
-const LIVE_FRESH_MS = 5 * 60_000
-// No nível Silencioso o receptor desliga o WiFi e só religa a cada
-// power.report_min minutos (report_s no estado de energia) — sem esticar a
-// janela de frescor, o card acusaria "offline" entre duas religadas.
-const SILENT_SLACK_MS = 3 * 60_000
 
 /**
  * Composição híbrida do "meu receptor": reporte HTTP direto do firmware
@@ -94,10 +87,7 @@ export function useReceiver(reportIntervalMs?: number): ReceiverState {
 
   return useMemo(() => {
     const now = Date.now()
-    const silentGapMs = (live.powerState?.reportS ?? 0) * 1000
-    const freshMs = Math.max(LIVE_FRESH_MS, silentGapMs > 0 ? silentGapMs + SILENT_SLACK_MS : 0)
-    const liveFresh = live.connected && live.lastLiveMessageAt != null &&
-      now - live.lastLiveMessageAt < freshMs
+    const liveFresh = live.connected && isReceiverFresh(live.lastLiveMessageAt, live.powerState, now)
 
     const mySondes = sondehub.mySondes
 
@@ -115,6 +105,7 @@ export function useReceiver(reportIntervalMs?: number): ReceiverState {
       waitingLate,
       liveLastMessageAt: live.lastLiveMessageAt,
       power: live.powerState,
+      boot: live.bootState,
       powerHistory,
       deletePowerHistoryDay,
       batteryHistory,

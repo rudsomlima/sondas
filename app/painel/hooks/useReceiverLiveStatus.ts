@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import type { RdzPmu, RdzSleep, RdzPower } from '@/app/lib/mqtt'
+import type { RdzPmu, RdzSleep, RdzPower, RdzBoot } from '@/app/lib/mqtt'
 
 const DEFAULT_POLL_MS = 20_000
 // Não faz sentido bater no servidor bem mais rápido do que o receptor
@@ -16,6 +16,7 @@ export interface ReceiverLiveStatusState {
   ttgoBattV:         number | null
   sleepState:        RdzSleep | null
   powerState:        RdzPower | null
+  bootState:         RdzBoot | null
 }
 
 /**
@@ -33,7 +34,7 @@ export interface ReceiverLiveStatusState {
 // carrega a config completa), cai no default.
 export function useReceiverLiveStatus(receiverKey: string, reportIntervalMs?: number): ReceiverLiveStatusState {
   const [state, setState] = useState<ReceiverLiveStatusState>({
-    connected: false, lastLiveMessageAt: null, ttgoBattV: null, sleepState: null, powerState: null,
+    connected: false, lastLiveMessageAt: null, ttgoBattV: null, sleepState: null, powerState: null, bootState: null,
   })
   const keyRef = useRef(receiverKey)
   keyRef.current = receiverKey
@@ -47,7 +48,7 @@ export function useReceiverLiveStatus(receiverKey: string, reportIntervalMs?: nu
     const poll = () => {
       fetch(`/api/receiver-live-status?receiver=${encodeURIComponent(keyRef.current)}`)
         .then(r => r.json())
-        .then((d: { ok: boolean; status?: { pmu?: RdzPmu; sleep?: RdzSleep; power?: RdzPower; updatedAt: number } | null }) => {
+        .then((d: { ok: boolean; status?: { pmu?: RdzPmu; sleep?: RdzSleep; power?: RdzPower; boot?: RdzBoot; updatedAt: number } | null }) => {
           if (cancelled) return
           const s = d.status
           setState({
@@ -56,6 +57,7 @@ export function useReceiverLiveStatus(receiverKey: string, reportIntervalMs?: nu
             ttgoBattV: s?.pmu?.vBatt ?? null,
             sleepState: s?.sleep ?? null,
             powerState: s?.power ?? null,
+            bootState: s?.boot ?? null,
           })
         })
         .catch(() => { if (!cancelled) setState(prev => ({ ...prev, connected: false })) })
