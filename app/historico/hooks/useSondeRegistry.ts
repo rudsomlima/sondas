@@ -14,14 +14,21 @@ import type { SondeRecord } from '@/app/lib/sondeRegistry'
  *    `serials` que ainda estão incompletas (receptores, último sinal, 1º
  *    quadro, recuperação) — o servidor grava no R2.
  *
- * Devolve na hora o cache local (localStorage) e atualiza sozinho quando
- * chega coisa nova. Nunca bloqueia o desenho.
+ * Devolve o cache local (localStorage) assim que monta (vazio no 1º render,
+ * pra bater com o servidor) e atualiza sozinho quando chega coisa nova.
+ * Nunca bloqueia o desenho.
  */
 export function useSondeRegistry(
   stationId: string | null, years: number[], serials: string[], enrich = true,
 ): Map<string, SondeRecord> {
-  const [version, setVersion] = useState(0)
-  useEffect(() => subscribeRegistry(() => setVersion(v => v + 1)), [])
+  // Vazio no 1º render (igual ao servidor, que nunca tem localStorage) — o
+  // cache local só entra depois de montar, num useEffect, pra não divergir
+  // do HTML gerado no servidor e quebrar a hidratação.
+  const [records, setRecords] = useState<Map<string, SondeRecord>>(() => new Map())
+  useEffect(() => {
+    setRecords(cachedRecords())
+    return subscribeRegistry(() => setRecords(cachedRecords()))
+  }, [])
 
   const yearsKey = years.join(',')
   useEffect(() => {
@@ -42,6 +49,5 @@ export function useSondeRegistry(
     return () => clearTimeout(t)
   }, [enrich, stationId, serialsKey])
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  return useMemo(() => cachedRecords(), [version])
+  return records
 }
