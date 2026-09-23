@@ -45,7 +45,7 @@ export async function POST(req: NextRequest) {
       await writeReceiverLiveStatus(key, { pmu: pmu ?? undefined, sleep: sleep ?? undefined, power: power ?? undefined, net: net ?? undefined, boot: boot ?? undefined }, now)
     }
 
-    const updated = await recordCollected(prefix, { pmu: pmu ?? undefined, sleep: sleep ?? undefined, power: power ?? undefined }, now)
+    const updated = await recordCollected(prefix, { pmu: pmu ?? undefined, sleep: sleep ?? undefined, power: power ?? undefined, boot: boot ?? undefined }, now)
     return NextResponse.json({ ok: true, updated })
   } catch {
     return NextResponse.json({ ok: false, error: 'Erro ao processar reporte' }, { status: 500 })

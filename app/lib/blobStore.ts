@@ -189,11 +189,11 @@ export async function deleteR2Object(key: string): Promise<void> {
 // Histórico de bateria e power por receptor
 // Caminho: sondas/receivers/{receiverKey}/{type}-history.json
 // ──────────────────────────────────────────────────────────────────────────────
-function receiverHistoryPath(key: string, type: 'power' | 'batt'): string {
+function receiverHistoryPath(key: string, type: 'power' | 'batt' | 'boot'): string {
   return `sondas/receivers/${key}/${type}-history.json`
 }
 
-export async function readReceiverHistory<T>(key: string, type: 'power' | 'batt'): Promise<T[] | null> {
+export async function readReceiverHistory<T>(key: string, type: 'power' | 'batt' | 'boot'): Promise<T[] | null> {
   const client = getClient()
   if (!client) return null
   try {
@@ -209,7 +209,7 @@ export async function readReceiverHistory<T>(key: string, type: 'power' | 'batt'
   }
 }
 
-export async function writeReceiverHistory<T>(key: string, type: 'power' | 'batt', data: T[]): Promise<void> {
+export async function writeReceiverHistory<T>(key: string, type: 'power' | 'batt' | 'boot', data: T[]): Promise<void> {
   const client = getClient()
   if (!client) return
   try {
@@ -226,7 +226,7 @@ export async function writeReceiverHistory<T>(key: string, type: 'power' | 'batt
 
 export interface ReceiverHistoryFile {
   key:          string   // receiverKey (ex.: "home_rdz01")
-  type:         'power' | 'batt'
+  type:         'power' | 'batt' | 'boot'
   r2Key:        string   // caminho completo no R2
   sizeBytes:    number
   lastModified: string
@@ -246,11 +246,11 @@ export async function listReceiverHistories(): Promise<ReceiverHistoryFile[]> {
       }))
       for (const obj of res.Contents ?? []) {
         if (!obj.Key) continue
-        const m = obj.Key.match(/receivers\/([^/]+)\/(power|batt)-history\.json$/)
+        const m = obj.Key.match(/receivers\/([^/]+)\/(power|batt|boot)-history\.json$/)
         if (!m) continue
         result.push({
           key:          m[1],
-          type:         m[2] as 'power' | 'batt',
+          type:         m[2] as 'power' | 'batt' | 'boot',
           r2Key:        obj.Key,
           sizeBytes:    obj.Size ?? 0,
           lastModified: obj.LastModified?.toISOString() ?? '',
@@ -272,6 +272,7 @@ export async function deleteReceiverHistory(key: string): Promise<void> {
     await Promise.all([
       client.send(new DeleteObjectCommand({ Bucket: bucket(), Key: receiverHistoryPath(key, 'power') })),
       client.send(new DeleteObjectCommand({ Bucket: bucket(), Key: receiverHistoryPath(key, 'batt') })),
+      client.send(new DeleteObjectCommand({ Bucket: bucket(), Key: receiverHistoryPath(key, 'boot') })),
     ])
   } catch (e) {
     console.error('[R2] deleteReceiverHistory falhou:', e)

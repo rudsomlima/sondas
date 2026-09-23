@@ -117,6 +117,15 @@ export const ABNORMAL_RESET_REASONS: Record<number, string> = {
   9: 'queda de tensão (brownout)',
 }
 
+// Todos os motivos de reset (esp_reset_reason_t) — não só os anormais acima —
+// pro log de reinícios em app/meu-receptor mostrar um rótulo pra qualquer
+// entrada, incluindo os casos esperados (ligar na tomada, acordar do sono).
+export const RESET_REASON_LABEL: Record<number, string> = {
+  1: 'ligado (power-on)',
+  ...ABNORMAL_RESET_REASONS,
+  8: 'acordou do deep sleep',
+}
+
 export function parseRdzBoot(payload: string): RdzBoot | null {
   let raw: Record<string, unknown>
   try { raw = JSON.parse(payload) } catch { return null }

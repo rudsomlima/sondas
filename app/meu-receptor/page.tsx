@@ -11,6 +11,7 @@ import FullConfigEditor from './components/FullConfigEditor'
 import PowerTimeline from './components/PowerTimeline'
 import BatteryChart from './components/BatteryChart'
 import FirmwareOtaPanel from './components/FirmwareOtaPanel'
+import BootLogPanel from './components/BootLogPanel'
 import PowerBoostPanel from './components/PowerBoostPanel'
 import ReceptionQualityPanel from './components/ReceptionQualityPanel'
 import { CollapsibleSection } from './components/Collapsible'
@@ -241,6 +242,12 @@ export default function MeuReceptorPage() {
       <CollapsibleSection id="firmware">
         <FirmwareOtaPanel receiverKey={receiverKey(activePrefix)} pollMs={reportIntervalMs} />
       </CollapsibleSection>
+
+      {activePrefix && (
+        <CollapsibleSection id="reinicios">
+          <BootLogPanel receiverKey={receiverKey(activePrefix)} />
+        </CollapsibleSection>
+      )}
 
       <CollapsibleSection id="bateria">
       <BatteryChart

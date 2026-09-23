@@ -10,7 +10,7 @@
  * nada pra esse cron coletar. A lógica de dedup abaixo é a mesma de antes.
  */
 import { readReceiverHistory, writeReceiverHistory, readHistorySettings, type HistorySettings } from './blobStore'
-import { parseRdzPmu, parseRdzSleep, parseRdzPower } from './mqtt'
+import { parseRdzPmu, parseRdzSleep, parseRdzPower, type RdzBoot } from './mqtt'
 import {
   deriveSleepState, derivePowerHistoryState, powerHistoryKey, shouldRecordBattReading,
   type PowerHistoryEntry, type BattVoltageEntry,
@@ -19,11 +19,19 @@ import { receiverKey } from './receiverKey'
 
 const MAX_HISTORY_ENTRIES_POWER = 2000
 const MAX_HISTORY_ENTRIES_BATT  = 5000
+// Reinícios são raros (não é uma leitura periódica) — 500 entradas cobrem
+// anos de uso, mesmo em receptor instável reiniciando várias vezes ao dia.
+const MAX_HISTORY_ENTRIES_BOOT  = 500
+
+export interface BootLogEntry extends RdzBoot {
+  at: number
+}
 
 export interface Collected {
   pmu?:   ReturnType<typeof parseRdzPmu>
   sleep?: ReturnType<typeof parseRdzSleep>
   power?: ReturnType<typeof parseRdzPower>
+  boot?:  RdzBoot | null
 }
 
 // Grava no R2 o que foi coletado para um receptor (pmu/sleep/power). Só
@@ -51,7 +59,7 @@ async function historySettingsFor(key: string): Promise<HistorySettings> {
 }
 
 export async function recordCollected(prefix: string, collected: Collected, now: number): Promise<boolean> {
-  const { pmu, sleep, power } = collected
+  const { pmu, sleep, power, boot } = collected
   const key = receiverKey(prefix)
   let updated = false
   const settings = await historySettingsFor(key)
@@ -79,6 +87,22 @@ export async function recordCollected(prefix: string, collected: Collected, now:
       await writeReceiverHistory(key, 'batt', trimmed)
       updated = true
     }
+  }
+
+  // Um reinício por boot: reportBoot() (conn-report.cpp) roda uma vez só por
+  // boot, atrás do static awakeReported em sleepLoop() — sem retry no
+  // firmware (reportPost não reenvia sozinho), então não precisa de dedup
+  // aqui. IMPORTANTE: `count` (sleepBootCount) NÃO é um identificador único
+  // de boot — ele é zerado pra 1 em todo reset que não seja timer-wake (ver
+  // sleepSetup em sleep.cpp), então "ligar na tomada" repetidas vezes chega
+  // sempre com count=1/resetReason=1. Um dedup por count+resetReason (como
+  // uma versão anterior fazia) descartava silenciosamente essas repetições.
+  if (boot) {
+    const bootHistory = (await readReceiverHistory<BootLogEntry>(key, 'boot')) ?? []
+    const next = [...bootHistory, { at: now, resetReason: boot.resetReason, wake: boot.wake, count: boot.count }]
+    const trimmed = next.length > MAX_HISTORY_ENTRIES_BOOT ? next.slice(next.length - MAX_HISTORY_ENTRIES_BOOT) : next
+    await writeReceiverHistory(key, 'boot', trimmed)
+    updated = true
   }
 
   return updated

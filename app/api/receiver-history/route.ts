@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { readReceiverHistory, writeReceiverHistory, deleteReceiverHistory } from '@/app/lib/blobStore'
 
-// GET  ?key=home_rdz01&type=power|batt  → JSON array (ou [] se não existir)
-// PUT  ?key=home_rdz01&type=power|batt  body: JSON array → salva no R2
-// DELETE ?key=home_rdz01 → apaga power-history + batt-history deste receptor
+// GET  ?key=home_rdz01&type=power|batt|boot  → JSON array (ou [] se não existir)
+// PUT  ?key=home_rdz01&type=power|batt|boot  body: JSON array → salva no R2
+// DELETE ?key=home_rdz01 → apaga power-history + batt-history + boot-history deste receptor
 
-function parseType(raw: string | null): 'power' | 'batt' | null {
-  return raw === 'power' || raw === 'batt' ? raw : null
+function parseType(raw: string | null): 'power' | 'batt' | 'boot' | null {
+  return raw === 'power' || raw === 'batt' || raw === 'boot' ? raw : null
 }
 
 export async function GET(req: NextRequest) {
