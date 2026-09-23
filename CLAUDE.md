@@ -371,7 +371,7 @@ receptor). O token nunca volta pro navegador.
   desenha todas as estações; clique liga/desliga o monitoramento (ignorado
   enquanto se desenha/edita) e as monitoradas ganham círculo ciano sem
   preenchimento com o raio de alcance. Áreas salvam na hora; estações/raios só
-  no botão Salvar das configurações.
+  nos botões Salvar (o das configurações e o "Salvar estações" da própria seção — ambos gravam o mesmo JSON).
 
 ### Páginas
 

@@ -485,7 +485,7 @@ export default function TelegramPage() {
           <h3 className="text-sm font-semibold text-white mb-1">Estações monitoradas</h3>
           <p className="text-[11px] text-faint mb-3 leading-relaxed">
             O servidor avisa lançamento e pouso das estações marcadas mesmo com o app fechado. Marque as da região
-            das suas áreas de interesse (também dá pra clicar nas estações no mapa). O círculo ciano no mapa é o alcance. Lembre de clicar em Salvar nas configurações acima.
+            das suas áreas de interesse (também dá pra clicar nas estações no mapa). O círculo ciano no mapa é o alcance. Depois de marcar, clique em Salvar estações.
           </p>
           <div className="flex flex-wrap items-center gap-2 mb-2">
             <input
@@ -527,7 +527,22 @@ export default function TelegramPage() {
               </label>
             ))}
           </div>
-          <p className="text-[11px] text-faint mt-2">{watched.size} estação(ões) marcada(s).</p>
+          <div className="flex items-center gap-3 mt-3">
+            <button
+              onClick={handleSave}
+              disabled={saving}
+              className="flex items-center gap-2 px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs font-medium transition-colors"
+            >
+              {saving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
+              Salvar estações
+            </button>
+            <span className="text-[11px] text-faint">{watched.size} estação(ões) marcada(s).</span>
+            {saveMsg && (
+              <span className={`flex items-center gap-1.5 text-[11px] ${saveMsg.ok ? 'text-emerald-400' : 'text-yellow-400'}`}>
+                {saveMsg.ok ? <CheckCircle2 size={11} /> : <XCircle size={11} />} {saveMsg.text}
+              </span>
+            )}
+          </div>
         </div>
       </div>
     </div>
