@@ -57,7 +57,7 @@ export async function checkReceiverAlerts(): Promise<ReceiverAlertsSummary> {
       })
 
       if (settings.notifyReceiverOffline && offlineChanged) {
-        const text = buildReceiverAlertText(offline ? 'offline' : 'online', entry.prefix, { minutesSilent: minutesSilent ?? undefined })
+        const text = buildReceiverAlertText(offline ? 'offline' : 'online', entry.prefix, { minutesSilent: minutesSilent ?? undefined }, settings.messageTemplates)
         const r = await sendTelegramMessage(settings.botToken, settings.chatId, text)
         if (r.ok) sent++
         else {
@@ -68,7 +68,7 @@ export async function checkReceiverAlerts(): Promise<ReceiverAlertsSummary> {
         }
       }
       if (settings.notifyLowBattery && batteryChanged && lowBattery !== undefined) {
-        const text = buildReceiverAlertText(lowBattery ? 'lowBattery' : 'batteryOk', entry.prefix, { vBatt })
+        const text = buildReceiverAlertText(lowBattery ? 'lowBattery' : 'batteryOk', entry.prefix, { vBatt }, settings.messageTemplates)
         const r = await sendTelegramMessage(settings.botToken, settings.chatId, text)
         if (r.ok) sent++
         else {

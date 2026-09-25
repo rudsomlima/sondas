@@ -1,10 +1,13 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
-import { Send, Save, CheckCircle2, XCircle, Loader2, MapPin, Trash2, Rocket, PlaneLanding, Search, Radio, BatteryWarning } from 'lucide-react'
+import { Send, Save, CheckCircle2, XCircle, Loader2, MapPin, Trash2, Rocket, PlaneLanding, Search, Radio, BatteryWarning, GripVertical, Plus, X, Clock, Mountain, Trophy, TrendingUp, Ruler, Link2, Star, Wifi, FileText, ChevronDown, RotateCcw, Building2 } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
 import { Station, DEFAULT_STATION, getSelectedStation, SOUTH_AMERICA_STATIONS } from '@/app/lib/stations'
 import { findMatchingGeofence } from '@/app/lib/geofence'
 import { DEFAULT_WATCH_RADIUS_KM, type Geofence } from '@/app/lib/telegramTypes'
+import type { TelegramMessageTemplateKey, TelegramMessageTemplates } from '@/app/lib/telegramTypes'
+import { DEFAULT_MESSAGE_TEMPLATES, LEGACY_DEFAULT_LANDING_TEMPLATE } from '@/app/lib/telegramMessage'
 import GeofenceMap from './components/GeofenceMap'
 
 interface TelegramSettingsView {
@@ -19,6 +22,7 @@ interface TelegramSettingsView {
   lowBatteryVoltage: number
   watchedStationIds: string[]
   stationRadiusKm: Record<string, number>
+  messageTemplates: TelegramMessageTemplates
   hasToken: boolean
   tokenPreview: string
 }
@@ -27,6 +31,7 @@ const EMPTY_SETTINGS: TelegramSettingsView = {
   chatId: '', enabled: false, notifyLaunch: true, notifyLanding: true, notifyAnywhere: true,
   notifyReceiverOffline: true, receiverOfflineMinutes: 30, notifyLowBattery: true, lowBatteryVoltage: 3.5,
   watchedStationIds: [DEFAULT_STATION.id], stationRadiusKm: {},
+  messageTemplates: {},
   hasToken: false, tokenPreview: '',
 }
 
@@ -37,8 +42,6 @@ export default function TelegramPage() {
   const [loaded, setLoaded] = useState(false)
   const [saving, setSaving] = useState(false)
   const [saveMsg, setSaveMsg] = useState<{ ok: boolean; text: string } | null>(null)
-  const [testing, setTesting] = useState(false)
-  const [testMsg, setTestMsg] = useState<{ ok: boolean; text: string } | null>(null)
   const [detecting, setDetecting] = useState(false)
   const [detectMsg, setDetectMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
@@ -59,15 +62,16 @@ export default function TelegramPage() {
       .finally(() => setAreasLoaded(true))
   }, [])
 
-  async function handleSave() {
+  async function handleSave(messageTemplates = settings.messageTemplates) {
     setSaving(true)
     setSaveMsg(null)
+    const tokenToSave = tokenInput.trim()
     try {
       const res = await fetch('/api/telegram-settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          botToken: tokenInput.trim(),
+          botToken: tokenToSave,
           chatId: settings.chatId,
           enabled: settings.enabled,
           notifyLaunch: settings.notifyLaunch,
@@ -79,20 +83,35 @@ export default function TelegramPage() {
           lowBatteryVoltage: settings.lowBatteryVoltage,
           watchedStationIds: settings.watchedStationIds,
           stationRadiusKm: settings.stationRadiusKm,
+          messageTemplates,
         }),
       })
-      const json = await res.json()
+      const responseText = await res.text()
+      let json: any
+      try { json = responseText ? JSON.parse(responseText) : {} }
+      catch { throw new Error(`Resposta inválida do servidor (${res.status}): ${responseText.slice(0, 160)}`) }
       if (!res.ok) throw new Error(json?.error || `erro ${res.status}`)
+      const refreshRes = await fetch('/api/telegram-settings', { cache: 'no-store' })
+      if (refreshRes.ok) {
+        const refreshed = await refreshRes.json()
+        setSettingsState(refreshed)
+        setSaveMsg({ ok: true, text: 'Configurações salvas.' })
+      } else {
+        setSettingsState(s => ({ ...s, hasToken: s.hasToken || Boolean(tokenToSave), tokenPreview: tokenToSave ? `…${tokenToSave.slice(-6)}` : s.tokenPreview }))
+        setSaveMsg({ ok: true, text: 'Configurações salvas; a confirmação do armazenamento não carregou.' })
+      }
       setTokenInput('')
-      const refreshed = await fetch('/api/telegram-settings', { cache: 'no-store' }).then(r => r.json())
-      setSettingsState(refreshed)
-      setSaveMsg({ ok: true, text: 'Configurações salvas.' })
     } catch (e: any) {
       setSaveMsg({ ok: false, text: e?.message || 'Falha ao salvar.' })
     } finally {
       setSaving(false)
       setTimeout(() => setSaveMsg(null), 3500)
     }
+  }
+
+  async function restoreDefaultTemplates() {
+    setSettingsState(s => ({ ...s, messageTemplates: {} }))
+    await handleSave({})
   }
 
   async function handleDetectChat() {
@@ -111,26 +130,6 @@ export default function TelegramPage() {
       setDetectMsg({ ok: false, text: e?.message || 'Falha ao detectar.' })
     } finally {
       setDetecting(false)
-    }
-  }
-
-  async function handleTest() {
-    setTesting(true)
-    setTestMsg(null)
-    try {
-      const res = await fetch('/api/telegram-test', { method: 'POST' })
-      const json = await res.json()
-      if (!res.ok) throw new Error(json?.error || `erro ${res.status}`)
-      setTestMsg({
-        ok: true,
-        text: json.withPhoto
-          ? 'Mensagens de teste enviadas com mapa (lançamento + pouso) — confira o Telegram.'
-          : 'Mensagens de teste enviadas (sem imagem — o servidor não conseguiu gerar o mapa agora) — confira o Telegram.',
-      })
-    } catch (e: any) {
-      setTestMsg({ ok: false, text: e?.message || 'Falha ao enviar.' })
-    } finally {
-      setTesting(false)
     }
   }
 
@@ -225,13 +224,13 @@ export default function TelegramPage() {
             </div>
 
             <div className="mb-4">
-              <label className="block text-xs text-gray-400 mb-1.5">Chat ID</label>
+              <label className="block text-xs text-gray-400 mb-1.5">Chat ID do grupo</label>
               <div className="flex gap-2">
                 <input
                   type="text"
                   value={settings.chatId}
                   onChange={e => setSettingsState(s => ({ ...s, chatId: e.target.value }))}
-                  placeholder="ex.: 123456789 ou -1001234567890 (grupo)"
+                  placeholder="ex.: -1001234567890"
                   className="flex-1 min-w-0 bg-bg border border-border rounded-md text-sm text-white px-3 py-2 outline-none focus:border-blue-500 mono"
                 />
                 <button
@@ -246,11 +245,9 @@ export default function TelegramPage() {
                 </button>
               </div>
               <p className="text-[11px] text-faint mt-1.5 leading-relaxed">
-                <b className="text-gray-400">"Bad Request: chat not found"</b> no teste = quase sempre o chat ID errado
-                ou vazio. O Telegram só deixa o bot mandar mensagem pra quem já falou com ele: abra o chat com o seu
-                bot, mande qualquer mensagem (ex.: <span className="mono">/start</span>) e clique em{' '}
-                <span className="text-gray-300">Detectar</span> pra preencher o ID automaticamente.
+                Para enviar ao grupo, adicione o bot ao grupo e use Detectar depois de alguém enviar uma mensagem nele. O ID geralmente começa com <span className="mono">-100</span>.
               </p>
+              <p className="text-[11px] text-faint mt-1.5 leading-relaxed">Se o teste indicar "chat not found", confira o ID. Em grupos, verifique se o bot continua no grupo e pode enviar mensagens.</p>
               {detectMsg && (
                 <span className={`flex items-center gap-1.5 mt-1.5 text-[11px] ${detectMsg.ok ? 'text-emerald-400' : 'text-yellow-400'}`}>
                   {detectMsg.ok ? <CheckCircle2 size={11} /> : <XCircle size={11} />} {detectMsg.text}
@@ -294,37 +291,19 @@ export default function TelegramPage() {
 
             <div className="flex flex-wrap gap-2 mt-4">
               <button
-                onClick={handleSave}
+                onClick={() => handleSave()}
                 disabled={saving}
                 className="flex items-center gap-2 px-4 py-2 bg-blue-600 rounded-md text-sm text-white hover:bg-blue-700 transition-all disabled:opacity-60"
               >
                 {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
                 Salvar
               </button>
-              <button
-                onClick={handleTest}
-                disabled={testing || !settings.hasToken}
-                title={!settings.hasToken ? 'Salve um bot token primeiro' : undefined}
-                className="flex items-center gap-2 px-4 py-2 bg-surface border border-border rounded-md text-sm text-gray-300 hover:text-white transition-all disabled:opacity-50"
-              >
-                {testing ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
-                {testing ? 'Gerando mapas…' : 'Enviar teste'}
-              </button>
             </div>
-            <p className="text-[11px] text-faint mt-1.5">
-              O teste sorteia dois pontos aleatórios no Rio Grande do Norte e gera um mapa pra cada um (busca tiles
-              do OpenStreetMap e monta a imagem no servidor) — leva alguns segundos, é normal.
-            </p>
 
             <div className="mt-3 min-h-[16px] text-[11px]">
               {saveMsg && (
                 <span className={`flex items-center gap-1.5 ${saveMsg.ok ? 'text-emerald-400' : 'text-yellow-400'}`}>
                   {saveMsg.ok ? <CheckCircle2 size={11} /> : <XCircle size={11} />} {saveMsg.text}
-                </span>
-              )}
-              {testMsg && (
-                <span className={`flex items-center gap-1.5 mt-1 ${testMsg.ok ? 'text-emerald-400' : 'text-yellow-400'}`}>
-                  {testMsg.ok ? <CheckCircle2 size={11} /> : <XCircle size={11} />} {testMsg.text}
                 </span>
               )}
             </div>
@@ -336,6 +315,48 @@ export default function TelegramPage() {
             </p>
           </>
         )}
+      </div>
+
+      {/* Modelos das mensagens */}
+      <div className="panel p-5 mb-6">
+        <div className="mb-5 flex items-start gap-3 rounded-xl border border-blue-400/15 bg-gradient-to-r from-blue-500/10 via-surface to-violet-500/10 p-4">
+          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-blue-400/20 bg-blue-400/10 text-blue-300"><FileText size={21} /></span>
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-base font-semibold text-white">Modelos de todas as mensagens</h2>
+              <span className="rounded-full border border-blue-400/20 bg-blue-400/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-blue-200">6 modelos</span>
+            </div>
+            <p className="mt-1 text-xs leading-relaxed text-gray-400">Monte cada mensagem com peças visuais. Clique ou arraste um badge para adicionar, depois reorganize as peças na área de composição. A prévia mostra um exemplo no formato do Telegram.</p>
+          </div>
+        </div>
+        <div className="space-y-3">
+          {([
+            ['launch', 'Lançamento'], ['landing', 'Pouso'], ['receiverOffline', 'Receptor offline'],
+            ['receiverOnline', 'Receptor voltou online'], ['lowBattery', 'Bateria baixa'], ['batteryOk', 'Bateria normalizada'],
+          ] as [TelegramMessageTemplateKey, string][]).map(([key, label]) => (
+            <MessageTemplateEditor
+              key={key}
+              label={label}
+              templateKey={key}
+              value={key === 'landing' && settings.messageTemplates[key] === LEGACY_DEFAULT_LANDING_TEMPLATE
+                ? DEFAULT_MESSAGE_TEMPLATES[key]
+                : settings.messageTemplates[key] ?? DEFAULT_MESSAGE_TEMPLATES[key]}
+              canTest={settings.hasToken && Boolean(settings.chatId)}
+              onChange={value => setSettingsState(s => ({ ...s, messageTemplates: { ...s.messageTemplates, [key]: value } }))}
+            />
+          ))}
+        </div>
+        <div className="flex flex-wrap gap-2 mt-4">
+          <button onClick={() => handleSave()} disabled={saving} className="flex items-center gap-2 px-4 py-2 bg-blue-600 rounded-md text-sm text-white hover:bg-blue-700 transition-all disabled:opacity-60">
+            {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+            Salvar modelos
+          </button>
+          <button onClick={restoreDefaultTemplates} disabled={saving} className="flex items-center gap-2 px-4 py-2 bg-surface border border-border rounded-md text-sm text-gray-300 hover:text-white transition-all disabled:opacity-60">
+            <RotateCcw size={14} />
+            Restaurar todos ao padrão
+          </button>
+          {saveMsg && <span className={`flex items-center gap-1.5 text-[11px] self-center ${saveMsg.ok ? 'text-emerald-400' : 'text-yellow-400'}`}>{saveMsg.ok ? <CheckCircle2 size={11} /> : <XCircle size={11} />}{saveMsg.text}</span>}
+        </div>
       </div>
 
       {/* Meu receptor: offline / bateria baixa */}
@@ -398,7 +419,7 @@ export default function TelegramPage() {
 
             <div className="flex flex-wrap gap-2 mt-4">
               <button
-                onClick={handleSave}
+                onClick={() => handleSave()}
                 disabled={saving}
                 className="flex items-center gap-2 px-4 py-2 bg-blue-600 rounded-md text-sm text-white hover:bg-blue-700 transition-all disabled:opacity-60"
               >
@@ -529,7 +550,7 @@ export default function TelegramPage() {
           </div>
           <div className="flex items-center gap-3 mt-3">
             <button
-              onClick={handleSave}
+              onClick={() => handleSave()}
               disabled={saving}
               className="flex items-center gap-2 px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs font-medium transition-colors"
             >
@@ -546,6 +567,268 @@ export default function TelegramPage() {
         </div>
       </div>
     </div>
+  )
+}
+
+type TemplateToken = { key: string; label: string; icon: LucideIcon; style: string }
+
+const EVENT_TEMPLATE_TOKENS: TemplateToken[] = [
+  { key: 'header', label: 'Título do aviso', icon: Rocket, style: 'blue' },
+  { key: 'stationLine', label: 'Estação', icon: Radio, style: 'cyan' },
+  { key: 'timeLine', label: 'Horário', icon: Clock, style: 'violet' },
+  { key: 'positionLine', label: 'Coordenadas', icon: MapPin, style: 'rose' },
+  { key: 'landingCityLine', label: 'Cidade do pouso', icon: Building2, style: 'green' },
+  { key: 'altitudeLine', label: 'Altitude', icon: Mountain, style: 'orange' },
+  { key: 'firstSignalLine', label: 'Primeiro sinal', icon: Trophy, style: 'yellow' },
+  { key: 'climbingLine', label: 'Subida / descida', icon: TrendingUp, style: 'green' },
+  { key: 'frequencyLine', label: 'Frequência', icon: Radio, style: 'cyan' },
+  { key: 'sourceLine', label: 'Fonte', icon: Search, style: 'violet' },
+  { key: 'receiverLine', label: 'Receptor', icon: Wifi, style: 'green' },
+  { key: 'distanceLine', label: 'Distância e rumo', icon: Ruler, style: 'orange' },
+  { key: 'areaLine', label: 'Área de interesse', icon: Star, style: 'yellow' },
+  { key: 'linksLine', label: 'Links do mapa', icon: Link2, style: 'blue' },
+]
+
+const ALERT_TEMPLATE_TOKENS: Partial<Record<TelegramMessageTemplateKey, TemplateToken[]>> = {
+  receiverOffline: [
+    { key: 'offlineHeader', label: 'Título offline', icon: Wifi, style: 'rose' },
+    { key: 'offlineBody', label: 'Tempo sem sinal', icon: Clock, style: 'orange' },
+  ],
+  receiverOnline: [
+    { key: 'onlineHeader', label: 'Aviso online', icon: Wifi, style: 'green' },
+  ],
+  lowBattery: [
+    { key: 'lowBatteryHeader', label: 'Título bateria baixa', icon: BatteryWarning, style: 'orange' },
+    { key: 'lowBatteryBody', label: 'Tensão atual', icon: TrendingUp, style: 'yellow' },
+  ],
+  batteryOk: [
+    { key: 'batteryOkHeader', label: 'Título bateria normal', icon: BatteryWarning, style: 'green' },
+    { key: 'batteryOkBody', label: 'Tensão atual', icon: TrendingUp, style: 'cyan' },
+  ],
+}
+
+const TOKEN_STYLES: Record<string, string> = {
+  blue: 'border-blue-400/30 bg-blue-400/10 text-blue-200 hover:bg-blue-400/20',
+  cyan: 'border-cyan-400/30 bg-cyan-400/10 text-cyan-200 hover:bg-cyan-400/20',
+  violet: 'border-violet-400/30 bg-violet-400/10 text-violet-200 hover:bg-violet-400/20',
+  rose: 'border-rose-400/30 bg-rose-400/10 text-rose-200 hover:bg-rose-400/20',
+  orange: 'border-orange-400/30 bg-orange-400/10 text-orange-200 hover:bg-orange-400/20',
+  yellow: 'border-yellow-400/30 bg-yellow-400/10 text-yellow-200 hover:bg-yellow-400/20',
+  green: 'border-emerald-400/30 bg-emerald-400/10 text-emerald-200 hover:bg-emerald-400/20',
+}
+
+const TEMPLATE_PREVIEW_VALUES: Record<string, string> = {
+  header: '🚀 <b>Sonda W12345 lançada</b>',
+  stationLine: '📡 Estação: Natal Aeroporto (82599)',
+  timeLine: '🕒 12:34:56 (GMT-3)',
+  positionLine: '📍 -5.90, -35.20',
+  landingCityLine: '🏙️ Localidade: Natal-RN',
+  altitudeLine: '⬆️ Altitude: 850 m',
+  firstSignalLine: '🥇 Primeiro sinal: 720 m às 12:32 (RX-CASA)',
+  climbingLine: '📈 Subida: +5.2 m/s',
+  frequencyLine: '📻 Frequência: 403.200 MHz',
+  sourceLine: '🔎 Fonte: SondeHub (RF)',
+  receiverLine: '📶 Último receptor: RX-CASA',
+  distanceLine: '📏 12 km da estação, rumo N (5°)',
+  areaLine: '⭐ Dentro da área de interesse: <b>Centro</b>',
+  linksLine: '🗺 <a href="https://example.com">Abrir no Google Maps</a> · <a href="https://example.com">SondeHub</a>',
+  offlineHeader: '📴 <b>Receptor "RX-CASA" parece offline</b>',
+  offlineBody: 'Sem nenhum report há 32 min.',
+  onlineHeader: '📡 <b>Receptor "RX-CASA" voltou a reportar</b>',
+  lowBatteryHeader: '🔋 <b>Bateria baixa no receptor "RX-CASA"</b>',
+  lowBatteryBody: 'Tensão atual: 3.42 V',
+  batteryOkHeader: '🔋 <b>Bateria do receptor "RX-CASA" normalizou</b>',
+  batteryOkBody: 'Tensão atual: 3.42 V',
+  name: 'RX-CASA',
+  minutesSilent: '32',
+  voltage: '3.42',
+}
+
+function previewMarkup(line: string): React.ReactNode[] {
+  const withoutLinks = line.replace(/<a\b[^>]*>(.*?)<\/a>/gi, '$1')
+  const parts = withoutLinks.split(/(<\/?(?:b|strong|i|em|code)>)/gi)
+  let bold = false
+  let italic = false
+  let code = false
+  return parts.filter(Boolean).map((part, index) => {
+    if (/^<\/?(?:b|strong|i|em|code)>$/i.test(part)) {
+      const closing = /^<\//.test(part)
+      const tag = part.replace(/[<>/]/g, '').toLowerCase()
+      if (tag === 'b' || tag === 'strong') bold = !closing
+      if (tag === 'i' || tag === 'em') italic = !closing
+      if (tag === 'code') code = !closing
+      return null
+    }
+    return <span key={index} className={`${bold ? 'font-bold' : ''} ${italic ? 'italic' : ''} ${code ? 'font-mono' : ''}`}>{part}</span>
+  })
+}
+
+function MessageTemplateEditor({ label, templateKey, value, canTest, onChange }: {
+  label: string
+  templateKey: TelegramMessageTemplateKey
+  value: string
+  canTest: boolean
+  onChange: (value: string) => void
+}) {
+  const [drag, setDrag] = useState<{ kind: 'token'; key: string } | { kind: 'block'; index: number } | null>(null)
+  const [expanded, setExpanded] = useState(templateKey === 'launch')
+  const [testing, setTesting] = useState(false)
+  const [testResult, setTestResult] = useState<{ ok: boolean; text: string } | null>(null)
+  const blocks = value ? value.split('\n') : []
+  const tokens = templateKey === 'launch' || templateKey === 'landing'
+    ? EVENT_TEMPLATE_TOKENS.filter(token => templateKey === 'landing' || token.key !== 'landingCityLine')
+    : (ALERT_TEMPLATE_TOKENS[templateKey] ?? [])
+  const tokenByKey = new Map(tokens.map(token => [token.key, token]))
+  const landing = templateKey === 'landing'
+  const sampleValues: Record<string, string> = {
+    ...TEMPLATE_PREVIEW_VALUES,
+    header: landing ? '🪂 <b>Sonda W12345 pousou</b>' : TEMPLATE_PREVIEW_VALUES.header,
+    climbingLine: landing ? '📉 Variação vertical: -1.1 m/s' : TEMPLATE_PREVIEW_VALUES.climbingLine,
+  }
+  const previewLines = blocks
+    .map(line => line.replace(/\{([a-zA-Z]+)\}/g, (token, key: string) => sampleValues[key] ?? token))
+    .filter(line => line.trim().length > 0)
+
+  function writeBlocks(next: string[]) { onChange(next.join('\n')) }
+  async function sendTest() {
+    setTesting(true)
+    setTestResult(null)
+    try {
+      const res = await fetch('/api/telegram-test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ templateKey, template: value }),
+      })
+      const responseText = await res.text()
+      let json: any
+      try { json = responseText ? JSON.parse(responseText) : {} }
+      catch { throw new Error(`O servidor retornou uma resposta inválida (${res.status}): ${responseText.slice(0, 160)}`) }
+      if (!res.ok) throw new Error(json?.error || `erro ${res.status}`)
+      setTestResult({ ok: true, text: json.withPhoto ? 'Teste enviado com mapa.' : 'Teste enviado ao grupo.' })
+    } catch (e: any) {
+      setTestResult({ ok: false, text: e?.message || 'Falha ao enviar o teste.' })
+    } finally {
+      setTesting(false)
+    }
+  }
+  function addToken(key: string, at = blocks.length) {
+    const next = [...blocks]
+    next.splice(at, 0, `{${key}}`)
+    writeBlocks(next)
+  }
+  function removeBlock(index: number) { writeBlocks(blocks.filter((_, i) => i !== index)) }
+  function updateBlock(index: number, text: string) {
+    const next = [...blocks]
+    next[index] = text
+    writeBlocks(next)
+  }
+  function dropOnBlock(e: React.DragEvent, index: number) {
+    e.preventDefault()
+    if (!drag) return
+    if (drag.kind === 'token') addToken(drag.key, index)
+    else if (drag.index !== index) {
+      const next = [...blocks]
+      const [item] = next.splice(drag.index, 1)
+      next.splice(index, 0, item)
+      writeBlocks(next)
+    }
+    setDrag(null)
+  }
+  function renderBlock(line: string, index: number) {
+    const match = line.match(/^\{([a-zA-Z]+)\}$/)
+    const token = match ? tokenByKey.get(match[1]) : undefined
+    const Icon = token?.icon ?? FileText
+    const chipStyle = TOKEN_STYLES[token?.style ?? 'blue']
+    return (
+      <div
+        key={index}
+        draggable
+        onDragStart={e => { setDrag({ kind: 'block', index }); e.dataTransfer.effectAllowed = 'move' }}
+        onDragOver={e => e.preventDefault()}
+        onDrop={e => dropOnBlock(e, index)}
+        onDragEnd={() => setDrag(null)}
+        className={`group inline-flex max-w-full items-center gap-2 rounded-full border px-3 py-2 text-xs shadow-sm transition-all ${chipStyle} ${drag?.kind === 'block' && drag.index === index ? 'opacity-40' : ''}`}
+      >
+        {token ? <Icon size={14} className="shrink-0" /> : <GripVertical size={14} className="shrink-0 cursor-grab opacity-60" />}
+        {token
+          ? <span className="font-medium">{token.label}</span>
+          : <input value={line.trim()} onChange={e => updateBlock(index, e.target.value)} placeholder="Texto personalizado" aria-label={`${label}, texto personalizado`} className="w-40 bg-transparent text-xs outline-none placeholder:text-current/50" />}
+        <button type="button" onClick={() => removeBlock(index)} title="Remover item" aria-label="Remover item" className="-mr-1 rounded-full p-0.5 opacity-60 transition hover:bg-black/20 hover:opacity-100">
+          <X size={13} />
+        </button>
+      </div>
+    )
+  }
+
+  return (
+    <details open={expanded} onToggle={e => setExpanded(e.currentTarget.open)} className="overflow-hidden rounded-xl border border-border bg-surface/60 shadow-sm">
+      <summary className="flex cursor-pointer list-none items-center gap-3 px-4 py-3.5 hover:bg-surface-2/60 [&::-webkit-details-marker]:hidden">
+        <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-500/10 text-blue-300">
+          {templateKey === 'launch' ? <Rocket size={17} /> : templateKey === 'landing' ? <PlaneLanding size={17} /> : templateKey.toLowerCase().includes('battery') || templateKey === 'lowBattery' || templateKey === 'batteryOk' ? <BatteryWarning size={17} /> : <Radio size={17} />}
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block text-sm font-semibold text-white">{label}</span>
+          <span className="block text-[11px] text-faint">{blocks.length} {blocks.length === 1 ? 'item' : 'itens'} na mensagem</span>
+        </span>
+        <ChevronDown size={16} className={`text-faint transition-transform ${expanded ? 'rotate-180' : ''}`} />
+      </summary>
+
+      {expanded && <div className="space-y-4 border-t border-border p-4">
+        <div>
+          <div className="mb-2 flex items-center gap-2 text-[11px] font-medium uppercase tracking-wider text-faint">
+            <Plus size={13} /> Itens disponíveis <span className="normal-case tracking-normal">· clique ou arraste para adicionar</span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {tokens.map(token => {
+              const Icon = token.icon
+              return <button key={token.key} type="button" draggable onClick={() => addToken(token.key)}
+                onDragStart={e => { setDrag({ kind: 'token', key: token.key }); e.dataTransfer.effectAllowed = 'copy' }}
+                onDragEnd={() => setDrag(null)}
+                className={`inline-flex items-center gap-2 rounded-full border px-3 py-2 text-xs font-medium shadow-sm transition hover:-translate-y-0.5 ${TOKEN_STYLES[token.style]}`}>
+                <Icon size={14} /> {token.label}
+              </button>
+            })}
+            <button type="button" onClick={() => writeBlocks([...blocks, ' '])} className="inline-flex items-center gap-2 rounded-full border border-dashed border-border-strong bg-bg px-3 py-2 text-xs text-gray-300 transition hover:border-blue-400 hover:text-white">
+              <FileText size={14} /> Texto livre
+            </button>
+          </div>
+        </div>
+
+        <div>
+          <div className="mb-2 flex items-center justify-between gap-3 text-[11px] font-medium uppercase tracking-wider text-faint">
+            <span className="flex items-center gap-2"><GripVertical size={13} /> Sua mensagem</span>
+            <span className="normal-case tracking-normal">Arraste os badges para reordenar</span>
+          </div>
+          <div onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); if (drag?.kind === 'token') addToken(drag.key); setDrag(null) }}
+            className={`flex min-h-16 flex-wrap content-start items-center gap-2 rounded-xl border border-dashed p-3 transition ${drag ? 'border-blue-400 bg-blue-400/5' : 'border-border-strong bg-bg/70'}`}>
+            {blocks.map((line, index) => renderBlock(line, index))}
+            {blocks.length === 0 && <span className="w-full py-2 text-center text-xs text-faint">Arraste itens para cá ou escolha um badge acima.</span>}
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-[#2a3a49] bg-[#101820] p-3 sm:p-4">
+          <div className="mb-3 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-slate-400"><Send size={13} /> Prévia no Telegram <span className="normal-case tracking-normal">· exemplo</span></div>
+          <div className="max-w-xl rounded-2xl rounded-tl-sm border border-[#263544] bg-[#182533] px-4 py-3 shadow-lg">
+            <div className="space-y-1 break-words text-sm leading-relaxed text-slate-100">
+              {previewLines.map((line, index) => <div key={index}>{previewMarkup(line)}</div>)}
+              {previewLines.length === 0 && <span className="text-slate-500">A mensagem aparecerá aqui conforme você adicionar itens.</span>}
+            </div>
+            <div className="mt-2 text-right text-[10px] text-slate-500">12:34</div>
+          </div>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <button type="button" onClick={sendTest} disabled={!canTest || testing}
+              title={!canTest ? 'Configure e salve o bot token e o ID do grupo primeiro.' : 'Envia somente este modelo para o grupo.'}
+              className="inline-flex items-center gap-2 rounded-lg border border-blue-400/30 bg-blue-500/15 px-3 py-2 text-xs font-medium text-blue-100 transition hover:bg-blue-500/25 disabled:cursor-not-allowed disabled:opacity-40">
+              {testing ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+              {testing ? 'Enviando…' : 'Testar esta mensagem'}
+            </button>
+            {testResult && <span className={`flex items-center gap-1.5 text-[11px] ${testResult.ok ? 'text-emerald-300' : 'text-rose-300'}`}>
+              {testResult.ok ? <CheckCircle2 size={13} /> : <XCircle size={13} />}{testResult.text}
+            </span>}
+          </div>
+        </div>
+      </div>}
+    </details>
   )
 }
 
@@ -573,3 +856,4 @@ function ToggleRow({ label, desc, checked, onChange, disabled }: {
     </div>
   )
 }
+

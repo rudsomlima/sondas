@@ -8,12 +8,49 @@
 import { readTelegramSettings, readGeofences, markNotifiedIfNew } from './blobStore'
 import { sendTelegramMessage, sendTelegramPhoto } from './telegramClient'
 import { findMatchingGeofence } from './geofence'
-import { renderStaticMapPng } from './staticMap'
+import { lookupLandingPlace, renderStaticMapPng, type MapMarker } from './staticMap'
 import { buildEventText, type EventMessageParams } from './telegramMessage'
+import { fetchSondeHubRawFrames } from './sondehub'
 
 export type EventNotifyResult =
   | { ok: true; sent: boolean; reason?: string }
   | { ok: false; error: string }
+
+const FIRST_FRAME_TIMEOUT_MS = 4000
+const FIRST_FRAME_WINDOW_MS = 6 * 60 * 60_000 // ignora quadros soltos de voos antigos da mesma sonda
+
+/**
+ * Primeiro quadro do voo no SondeHub. Melhor esforço: qualquer falha ou
+ * demora devolve null e o aviso sai sem essa linha (nunca atrasa o aviso).
+ */
+async function fetchFirstFrame(
+  serial: string, lastReportUtc: string | undefined, currentAlt: number | undefined,
+): Promise<Pick<EventMessageParams, 'firstAltitude' | 'firstFrameUtc' | 'firstReceiver'> | null> {
+  try {
+    const frames = await Promise.race([
+      fetchSondeHubRawFrames(serial),
+      new Promise<never>((_, rej) => setTimeout(() => rej(new Error('timeout')), FIRST_FRAME_TIMEOUT_MS)),
+    ])
+    const refMs = lastReportUtc
+      ? new Date(lastReportUtc.replace(/z$/i, '').replace(' ', 'T') + 'Z').getTime()
+      : Date.now()
+    const recent = frames
+      .map(f => ({ f, ms: new Date(f.datetime).getTime() }))
+      .filter(x => !isNaN(x.ms) && Math.abs(refMs - x.ms) <= FIRST_FRAME_WINDOW_MS)
+      .sort((a, b) => a.ms - b.ms)
+    const first = recent[0]
+    if (!first) return null
+    if (typeof currentAlt === 'number' && Math.abs(first.f.alt - currentAlt) < 1) return null // é o próprio quadro atual
+    const iso = new Date(first.ms).toISOString() // 2026-09-24T11:31:20.000Z
+    return {
+      firstAltitude: first.f.alt,
+      firstFrameUtc: `${iso.slice(0, 10)} ${iso.slice(11, 19)}z`,
+      firstReceiver: first.f.uploaderCallsign !== '?' ? first.f.uploaderCallsign : undefined,
+    }
+  } catch {
+    return null
+  }
+}
 
 export async function notifyFlightEvent(p: EventMessageParams): Promise<EventNotifyResult> {
   const settings = await readTelegramSettings()
@@ -39,13 +76,15 @@ export async function notifyFlightEvent(p: EventMessageParams): Promise<EventNot
   const isNew = await markNotifiedIfNew(p.sondeNumber, p.event)
   if (!isNew) return { ok: true, sent: false, reason: 'já notificado' }
 
-  const text = buildEventText({ ...p, areaName: match?.name })
+  const first = p.event === 'launch' ? await fetchFirstFrame(p.sondeNumber, p.lastReportUtc, p.altitude) : null
+  const landingPlace = p.event === 'landing' && hasPos ? await lookupLandingPlace(lat, lon) : null
+  const text = buildEventText({ ...p, ...first, city: landingPlace?.city, areaName: match?.name }, settings.messageTemplates)
 
   let sendResult: { ok: boolean; error?: string }
   if (hasPos) {
-    const markers = [{ lat, lon, color: p.event === 'launch' ? '#22c55e' : '#ef4444' }]
+    const markers: MapMarker[] = [{ lat, lon, color: p.event === 'launch' ? '#22c55e' : '#ef4444', label: p.event === 'landing' ? landingPlace?.city : undefined }]
     if (hasStationPos) markers.push({ lat: stationLat, lon: stationLon, color: '#3b82f6' })
-    const png = await renderStaticMapPng({ centerLat: lat, centerLon: lon, markers })
+    const png = await renderStaticMapPng({ centerLat: lat, centerLon: lon, markers, ...(landingPlace?.atSea ? { zoom: 3 } : {}) })
     sendResult = png
       ? await sendTelegramPhoto(settings.botToken, settings.chatId, png, text)
       : await sendTelegramMessage(settings.botToken, settings.chatId, text)

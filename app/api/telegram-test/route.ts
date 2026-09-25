@@ -1,9 +1,10 @@
 import { NextResponse } from 'next/server'
 import { readTelegramSettings } from '@/app/lib/blobStore'
 import { sendTelegramMessage, sendTelegramPhoto } from '@/app/lib/telegramClient'
-import { renderStaticMapPng } from '@/app/lib/staticMap'
-import { buildEventText } from '@/app/lib/telegramMessage'
+import { lookupLandingPlace, renderStaticMapPng } from '@/app/lib/staticMap'
+import { buildEventText, buildReceiverAlertText } from '@/app/lib/telegramMessage'
 import { DEFAULT_STATION } from '@/app/lib/stations'
+import type { TelegramMessageTemplateKey, TelegramMessageTemplates } from '@/app/lib/telegramTypes'
 
 // Bounding box aproximado do Rio Grande do Norte (Brasil) — só pra sortear
 // um ponto plausível dentro do estado a cada teste, sem depender de nenhum
@@ -19,10 +20,11 @@ function randomRNPoint(): { lat: number; lon: number } {
 }
 
 async function sendTestEvent(
-  botToken: string, chatId: string, event: 'launch' | 'landing',
+  botToken: string, chatId: string, event: 'launch' | 'landing', templates?: TelegramMessageTemplates,
 ): Promise<{ ok: boolean; error?: string; withPhoto: boolean }> {
   const station = DEFAULT_STATION
   const pos = randomRNPoint()
+  const place = event === 'landing' ? await lookupLandingPlace(pos.lat, pos.lon) : null
 
   const text = buildEventText({
     event, sondeNumber: 'W12345 [teste]',
@@ -31,17 +33,19 @@ async function sendTestEvent(
     climbing: event === 'launch' ? 5.2 : -1.1,
     frequencyMHz: 403.2,
     source: 'sondehub',
+    city: place?.city,
     lastReportUtc: new Date().toISOString().slice(0, 19).replace('T', ' ') + 'z',
     stationId: station.id, stationName: station.name, stationLat: station.lat, stationLon: station.lon,
     areaName: event === 'landing' ? 'Área de exemplo' : undefined,
-  })
+  }, templates)
 
   const png = await renderStaticMapPng({
     centerLat: pos.lat, centerLon: pos.lon,
     markers: [
-      { lat: pos.lat, lon: pos.lon, color: event === 'launch' ? '#22c55e' : '#ef4444' },
+      { lat: pos.lat, lon: pos.lon, color: event === 'launch' ? '#22c55e' : '#ef4444', label: event === 'landing' ? place?.city : undefined },
       { lat: station.lat, lon: station.lon, color: '#3b82f6' },
     ],
+    ...(place?.atSea ? { zoom: 3 } : {}),
   })
 
   const result = png
@@ -56,18 +60,38 @@ async function sendTestEvent(
 // geração da imagem de uma vez. As duas rodam em paralelo (cada uma busca
 // ~30-40 tiles do OpenStreetMap e monta a imagem com sharp antes de subir
 // pro Telegram — por isso demora alguns segundos, é normal).
-export async function POST() {
+async function processTest(req: Request) {
   const s = await readTelegramSettings()
   if (!s?.botToken || !s?.chatId) {
     return NextResponse.json({ error: 'Configure o bot token e o chat ID antes de testar.' }, { status: 400 })
   }
+  let body: { templateKey?: TelegramMessageTemplateKey; template?: string } = {}
+  try { body = await req.json() } catch { /* botão de teste antigo sem corpo: padrão = lançamento */ }
+  const allowed: TelegramMessageTemplateKey[] = ['launch', 'landing', 'receiverOffline', 'receiverOnline', 'lowBattery', 'batteryOk']
+  const templateKey = allowed.includes(body.templateKey as TelegramMessageTemplateKey) ? body.templateKey! : 'launch'
+  const templates: TelegramMessageTemplates = { ...(s.messageTemplates ?? {}) }
+  if (typeof body.template === 'string') templates[templateKey] = body.template.slice(0, 4000)
 
-  const [launch, landing] = await Promise.all([
-    sendTestEvent(s.botToken, s.chatId, 'launch'),
-    sendTestEvent(s.botToken, s.chatId, 'landing'),
-  ])
-  if (!launch.ok) return NextResponse.json({ error: launch.error || 'Falha ao enviar o teste de lançamento' }, { status: 502 })
-  if (!landing.ok) return NextResponse.json({ error: landing.error || 'Falha ao enviar o teste de pouso' }, { status: 502 })
+  if (templateKey === 'launch' || templateKey === 'landing') {
+    const result = await sendTestEvent(s.botToken, s.chatId, templateKey, templates)
+    if (!result.ok) return NextResponse.json({ error: result.error || 'Falha ao enviar a mensagem de teste' }, { status: 502 })
+    return NextResponse.json({ ok: true, withPhoto: result.withPhoto })
+  }
 
-  return NextResponse.json({ ok: true, withPhoto: launch.withPhoto && landing.withPhoto })
+  const alertKind = templateKey === 'receiverOffline' ? 'offline'
+    : templateKey === 'receiverOnline' ? 'online'
+      : templateKey === 'lowBattery' ? 'lowBattery' : 'batteryOk'
+  const text = buildReceiverAlertText(alertKind, 'RX-CASA', { minutesSilent: 32, vBatt: 3.42 }, templates)
+  const result = await sendTelegramMessage(s.botToken, s.chatId, text)
+  if (!result.ok) return NextResponse.json({ error: result.error || 'Falha ao enviar a mensagem de teste' }, { status: 502 })
+  return NextResponse.json({ ok: true, withPhoto: false })
+}
+
+export async function POST(req: Request) {
+  try {
+    return await processTest(req)
+  } catch (e) {
+    console.error('[telegram-test] falha inesperada:', e)
+    return NextResponse.json({ error: 'Erro interno ao preparar ou enviar o teste. Verifique a configuração e tente novamente.' }, { status: 500 })
+  }
 }

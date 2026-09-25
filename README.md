@@ -6,6 +6,9 @@ Dados extraídos em tempo real do servidor da [University of Wyoming](https://we
 
 ## Funcionalidades
 
+- Avisos no Telegram para chat privado ou grupo, com seis modelos editáveis,
+  prévia, teste por modelo e mapa no lançamento/pouso. Veja
+  [docs/TELEGRAM.md](docs/TELEGRAM.md) para configurar e entender o envio.
 - ✅ **Status do dia** — verifica se houve lançamento de balão sonda no dia corrente
 - 📅 **Histórico anual** — lançamentos agrupados por mês com gráfico de barras
 - ⚙️ **Configurações** — ajuste de estação, região e período de extração

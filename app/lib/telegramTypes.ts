@@ -31,8 +31,12 @@ export interface TelegramSettings {
   watchedStationIds?: string[]
   // Raio de alcance (km) por estação monitorada; ausente = 300 km.
   stationRadiusKm?: Record<string, number>
+  messageTemplates?: TelegramMessageTemplates
   updatedAt: number
 }
+
+export type TelegramMessageTemplateKey = 'launch' | 'landing' | 'receiverOffline' | 'receiverOnline' | 'lowBattery' | 'batteryOk'
+export type TelegramMessageTemplates = Partial<Record<TelegramMessageTemplateKey, string>>
 
 export const DEFAULT_TELEGRAM_SETTINGS: TelegramSettings = {
   botToken: '',

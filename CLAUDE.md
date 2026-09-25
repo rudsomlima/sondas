@@ -373,6 +373,34 @@ receptor). O token nunca volta pro navegador.
   preenchimento com o raio de alcance. Áreas salvam na hora; estações/raios só
   nos botões Salvar (o das configurações e o "Salvar estações" da própria seção — ambos gravam o mesmo JSON).
 
+#### Destino, modelos e mapas das mensagens
+
+- `chatId` pode ser o ID de uma conversa privada ou de um grupo. Para grupo,
+  adicione o bot e envie uma mensagem; `POST /api/telegram-detect-chat` lê os
+  updates recentes do bot e devolve o chat encontrado. O token permanece no
+  servidor e nunca é devolvido pelo `GET /api/telegram-settings`.
+- Há seis modelos em `messageTemplates`: `launch`, `landing`,
+  `receiverOffline`, `receiverOnline`, `lowBattery` e `batteryOk`. Os padrões
+  ficam em `DEFAULT_MESSAGE_TEMPLATES` (`telegramMessage.ts`); configurações
+  sem modelo salvo continuam usando esses padrões. A tela `/telegram` compõe
+  modelos com badges arrastáveis, prévia com valores de exemplo, botão para
+  restaurar todos os padrões e teste individual por modelo. O teste de
+  lançamento/pouso usa o mapa; alertas do receptor são somente texto.
+- Tokens e geração de texto ficam centralizados em `telegramMessage.ts`.
+  Conteúdo dinâmico passa por escape HTML; o texto fixo do modelo aceita a
+  formatação HTML compatível com Telegram. Não montar uma segunda versão da
+  mensagem nas rotas de teste.
+- `staticMap.ts` monta a imagem com tiles do OpenStreetMap. O rótulo do pouso
+  usa `município-UF` (por exemplo `Natal-RN`), fica no canto inferior direito,
+  em uma única linha e reduz a fonte para caber no mapa. Pousos identificados
+  no mar usam zoom 3. A identificação geográfica é melhor esforço via
+  Nominatim; não bloquear a mensagem se a busca falhar.
+- Pedidos de tiles compartilham um limite de duas requisições simultâneas por
+  processo e tentam novamente em falhas transitórias, alternando subdomínios.
+  Se um tile que aparece no recorte ainda faltar, `renderStaticMapPng` retorna
+  `null`; o evento envia texto sem foto em vez de uma imagem com quadros cinza.
+  Preserve esse fallback e o User-Agent ao alterar o renderer.
+
 ### Páginas
 
 - `app/page.tsx` — redireciona pra `/painel`.
