@@ -111,10 +111,13 @@ export async function lookupLandingPlace(lat: number, lon: number): Promise<Land
     const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}&zoom=10&addressdetails=1`
     const res = await fetch(url, {
       headers: { 'User-Agent': USER_AGENT, 'Accept-Language': 'en' },
-      signal: AbortSignal.timeout(2500),
+      signal: AbortSignal.timeout(6000),
       cache: 'no-store',
     })
-    if (!res.ok) return { atSea: false }
+    if (!res.ok) {
+      console.warn(`[staticMap] Nominatim respondeu HTTP ${res.status}; mapa sem localidade`)
+      return { atSea: false }
+    }
     const result = await res.json() as { class?: string; type?: string; addresstype?: string; name?: string; address?: Record<string, string> }
     const waterKinds = new Set(['sea', 'ocean', 'bay', 'strait'])
     const kind = `${result.type ?? ''} ${result.addresstype ?? ''}`.toLowerCase()
@@ -123,10 +126,13 @@ export async function lookupLandingPlace(lat: number, lon: number): Promise<Land
       !!(result.address && ['sea', 'ocean'].some(k => k in result.address!))
     if (atSea) return { atSea, city: result.name || result.address?.sea || result.address?.ocean || 'Mar' }
     const address = result.address ?? {}
-    const locality = address.city || address.town || address.village || address.municipality || address.hamlet
+    const knownLocalityTypes = new Set(['city', 'town', 'village', 'municipality', 'county'])
+    const locality = address.city || address.town || address.village || address.municipality || address.hamlet || address.county ||
+      (knownLocalityTypes.has(result.addresstype ?? '') ? result.name : undefined)
     const stateUf = brazilStateUf(address.state || address.state_district, address['ISO3166-2-lvl4'])
     return { atSea: false, city: locality ? `${locality}${stateUf ? `-${stateUf}` : ''}` : undefined }
-  } catch {
+  } catch (error) {
+    console.warn('[staticMap] falha na busca reversa do Nominatim:', error instanceof Error ? error.message : error)
     return { atSea: false }
   }
 }

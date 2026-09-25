@@ -406,7 +406,9 @@ receptor). O token nunca volta pro navegador.
   usa `município-UF` (por exemplo `Natal-RN`), fica no canto inferior direito,
   em uma única linha e reduz a fonte para caber no mapa. Pousos identificados
   no mar usam zoom 3. A identificação geográfica é melhor esforço via
-  Nominatim; não bloquear a mensagem se a busca falhar.
+  Nominatim (timeout de 6 s); prefere campos de cidade/município, tem fallback
+  para `county` e para `name` apenas quando o tipo do resultado é uma localidade.
+  Se a busca falhar, preserva `p.city` caso a origem já tenha enviado uma.
 - Pedidos de tiles compartilham um limite de duas requisições simultâneas por
   processo e tentam novamente em falhas transitórias, alternando subdomínios.
   Se um tile que aparece no recorte ainda faltar, `renderStaticMapPng` retorna

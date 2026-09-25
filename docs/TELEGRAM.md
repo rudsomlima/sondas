@@ -59,7 +59,9 @@ O mapa estático é montado em `app/lib/staticMap.ts` com tiles do OpenStreetMap
 Para pouso em terra, a busca reversa tenta obter o município e a UF e monta
 `município-UF` (por exemplo, `Natal-RN`). No mar, usa o nome da área marítima
 quando disponível. A consulta ao Nominatim é de melhor esforço: se falhar, a
-mensagem segue sem localidade.
+mensagem segue com a localidade já fornecida pelo evento, se houver. A busca
+tem timeout de 6 segundos e também reconhece o nome do resultado quando ele é
+classificado como cidade, vila, município ou condado.
 
 O rótulo aparece no canto inferior direito, em uma linha, sobre fundo
 transparente. A fonte diminui para caber na largura da imagem. Para pousos no

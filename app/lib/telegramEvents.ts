@@ -78,11 +78,12 @@ export async function notifyFlightEvent(p: EventMessageParams): Promise<EventNot
 
   const first = p.event === 'launch' ? await fetchFirstFrame(p.sondeNumber, p.lastReportUtc, p.altitude) : null
   const landingPlace = p.event === 'landing' && hasPos ? await lookupLandingPlace(lat, lon) : null
-  const text = buildEventText({ ...p, ...first, city: landingPlace?.city, areaName: match?.name }, settings.messageTemplates)
+  const landingCity = landingPlace?.city ?? p.city
+  const text = buildEventText({ ...p, ...first, city: landingCity, areaName: match?.name }, settings.messageTemplates)
 
   let sendResult: { ok: boolean; error?: string }
   if (hasPos) {
-    const markers: MapMarker[] = [{ lat, lon, color: p.event === 'launch' ? '#22c55e' : '#ef4444', label: p.event === 'landing' ? landingPlace?.city : undefined }]
+    const markers: MapMarker[] = [{ lat, lon, color: p.event === 'launch' ? '#22c55e' : '#ef4444', label: p.event === 'landing' ? landingCity : undefined }]
     if (hasStationPos) markers.push({ lat: stationLat, lon: stationLon, color: '#3b82f6' })
     const png = await renderStaticMapPng({ centerLat: lat, centerLon: lon, markers, ...(landingPlace?.atSea ? { zoom: 3 } : {}) })
     sendResult = png
