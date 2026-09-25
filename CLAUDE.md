@@ -386,6 +386,18 @@ receptor). O token nunca volta pro navegador.
   modelos com badges arrastáveis, prévia com valores de exemplo, botão para
   restaurar todos os padrões e teste individual por modelo. O teste de
   lançamento/pouso usa o mapa; alertas do receptor são somente texto.
+- `enabled` é a chave geral. As seis ativações individuais ficam nos cartões
+  dos modelos e são independentes: `notifyLaunch`, `notifyLanding`,
+  `notifyReceiverOffline`, `notifyReceiverOnline`, `notifyLowBattery` e
+  `notifyBatteryOk`. Os limites de offline/bateria e o escopo dos pousos ficam
+  nos ajustes do modelo correspondente. Offline/online e bateria baixa/normal
+  compartilham a mesma detecção de estado, mas podem enviar cada mensagem de
+  transição separadamente.
+- Não há um painel separado "Meu receptor" em `/telegram`: controles de
+  receptor offline/online e bateria ficam nos respectivos modelos. Em
+  "Estações monitoradas", a linha logo abaixo da instrução para salvar lista
+  cada estação marcada com ID e raio configurado; o botão "Salvar estações"
+  persiste a seleção e os raios.
 - Tokens e geração de texto ficam centralizados em `telegramMessage.ts`.
   Conteúdo dinâmico passa por escape HTML; o texto fixo do modelo aceita a
   formatação HTML compatível com Telegram. Não montar uma segunda versão da

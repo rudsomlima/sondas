@@ -17,8 +17,10 @@ interface TelegramSettingsView {
   notifyLanding: boolean
   notifyAnywhere: boolean
   notifyReceiverOffline: boolean
+  notifyReceiverOnline: boolean
   receiverOfflineMinutes: number
   notifyLowBattery: boolean
+  notifyBatteryOk: boolean
   lowBatteryVoltage: number
   watchedStationIds: string[]
   stationRadiusKm: Record<string, number>
@@ -29,10 +31,20 @@ interface TelegramSettingsView {
 
 const EMPTY_SETTINGS: TelegramSettingsView = {
   chatId: '', enabled: false, notifyLaunch: true, notifyLanding: true, notifyAnywhere: true,
-  notifyReceiverOffline: true, receiverOfflineMinutes: 30, notifyLowBattery: true, lowBatteryVoltage: 3.5,
+  notifyReceiverOffline: true, notifyReceiverOnline: true, receiverOfflineMinutes: 30,
+  notifyLowBattery: true, notifyBatteryOk: true, lowBatteryVoltage: 3.5,
   watchedStationIds: [DEFAULT_STATION.id], stationRadiusKm: {},
   messageTemplates: {},
   hasToken: false, tokenPreview: '',
+}
+
+const TEMPLATE_ENABLE_SETTING: Record<TelegramMessageTemplateKey, 'notifyLaunch' | 'notifyLanding' | 'notifyReceiverOffline' | 'notifyReceiverOnline' | 'notifyLowBattery' | 'notifyBatteryOk'> = {
+  launch: 'notifyLaunch',
+  landing: 'notifyLanding',
+  receiverOffline: 'notifyReceiverOffline',
+  receiverOnline: 'notifyReceiverOnline',
+  lowBattery: 'notifyLowBattery',
+  batteryOk: 'notifyBatteryOk',
 }
 
 export default function TelegramPage() {
@@ -78,8 +90,10 @@ export default function TelegramPage() {
           notifyLanding: settings.notifyLanding,
           notifyAnywhere: settings.notifyAnywhere,
           notifyReceiverOffline: settings.notifyReceiverOffline,
+          notifyReceiverOnline: settings.notifyReceiverOnline,
           receiverOfflineMinutes: settings.receiverOfflineMinutes,
           notifyLowBattery: settings.notifyLowBattery,
+          notifyBatteryOk: settings.notifyBatteryOk,
           lowBatteryVoltage: settings.lowBatteryVoltage,
           watchedStationIds: settings.watchedStationIds,
           stationRadiusKm: settings.stationRadiusKm,
@@ -144,6 +158,7 @@ export default function TelegramPage() {
   }
   const watchedRadii: Record<string, number> = {}
   for (const id of settings.watchedStationIds ?? []) watchedRadii[id] = settings.stationRadiusKm?.[id] ?? DEFAULT_WATCH_RADIUS_KM
+  const watchedStations = SOUTH_AMERICA_STATIONS.filter(st => watched.has(st.id))
   function setRadius(id: string, km: number) {
     setSettingsState(s => ({ ...s, stationRadiusKm: { ...s.stationRadiusKm, [id]: km } }))
   }
@@ -261,34 +276,6 @@ export default function TelegramPage() {
               checked={settings.enabled}
               onChange={v => setSettingsState(s => ({ ...s, enabled: v }))}
             />
-            <ToggleRow
-              label={<span className="flex items-center gap-1.5"><Rocket size={12} className="text-blue-400" /> Avisar lançamento</span>}
-              desc="Manda mensagem assim que uma sonda de hoje aparece ao vivo."
-              checked={settings.notifyLaunch}
-              onChange={v => setSettingsState(s => ({ ...s, notifyLaunch: v }))}
-              disabled={!settings.enabled}
-            />
-            <ToggleRow
-              label={<span className="flex items-center gap-1.5"><PlaneLanding size={12} className="text-blue-400" /> Avisar pouso</span>}
-              desc="Manda mensagem quando uma sonda pousa, com altitude, distância/rumo da estação, área de interesse (se houver) e uma imagem do mapa com o local."
-              checked={settings.notifyLanding}
-              onChange={v => setSettingsState(s => ({ ...s, notifyLanding: v }))}
-              disabled={!settings.enabled}
-            />
-            {settings.notifyLanding && (
-              <div className="pl-4 border-l-2 border-border ml-1">
-                <ToggleRow
-                  label="Avisar pouso em qualquer lugar"
-                  desc={settings.notifyAnywhere
-                    ? 'Ligado: avisa todo pouso, em qualquer lugar. Se cair dentro de uma área de interesse cadastrada, o nome dela entra na mensagem.'
-                    : 'Desligado: só avisa pousos que caírem DENTRO de alguma área de interesse cadastrada abaixo — pousos fora não notificam.'}
-                  checked={settings.notifyAnywhere}
-                  onChange={v => setSettingsState(s => ({ ...s, notifyAnywhere: v }))}
-                  disabled={!settings.enabled}
-                />
-              </div>
-            )}
-
             <div className="flex flex-wrap gap-2 mt-4">
               <button
                 onClick={() => handleSave()}
@@ -309,9 +296,8 @@ export default function TelegramPage() {
             </div>
 
             <p className="text-[11px] text-faint mt-3 leading-relaxed">
-              A detecção roda no navegador enquanto o <span className="text-blue-400">Painel</span> estiver aberto
-              numa aba (igual aos alertas de "nova sonda no meu receptor") — não depende de nenhum app instalado,
-              mas só dispara com a aba aberta em algum aparelho.
+              Lançamentos, pousos e alertas dos receptores são verificados pelo servidor em intervalos regulares;
+              não é necessário manter o <span className="text-blue-400">Painel</span> aberto.
             </p>
           </>
         )}
@@ -342,6 +328,34 @@ export default function TelegramPage() {
                 ? DEFAULT_MESSAGE_TEMPLATES[key]
                 : settings.messageTemplates[key] ?? DEFAULT_MESSAGE_TEMPLATES[key]}
               canTest={settings.hasToken && Boolean(settings.chatId)}
+              enabled={settings[TEMPLATE_ENABLE_SETTING[key]]}
+              onEnabledChange={enabled => setSettingsState(s => ({ ...s, [TEMPLATE_ENABLE_SETTING[key]]: enabled }))}
+              extraSettings={key === 'landing' ? (
+                <ToggleRow
+                  label="Avisar pouso em qualquer lugar"
+                  desc={settings.notifyAnywhere
+                    ? 'Ativado: avisa todo pouso. As áreas cadastradas apenas identificam a mensagem.'
+                    : 'Desativado: só avisa pousos dentro das áreas de interesse.'}
+                  checked={settings.notifyAnywhere}
+                  onChange={v => setSettingsState(s => ({ ...s, notifyAnywhere: v }))}
+                />
+              ) : key === 'receiverOffline' ? (
+                <label className="flex flex-wrap items-center gap-3 text-xs text-gray-300">
+                  <span>Considerar offline após</span>
+                  <input type="number" min={5} value={settings.receiverOfflineMinutes}
+                    onChange={e => setSettingsState(s => ({ ...s, receiverOfflineMinutes: Math.max(5, Number(e.target.value) || 5) }))}
+                    className="w-20 bg-bg border border-border rounded-md text-sm text-white px-2 py-1.5 outline-none focus:border-blue-500 mono" />
+                  <span>minutos sem report</span>
+                </label>
+              ) : key === 'lowBattery' ? (
+                <label className="flex flex-wrap items-center gap-3 text-xs text-gray-300">
+                  <span>Considerar bateria baixa abaixo de</span>
+                  <input type="number" step={0.1} min={3} max={4.2} value={settings.lowBatteryVoltage}
+                    onChange={e => setSettingsState(s => ({ ...s, lowBatteryVoltage: Number(e.target.value) || 3.5 }))}
+                    className="w-20 bg-bg border border-border rounded-md text-sm text-white px-2 py-1.5 outline-none focus:border-blue-500 mono" />
+                  <span>V</span>
+                </label>
+              ) : null}
               onChange={value => setSettingsState(s => ({ ...s, messageTemplates: { ...s.messageTemplates, [key]: value } }))}
             />
           ))}
@@ -357,78 +371,6 @@ export default function TelegramPage() {
           </button>
           {saveMsg && <span className={`flex items-center gap-1.5 text-[11px] self-center ${saveMsg.ok ? 'text-emerald-400' : 'text-yellow-400'}`}>{saveMsg.ok ? <CheckCircle2 size={11} /> : <XCircle size={11} />}{saveMsg.text}</span>}
         </div>
-      </div>
-
-      {/* Meu receptor: offline / bateria baixa */}
-      <div className="panel p-5 mb-6">
-        <h2 className="text-sm font-semibold text-white flex items-center gap-2 mb-1">
-          <Radio size={14} className="text-blue-400" />
-          Meu receptor
-        </h2>
-        <p className="text-[11px] text-faint mb-4 leading-relaxed">
-          Diferente dos avisos acima, estes rodam no servidor (cron periódico), então funcionam mesmo sem o
-          navegador aberto — cobrem todos os receptores já vistos por este app.
-        </p>
-
-        {!loaded ? (
-          <div className="text-xs text-dim flex items-center gap-1.5"><Loader2 size={12} className="animate-spin" /> Carregando…</div>
-        ) : (
-          <>
-            <ToggleRow
-              label={<span className="flex items-center gap-1.5"><Radio size={12} className="text-blue-400" /> Avisar receptor offline</span>}
-              desc="Manda mensagem quando um receptor para de reportar (sem contar deep sleep esperado) e outra quando ele volta."
-              checked={settings.notifyReceiverOffline}
-              onChange={v => setSettingsState(s => ({ ...s, notifyReceiverOffline: v }))}
-              disabled={!settings.enabled}
-            />
-            {settings.notifyReceiverOffline && (
-              <div className="pl-4 border-l-2 border-border ml-1 py-2">
-                <label className="block text-xs text-gray-400 mb-1.5">Minutos sem report pra considerar offline</label>
-                <input
-                  type="number"
-                  min={5}
-                  value={settings.receiverOfflineMinutes}
-                  onChange={e => setSettingsState(s => ({ ...s, receiverOfflineMinutes: Math.max(5, Number(e.target.value) || 5) }))}
-                  disabled={!settings.enabled}
-                  className="w-28 bg-bg border border-border rounded-md text-sm text-white px-3 py-1.5 outline-none focus:border-blue-500 mono disabled:opacity-50"
-                />
-              </div>
-            )}
-            <ToggleRow
-              label={<span className="flex items-center gap-1.5"><BatteryWarning size={12} className="text-blue-400" /> Avisar bateria baixa</span>}
-              desc="Manda mensagem quando a tensão da bateria do receptor cai abaixo do limiar, e outra quando normaliza."
-              checked={settings.notifyLowBattery}
-              onChange={v => setSettingsState(s => ({ ...s, notifyLowBattery: v }))}
-              disabled={!settings.enabled}
-            />
-            {settings.notifyLowBattery && (
-              <div className="pl-4 border-l-2 border-border ml-1 py-2">
-                <label className="block text-xs text-gray-400 mb-1.5">Tensão mínima (V)</label>
-                <input
-                  type="number"
-                  step={0.1}
-                  min={3}
-                  max={4.2}
-                  value={settings.lowBatteryVoltage}
-                  onChange={e => setSettingsState(s => ({ ...s, lowBatteryVoltage: Number(e.target.value) || 3.5 }))}
-                  disabled={!settings.enabled}
-                  className="w-28 bg-bg border border-border rounded-md text-sm text-white px-3 py-1.5 outline-none focus:border-blue-500 mono disabled:opacity-50"
-                />
-              </div>
-            )}
-
-            <div className="flex flex-wrap gap-2 mt-4">
-              <button
-                onClick={() => handleSave()}
-                disabled={saving}
-                className="flex items-center gap-2 px-4 py-2 bg-blue-600 rounded-md text-sm text-white hover:bg-blue-700 transition-all disabled:opacity-60"
-              >
-                {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
-                Salvar
-              </button>
-            </div>
-          </>
-        )}
       </div>
 
       {/* Áreas de interesse */}
@@ -508,6 +450,14 @@ export default function TelegramPage() {
             O servidor avisa lançamento e pouso das estações marcadas mesmo com o app fechado. Marque as da região
             das suas áreas de interesse (também dá pra clicar nas estações no mapa). O círculo ciano no mapa é o alcance. Depois de marcar, clique em Salvar estações.
           </p>
+          <div className="mb-3 flex min-h-6 flex-wrap items-center gap-2 text-[11px]">
+            <span className="font-medium text-gray-400">Marcadas ({watchedStations.length}):</span>
+            {watchedStations.length > 0 ? watchedStations.map(st => (
+              <span key={st.id} className="inline-flex items-center gap-1 rounded-full border border-cyan-400/20 bg-cyan-400/5 px-2 py-1 text-cyan-100">
+                {st.name} ({st.id}) <span className="text-cyan-300/70">· {settings.stationRadiusKm?.[st.id] ?? DEFAULT_WATCH_RADIUS_KM} km</span>
+              </span>
+            )) : <span className="text-faint">Nenhuma estação marcada</span>}
+          </div>
           <div className="flex flex-wrap items-center gap-2 mb-2">
             <input
               type="text"
@@ -663,11 +613,14 @@ function previewMarkup(line: string): React.ReactNode[] {
   })
 }
 
-function MessageTemplateEditor({ label, templateKey, value, canTest, onChange }: {
+function MessageTemplateEditor({ label, templateKey, value, canTest, enabled, onEnabledChange, extraSettings, onChange }: {
   label: string
   templateKey: TelegramMessageTemplateKey
   value: string
   canTest: boolean
+  enabled: boolean
+  onEnabledChange: (enabled: boolean) => void
+  extraSettings?: React.ReactNode
   onChange: (value: string) => void
 }) {
   const [drag, setDrag] = useState<{ kind: 'token'; key: string } | { kind: 'block'; index: number } | null>(null)
@@ -770,10 +723,20 @@ function MessageTemplateEditor({ label, templateKey, value, canTest, onChange }:
           <span className="block text-sm font-semibold text-white">{label}</span>
           <span className="block text-[11px] text-faint">{blocks.length} {blocks.length === 1 ? 'item' : 'itens'} na mensagem</span>
         </span>
+        <span className={`hidden rounded-full border px-2 py-1 text-[10px] font-semibold sm:inline-flex ${enabled ? 'border-emerald-400/20 bg-emerald-400/10 text-emerald-300' : 'border-gray-500/20 bg-gray-500/10 text-gray-400'}`}>
+          {enabled ? 'Ativa' : 'Pausada'}
+        </span>
         <ChevronDown size={16} className={`text-faint transition-transform ${expanded ? 'rotate-180' : ''}`} />
       </summary>
 
       {expanded && <div className="space-y-4 border-t border-border p-4">
+        <ToggleRow
+          label={`Ativar notificação: ${label}`}
+          desc={enabled ? 'Este modelo pode enviar mensagens quando a chave geral do Telegram também estiver ativa.' : 'Este modelo está pausado e não enviará notificações.'}
+          checked={enabled}
+          onChange={onEnabledChange}
+        />
+        {extraSettings && <div className="rounded-lg border border-border bg-bg/60 px-3 py-2">{extraSettings}</div>}
         <div>
           <div className="mb-2 flex items-center gap-2 text-[11px] font-medium uppercase tracking-wider text-faint">
             <Plus size={13} /> Itens disponíveis <span className="normal-case tracking-normal">· clique ou arraste para adicionar</span>

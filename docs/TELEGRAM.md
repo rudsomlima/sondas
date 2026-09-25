@@ -38,6 +38,14 @@ modelo tem seu próprio botão de teste. O teste de lançamento e de pouso envia
 uma imagem do mapa quando os tiles estão disponíveis; os testes de receptor e
 bateria enviam texto.
 
+A chave geral **Notificações ativas** fica na configuração do bot. A ativação
+individual fica dentro de cada cartão de modelo; assim, cada uma das seis
+mensagens pode ser pausada separadamente. As opções de escopo do pouso ficam no
+modelo **Pouso**; os limites de tempo offline e tensão ficam, respectivamente,
+nos modelos **Receptor offline** e **Bateria baixa**. Offline/online compartilham
+a detecção do estado do receptor, assim como bateria baixa/normalizada, mas cada
+modelo controla separadamente se a mensagem daquela transição é enviada.
+
 Os blocos representam tokens como `{header}`, `{stationLine}`,
 `{landingCityLine}`, `{altitudeLine}`, `{linksLine}`, `{offlineHeader}` e
 `{lowBatteryBody}`. A lista completa e seus nomes visuais ficam em

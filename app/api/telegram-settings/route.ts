@@ -18,8 +18,10 @@ export async function GET() {
       notifyLanding: s?.notifyLanding !== false,
       notifyAnywhere: s?.notifyAnywhere !== false,
       notifyReceiverOffline: s?.notifyReceiverOffline !== false,
+      notifyReceiverOnline: s?.notifyReceiverOnline ?? s?.notifyReceiverOffline !== false,
       receiverOfflineMinutes: s?.receiverOfflineMinutes ?? 30,
       notifyLowBattery: s?.notifyLowBattery !== false,
+      notifyBatteryOk: s?.notifyBatteryOk ?? s?.notifyLowBattery !== false,
       lowBatteryVoltage: s?.lowBatteryVoltage ?? 3.5,
       watchedStationIds: s?.watchedStationIds ?? [DEFAULT_STATION.id],
       stationRadiusKm: s?.stationRadiusKm ?? {},
@@ -54,8 +56,14 @@ async function processPost(req: NextRequest) {
     notifyLanding: body?.notifyLanding !== false,
     notifyAnywhere: body?.notifyAnywhere !== false,
     notifyReceiverOffline: body?.notifyReceiverOffline !== false,
+    notifyReceiverOnline: typeof body?.notifyReceiverOnline === 'boolean'
+      ? body.notifyReceiverOnline
+      : (current?.notifyReceiverOnline ?? current?.notifyReceiverOffline ?? true),
     receiverOfflineMinutes: numOr(body?.receiverOfflineMinutes, current?.receiverOfflineMinutes ?? 30),
     notifyLowBattery: body?.notifyLowBattery !== false,
+    notifyBatteryOk: typeof body?.notifyBatteryOk === 'boolean'
+      ? body.notifyBatteryOk
+      : (current?.notifyBatteryOk ?? current?.notifyLowBattery ?? true),
     lowBatteryVoltage: numOr(body?.lowBatteryVoltage, current?.lowBatteryVoltage ?? 3.5),
     watchedStationIds: Array.isArray(body?.watchedStationIds)
       ? [...new Set<string>(body.watchedStationIds.filter((x: unknown): x is string => typeof x === 'string'))].slice(0, 60)

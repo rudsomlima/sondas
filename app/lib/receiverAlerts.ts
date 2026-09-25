@@ -28,7 +28,13 @@ export async function checkReceiverAlerts(): Promise<ReceiverAlertsSummary> {
   try {
     const settings = await readTelegramSettings()
     if (!settings?.enabled || !settings.botToken || !settings.chatId) return { checked: 0, sent: 0 }
-    if (!settings.notifyReceiverOffline && !settings.notifyLowBattery) return { checked: 0, sent: 0 }
+    const notifyReceiverOffline = settings.notifyReceiverOffline !== false
+    const notifyReceiverOnline = settings.notifyReceiverOnline ?? notifyReceiverOffline
+    const notifyLowBattery = settings.notifyLowBattery !== false
+    const notifyBatteryOk = settings.notifyBatteryOk ?? notifyLowBattery
+    const trackOffline = notifyReceiverOffline || notifyReceiverOnline
+    const trackBattery = notifyLowBattery || notifyBatteryOk
+    if (!trackOffline && !trackBattery) return { checked: 0, sent: 0 }
 
     const known = await readKnownReceivers()
     const now = Date.now()
@@ -52,11 +58,12 @@ export async function checkReceiverAlerts(): Promise<ReceiverAlertsSummary> {
       const lowBattery = typeof vBatt === 'number' ? vBatt < settings.lowBatteryVoltage : undefined
 
       const { offlineChanged, batteryChanged } = await updateReceiverAlertState(key, {
-        offline: settings.notifyReceiverOffline ? offline : undefined,
-        battery: settings.notifyLowBattery && lowBattery !== undefined ? lowBattery : undefined,
+        offline: trackOffline ? offline : undefined,
+        battery: trackBattery && lowBattery !== undefined ? lowBattery : undefined,
       })
 
-      if (settings.notifyReceiverOffline && offlineChanged) {
+      const shouldNotifyOfflineTransition = offline ? notifyReceiverOffline : notifyReceiverOnline
+      if (offlineChanged && shouldNotifyOfflineTransition) {
         const text = buildReceiverAlertText(offline ? 'offline' : 'online', entry.prefix, { minutesSilent: minutesSilent ?? undefined }, settings.messageTemplates)
         const r = await sendTelegramMessage(settings.botToken, settings.chatId, text)
         if (r.ok) sent++
@@ -67,7 +74,8 @@ export async function checkReceiverAlerts(): Promise<ReceiverAlertsSummary> {
           await updateReceiverAlertState(key, { offline: !offline }).catch(() => {})
         }
       }
-      if (settings.notifyLowBattery && batteryChanged && lowBattery !== undefined) {
+      const shouldNotifyBatteryTransition = lowBattery ? notifyLowBattery : notifyBatteryOk
+      if (batteryChanged && lowBattery !== undefined && shouldNotifyBatteryTransition) {
         const text = buildReceiverAlertText(lowBattery ? 'lowBattery' : 'batteryOk', entry.prefix, { vBatt }, settings.messageTemplates)
         const r = await sendTelegramMessage(settings.botToken, settings.chatId, text)
         if (r.ok) sent++

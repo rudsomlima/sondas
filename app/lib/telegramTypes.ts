@@ -20,11 +20,13 @@ export interface TelegramSettings {
   // TODOS os receptores conhecidos (readKnownReceivers), não só o ativo no
   // navegador de quem configurou.
   notifyReceiverOffline: boolean
+  notifyReceiverOnline: boolean
   // Minutos sem nenhum report (pmu/sleep/power) pra considerar "offline" —
   // nunca conta tempo de deep sleep esperado (ver isReceiverFresh/
   // deriveSleepState em powerState.ts).
   receiverOfflineMinutes: number
   notifyLowBattery: boolean
+  notifyBatteryOk: boolean
   lowBatteryVoltage: number
   // Estações (id STNM) cujos lançamentos/pousos o servidor avisa sozinho, via
   // cron /api/poll, sem ninguém com o app aberto. Ausente = só a estação padrão.
@@ -46,8 +48,10 @@ export const DEFAULT_TELEGRAM_SETTINGS: TelegramSettings = {
   notifyLanding: true,
   notifyAnywhere: true,
   notifyReceiverOffline: true,
+  notifyReceiverOnline: true,
   receiverOfflineMinutes: 30,
   notifyLowBattery: true,
+  notifyBatteryOk: true,
   lowBatteryVoltage: 3.5,
   updatedAt: 0,
 }
