@@ -98,7 +98,14 @@ export function buildEventText(p: EventMessageParams, templates?: TelegramMessag
   }
   const savedTemplate = templates?.[p.event]
   const isOldUneditedLandingDefault = p.event === 'landing' && savedTemplate === LEGACY_DEFAULT_LANDING_TEMPLATE
-  return renderTemplate((isOldUneditedLandingDefault ? '' : savedTemplate) || DEFAULT_MESSAGE_TEMPLATES[p.event], values)
+  const template = (isOldUneditedLandingDefault ? '' : savedTemplate) || DEFAULT_MESSAGE_TEMPLATES[p.event]
+  const rendered = renderTemplate(template, values)
+  // Modelos de pouso salvos antes da inclusão deste bloco ainda precisam
+  // mostrar o município na legenda da foto quando ele estiver disponível.
+  if (p.event === 'landing' && values.landingCityLine && !template.includes('{landingCityLine}')) {
+    return `${rendered}\n${values.landingCityLine}`
+  }
+  return rendered
 }
 
 // Nome amigável indisponível no servidor (knownReceivers só guarda o prefix

@@ -641,6 +641,7 @@ function MessageTemplateEditor({ label, templateKey, value, canTest, enabled, on
   const previewLines = blocks
     .map(line => line.replace(/\{([a-zA-Z]+)\}/g, (token, key: string) => sampleValues[key] ?? token))
     .filter(line => line.trim().length > 0)
+  if (landing && !value.includes('{landingCityLine}')) previewLines.push(sampleValues.landingCityLine)
 
   function writeBlocks(next: string[]) { onChange(next.join('\n')) }
   async function sendTest() {

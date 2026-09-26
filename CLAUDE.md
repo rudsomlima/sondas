@@ -385,8 +385,8 @@ receptor). O token nunca volta pro navegador.
   sem modelo salvo continuam usando esses padrões. A tela `/telegram` compõe
   modelos com badges arrastáveis, prévia com valores de exemplo, botão para
   restaurar todos os padrões e teste individual por modelo. O teste de
-  lançamento/pouso usa o mapa; o teste de pouso usa um ponto fixo em Parnamirim-RN
-  para sempre demonstrar uma localidade. Alertas do receptor são somente texto.
+  lançamento/pouso usa o mapa; ambos os testes sorteiam um ponto no RN.
+  Alertas do receptor são somente texto.
 - `enabled` é a chave geral. As seis ativações individuais ficam nos cartões
   dos modelos e são independentes: `notifyLaunch`, `notifyLanding`,
   `notifyReceiverOffline`, `notifyReceiverOnline`, `notifyLowBattery` e
@@ -402,7 +402,9 @@ receptor). O token nunca volta pro navegador.
 - Tokens e geração de texto ficam centralizados em `telegramMessage.ts`.
   Conteúdo dinâmico passa por escape HTML; o texto fixo do modelo aceita a
   formatação HTML compatível com Telegram. Não montar uma segunda versão da
-  mensagem nas rotas de teste.
+  mensagem nas rotas de teste. Modelos de pouso antigos que não incluem
+  `{landingCityLine}` recebem a localidade no fim da legenda quando ela foi
+  identificada; a prévia segue essa mesma regra.
 - `staticMap.ts` monta a imagem com tiles do OpenStreetMap. O rótulo do pouso
   usa `município-UF` (por exemplo `Natal-RN`), fica no canto inferior direito,
   em uma única linha e reduz a fonte para caber no mapa. Pousos identificados

@@ -36,8 +36,8 @@ a prévia preenchida com valores de exemplo. **Salvar modelos** grava as
 alterações; **Restaurar todos ao padrão** remove as substituições salvas. Cada
 modelo tem seu próprio botão de teste. O teste de lançamento e de pouso envia
 uma imagem do mapa quando os tiles estão disponíveis; os testes de receptor e
-bateria enviam texto. O teste de pouso usa uma coordenada urbana fixa em
-Parnamirim-RN para sempre exibir o município no mapa de exemplo.
+bateria enviam texto. Os testes de lançamento e pouso usam pontos aleatórios
+no Rio Grande do Norte.
 
 A chave geral **Notificações ativas** fica na configuração do bot. A ativação
 individual fica dentro de cada cartão de modelo; assim, cada uma das seis
@@ -53,6 +53,8 @@ Os blocos representam tokens como `{header}`, `{stationLine}`,
 `EVENT_TEMPLATE_TOKENS` e `ALERT_TEMPLATE_TOKENS` em `app/telegram/page.tsx`.
 É possível incluir HTML aceito pelo Telegram, como `<b>texto</b>`. Os valores
 dinâmicos são escapados antes da substituição.
+Modelos de pouso antigos sem `{landingCityLine}` exibem a localidade no fim
+da legenda da foto quando a busca reversa consegue identificá-la.
 
 ## Imagem de pouso
 

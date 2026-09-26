@@ -7,11 +7,9 @@ import { DEFAULT_STATION } from '@/app/lib/stations'
 import type { TelegramMessageTemplateKey, TelegramMessageTemplates } from '@/app/lib/telegramTypes'
 
 // Bounding box aproximado do Rio Grande do Norte (Brasil), usado para sortear
-// o ponto do teste de lançamento. O teste de pouso usa um ponto fixo urbano
-// validado para sempre demonstrar o rótulo de município no mapa.
+// o ponto dos testes de lançamento e pouso.
 const RN_LAT_MIN = -6.98, RN_LAT_MAX = -4.83
 const RN_LON_MIN = -38.35, RN_LON_MAX = -34.97
-const RN_LANDING_TEST_POINT = { lat: -5.91, lon: -35.25 }
 
 function randomRNPoint(): { lat: number; lon: number } {
   return {
@@ -24,9 +22,9 @@ async function sendTestEvent(
   botToken: string, chatId: string, event: 'launch' | 'landing', templates?: TelegramMessageTemplates,
 ): Promise<{ ok: boolean; error?: string; withPhoto: boolean }> {
   const station = DEFAULT_STATION
-  const pos = event === 'landing' ? RN_LANDING_TEST_POINT : randomRNPoint()
+  const pos = randomRNPoint()
   const place = event === 'landing' ? await lookupLandingPlace(pos.lat, pos.lon) : null
-  const city = event === 'landing' ? place?.city ?? 'Parnamirim-RN' : undefined
+  const city = event === 'landing' ? place?.city : undefined
 
   const text = buildEventText({
     event, sondeNumber: 'W12345 [teste]',
