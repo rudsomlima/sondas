@@ -407,7 +407,11 @@ receptor). O token nunca volta pro navegador.
   identificada; a prévia segue essa mesma regra.
 - `staticMap.ts` monta a imagem com tiles do OpenStreetMap. O rótulo do pouso
   usa `município-UF` (por exemplo `Natal-RN`), fica no canto inferior direito,
-  em uma única linha e reduz a fonte para caber no mapa. Pousos identificados
+  em uma única linha e reduz a fonte para caber no mapa. O texto é rasterizado
+  pelo Sharp com `public/fonts/Assistant.ttf` (licença OFL no mesmo diretório),
+  incluído nas rotas de mapa via `outputFileTracingIncludes` em `next.config.js`:
+  não voltar a depender de fontes instaladas no servidor, pois a Vercel
+  renderiza caracteres como quadrados nesse caso. Pousos identificados
   no mar usam zoom 3. A identificação geográfica é melhor esforço via
   Nominatim (timeout de 6 s); prefere campos de cidade/município, tem fallback
   para `city_district`, `county` e `name` apenas quando o tipo é uma localidade.

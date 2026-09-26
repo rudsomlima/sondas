@@ -6,6 +6,7 @@
  * do ar. Server-only — usa `sharp` pra colar os tiles e desenhar os pinos.
  */
 import sharp, { type OverlayOptions } from 'sharp'
+import path from 'node:path'
 
 const TILE_SIZE = 256
 // OSM pede um User-Agent identificando a aplicação (política de uso de
@@ -141,24 +142,58 @@ function escapeXml(text: string): string {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;')
 }
 
-function markerLabelSvg(text: string, maxWidth: number, maxHeight: number): { svg: Buffer; width: number; height: number } {
-  // Reserve room for the outline and keep the label's SVG strictly inside the map.
-  const width = Math.max(1, Math.floor(maxWidth))
-  const heightLimit = Math.max(1, Math.floor(maxHeight))
-  const label = text.trim()
-  const inset = Math.min(8, Math.max(1, Math.floor(width / 10)))
-  const textWidth = Math.max(1, width - inset * 2)
-  const charCount = Math.max(1, Array.from(label).length)
-  const heightFontLimit = Math.max(8, Math.floor((heightLimit - 12) / 1.25))
-  // Arial's average glyph width is about 0.55em; using 0.62em leaves room
-  // for wider letters while preserving a natural size for short localities.
-  const widthFontLimit = Math.max(8, Math.floor(textWidth / (charCount * 0.62)))
-  const fontSize = Math.min(60, heightFontLimit, widthFontLimit)
-  const textLength = Math.min(textWidth, Math.max(1, Math.ceil(charCount * fontSize * 0.62)))
-  const height = Math.min(heightLimit, Math.max(1, Math.ceil(fontSize * 1.25 + 12)))
-  const baseline = Math.min(height, 6 + fontSize)
-  const svg = Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><text x="${width - inset}" y="${baseline}" text-anchor="end" textLength="${textLength}" lengthAdjust="spacingAndGlyphs" font-family="Arial,sans-serif" font-size="${fontSize}" font-weight="700" fill="#17212b" stroke="#fff" stroke-width="5" stroke-linejoin="round" paint-order="stroke" filter="drop-shadow(0 1px 2px rgba(0,0,0,0.35))">${escapeXml(label)}</text></svg>`)
-  return { svg, width, height }
+const LABEL_FONT_FILE = path.join(process.cwd(), 'public', 'fonts', 'Assistant.ttf')
+
+async function markerLabelPng(text: string, maxWidth: number, maxHeight: number): Promise<{ png: Buffer; width: number; height: number }> {
+  const padding = 5
+  const availableWidth = Math.max(1, Math.floor(maxWidth) - padding * 2)
+  const availableHeight = Math.max(1, Math.floor(maxHeight) - padding * 2)
+  const label = escapeXml(text.trim())
+  let fontSize = 60
+  let glyphs!: Buffer
+  let glyphWidth = 0
+  let glyphHeight = 0
+
+  // Measure the real glyphs with the bundled font, then reduce the point size
+  // until the municipality fits on one line inside the map.
+  while (true) {
+    const rendered = await sharp({
+      text: {
+        text: `<span foreground="#17212b" weight="bold">${label}</span>`,
+        font: `Assistant ${fontSize}`,
+        fontfile: LABEL_FONT_FILE,
+        rgba: true,
+      },
+    }).png().toBuffer({ resolveWithObject: true })
+    glyphs = rendered.data
+    glyphWidth = rendered.info.width
+    glyphHeight = rendered.info.height
+    if ((glyphWidth <= availableWidth && glyphHeight <= availableHeight) || fontSize <= 8) break
+    const ratio = Math.min(availableWidth / glyphWidth, availableHeight / glyphHeight)
+    fontSize = Math.max(8, Math.min(fontSize - 1, Math.floor(fontSize * ratio)))
+  }
+  if (glyphWidth > availableWidth || glyphHeight > availableHeight) {
+    glyphs = await sharp(glyphs).resize({
+      width: Math.min(glyphWidth, availableWidth),
+      height: Math.min(glyphHeight, availableHeight),
+      fit: 'fill',
+    }).png().toBuffer()
+    const size = await sharp(glyphs).metadata()
+    glyphWidth = size.width!
+    glyphHeight = size.height!
+  }
+
+  const width = glyphWidth + padding * 2
+  const height = glyphHeight + padding * 2
+  const padded = await sharp(glyphs).extend({
+    top: padding, bottom: padding, left: padding, right: padding,
+    background: { r: 0, g: 0, b: 0, alpha: 0 },
+  }).png().toBuffer()
+  const outline = await sharp(padded).tint('#fff').dilate(3).png().toBuffer()
+  const png = await sharp({
+    create: { width, height, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } },
+  }).composite([{ input: outline, left: 0, top: 0 }, { input: padded, left: 0, top: 0 }]).png().toBuffer()
+  return { png, width, height }
 }
 
 /**
@@ -245,9 +280,9 @@ export async function renderStaticMapPng(opts: {
     if (!locationLabel) return cropped
 
     const margin = 10
-    const label = markerLabelSvg(locationLabel, width - margin * 2, height - margin * 2)
+    const label = await markerLabelPng(locationLabel, width - margin * 2, height - margin * 2)
     return await sharp(cropped).composite([{
-      input: label.svg,
+      input: label.png,
       left: Math.max(0, width - label.width - margin),
       top: Math.max(0, height - label.height - margin),
     }]).png().toBuffer()

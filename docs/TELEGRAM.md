@@ -67,7 +67,9 @@ tem timeout de 6 segundos e também reconhece o nome do resultado quando ele é
 classificado como cidade, vila, município ou condado.
 
 O rótulo aparece no canto inferior direito, em uma linha, sobre fundo
-transparente. A fonte diminui para caber na largura da imagem. Para pousos no
+transparente. A fonte diminui para caber na largura da imagem. A fonte
+`public/fonts/Assistant.ttf` acompanha o pacote das funções na Vercel para
+que o texto não apareça como quadrados. Para pousos no
 mar, o mapa usa zoom 3 para mostrar uma área continental mais ampla.
 
 As requisições dos tiles são limitadas globalmente a duas simultâneas por
