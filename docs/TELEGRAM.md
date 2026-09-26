@@ -36,7 +36,8 @@ a prévia preenchida com valores de exemplo. **Salvar modelos** grava as
 alterações; **Restaurar todos ao padrão** remove as substituições salvas. Cada
 modelo tem seu próprio botão de teste. O teste de lançamento e de pouso envia
 uma imagem do mapa quando os tiles estão disponíveis; os testes de receptor e
-bateria enviam texto.
+bateria enviam texto. O teste de pouso usa uma coordenada urbana fixa em
+Parnamirim-RN para sempre exibir o município no mapa de exemplo.
 
 A chave geral **Notificações ativas** fica na configuração do bot. A ativação
 individual fica dentro de cada cartão de modelo; assim, cada uma das seis

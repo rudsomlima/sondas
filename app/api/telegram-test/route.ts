@@ -6,11 +6,12 @@ import { buildEventText, buildReceiverAlertText } from '@/app/lib/telegramMessag
 import { DEFAULT_STATION } from '@/app/lib/stations'
 import type { TelegramMessageTemplateKey, TelegramMessageTemplates } from '@/app/lib/telegramTypes'
 
-// Bounding box aproximado do Rio Grande do Norte (Brasil) — só pra sortear
-// um ponto plausível dentro do estado a cada teste, sem depender de nenhum
-// voo real.
+// Bounding box aproximado do Rio Grande do Norte (Brasil), usado para sortear
+// o ponto do teste de lançamento. O teste de pouso usa um ponto fixo urbano
+// validado para sempre demonstrar o rótulo de município no mapa.
 const RN_LAT_MIN = -6.98, RN_LAT_MAX = -4.83
 const RN_LON_MIN = -38.35, RN_LON_MAX = -34.97
+const RN_LANDING_TEST_POINT = { lat: -5.91, lon: -35.25 }
 
 function randomRNPoint(): { lat: number; lon: number } {
   return {
@@ -23,8 +24,9 @@ async function sendTestEvent(
   botToken: string, chatId: string, event: 'launch' | 'landing', templates?: TelegramMessageTemplates,
 ): Promise<{ ok: boolean; error?: string; withPhoto: boolean }> {
   const station = DEFAULT_STATION
-  const pos = randomRNPoint()
+  const pos = event === 'landing' ? RN_LANDING_TEST_POINT : randomRNPoint()
   const place = event === 'landing' ? await lookupLandingPlace(pos.lat, pos.lon) : null
+  const city = event === 'landing' ? place?.city ?? 'Parnamirim-RN' : undefined
 
   const text = buildEventText({
     event, sondeNumber: 'W12345 [teste]',
@@ -33,7 +35,7 @@ async function sendTestEvent(
     climbing: event === 'launch' ? 5.2 : -1.1,
     frequencyMHz: 403.2,
     source: 'sondehub',
-    city: place?.city,
+    city,
     lastReportUtc: new Date().toISOString().slice(0, 19).replace('T', ' ') + 'z',
     stationId: station.id, stationName: station.name, stationLat: station.lat, stationLon: station.lon,
     areaName: event === 'landing' ? 'Área de exemplo' : undefined,
@@ -42,7 +44,7 @@ async function sendTestEvent(
   const png = await renderStaticMapPng({
     centerLat: pos.lat, centerLon: pos.lon,
     markers: [
-      { lat: pos.lat, lon: pos.lon, color: event === 'launch' ? '#22c55e' : '#ef4444', label: event === 'landing' ? place?.city : undefined },
+      { lat: pos.lat, lon: pos.lon, color: event === 'launch' ? '#22c55e' : '#ef4444', label: city },
       { lat: station.lat, lon: station.lon, color: '#3b82f6' },
     ],
     ...(place?.atSea ? { zoom: 3 } : {}),

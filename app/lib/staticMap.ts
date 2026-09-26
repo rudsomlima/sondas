@@ -126,8 +126,8 @@ export async function lookupLandingPlace(lat: number, lon: number): Promise<Land
       !!(result.address && ['sea', 'ocean'].some(k => k in result.address!))
     if (atSea) return { atSea, city: result.name || result.address?.sea || result.address?.ocean || 'Mar' }
     const address = result.address ?? {}
-    const knownLocalityTypes = new Set(['city', 'town', 'village', 'municipality', 'county'])
-    const locality = address.city || address.town || address.village || address.municipality || address.hamlet || address.county ||
+    const knownLocalityTypes = new Set(['city', 'town', 'village', 'municipality', 'city_district', 'county'])
+    const locality = address.city || address.town || address.village || address.municipality || address.city_district || address.locality || address.hamlet || address.county ||
       (knownLocalityTypes.has(result.addresstype ?? '') ? result.name : undefined)
     const stateUf = brazilStateUf(address.state || address.state_district, address['ISO3166-2-lvl4'])
     return { atSea: false, city: locality ? `${locality}${stateUf ? `-${stateUf}` : ''}` : undefined }

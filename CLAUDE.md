@@ -385,7 +385,8 @@ receptor). O token nunca volta pro navegador.
   sem modelo salvo continuam usando esses padrões. A tela `/telegram` compõe
   modelos com badges arrastáveis, prévia com valores de exemplo, botão para
   restaurar todos os padrões e teste individual por modelo. O teste de
-  lançamento/pouso usa o mapa; alertas do receptor são somente texto.
+  lançamento/pouso usa o mapa; o teste de pouso usa um ponto fixo em Parnamirim-RN
+  para sempre demonstrar uma localidade. Alertas do receptor são somente texto.
 - `enabled` é a chave geral. As seis ativações individuais ficam nos cartões
   dos modelos e são independentes: `notifyLaunch`, `notifyLanding`,
   `notifyReceiverOffline`, `notifyReceiverOnline`, `notifyLowBattery` e
@@ -407,7 +408,7 @@ receptor). O token nunca volta pro navegador.
   em uma única linha e reduz a fonte para caber no mapa. Pousos identificados
   no mar usam zoom 3. A identificação geográfica é melhor esforço via
   Nominatim (timeout de 6 s); prefere campos de cidade/município, tem fallback
-  para `county` e para `name` apenas quando o tipo do resultado é uma localidade.
+  para `city_district`, `county` e `name` apenas quando o tipo é uma localidade.
   Se a busca falhar, preserva `p.city` caso a origem já tenha enviado uma.
 - Pedidos de tiles compartilham um limite de duas requisições simultâneas por
   processo e tentam novamente em falhas transitórias, alternando subdomínios.
