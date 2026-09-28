@@ -767,6 +767,19 @@ implementação.
   proposital (ver "Reaparecimentos" acima) e um badge misto apagaria isso.
   `buildClusterIcon(L, count, color)` em `radiosondy.ts` é a mesma função pras
   duas coisas — só a cor muda (`REAPPEAR_COLOR` pro cluster de reaparecimento).
+- **Reaparecimentos degenerados viram LEQUE, não badge** (`fanOut` em
+  `reappearanceLayer.ts`) — diferente do cluster de pouso/estação. Um badge
+  com número seria o pior caso aqui: cada item de um cluster degenerado é uma
+  SONDA DIFERENTE com um POUSO ORIGINAL diferente, longe dali (caso real:
+  PS7BL recuperou X2932841, W0521239 e V5041139, cada uma vinda de um lugar
+  diferente — escondê-las atrás de "3" apagava justamente a informação que
+  a linha tracejada existe pra mostrar). `fanOut` desenha cada pino uns
+  pixels ao redor do ponto real (raio fixo em TELA, via
+  `containerPointToLatLng` — não em metros, é só visual), cada um com sua
+  própria linha até o SEU pouso — as linhas somem de vista só quando estão
+  MESMO escondidas atrás de outro pino, não mais escondidas atrás de um
+  número. Acima de `FAN_MAX` (6) itens, cai de volta pro badge com popup
+  concatenado — um leque de 10+ pinos ficaria ilegível.
 - **Marcador em destaque nunca é agrupado**: o balão do lançamento aberto
   (`LaunchMap`), a sonda ao vivo/selecionada (`MissionMap`) — é o próprio
   propósito daquela tela, ficam sempre individuais, sempre por cima. Só o
