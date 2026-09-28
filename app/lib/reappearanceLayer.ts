@@ -17,14 +17,16 @@
  *    ex.: várias sondas diferentes recuperadas pela mesma pessoa): um badge
  *    escondendo a contagem seria o pior caso possível aqui, porque cada
  *    item é um EVENTO DISTINTO (sonda diferente, pouso original diferente,
- *    longe dali) — o próprio ponto do reaparecimento é a única pista de que
- *    aquele lugar reúne várias histórias. Em vez de um badge, abre um LEQUE:
- *    cada alfinete desenhado uns pixels ao redor do ponto real (nunca mais
- *    que ~20px, puramente visual), cada um com sua PRÓPRIA linha tracejada
- *    até o SEU pouso original — assim as N linhas ficam visíveis de cara,
- *    sem precisar clicar em nada. Acima de `FAN_MAX` itens (mais do que uns
- *    poucos casos realmente raros), o leque ficaria ilegível: cai de volta
- *    pro badge com popup concatenado (`clusterPopupHtml`).
+ *    longe dali). Em vez de um badge — ou de vários alfinetes soltos, que
+ *    ainda colidiam entre si e escondiam as datas uma atrás da outra —
+ *    desenha um HUB: um ponto sólido violeta bem NO LOCAL real, de onde
+ *    saem pequenas SETAS, uma pra cada data, espaçadas o bastante pra nunca
+ *    se sobrepor. As linhas longas (tracejadas) de cada pouso original
+ *    convergem todas no hub — geograficamente correto, já que os itens
+ *    realmente reapareceram ali — em vez de em N posições artificiais
+ *    levemente diferentes. Acima de `FAN_MAX` itens, o hub ficaria com setas
+ *    demais pra ler: cai de volta pro badge com popup concatenado
+ *    (`clusterPopupHtml`).
  */
 import { buildReappearanceIcon, buildClusterIcon, REAPPEAR_COLOR } from './radiosondy'
 import { POPUP_OPTIONS, reappearancePopupHtml, clusterPopupHtml } from './mapPopups'
@@ -34,9 +36,10 @@ import type { Reappearance } from './reappearance'
 import { GMT3 } from './types'
 
 const PIN_SIZE = 18
+const HUB_RADIUS_PX = 5
 const REAPPEAR_CLUSTER_RADIUS_PX = 24
-// Acima disto, um leque de alfinetes fica apertado demais pra ler — melhor
-// um badge com popup concatenado (mesmo padrão de estações no mesmo lugar).
+// Acima disto, o hub ficaria com setas grudadas umas nas outras — melhor um
+// badge com popup concatenado (mesmo padrão de estações no mesmo lugar).
 const FAN_MAX = 6
 
 const pad = (n: number) => String(n).padStart(2, '0')
@@ -51,9 +54,9 @@ function labelDate(iso: string): string | undefined {
 
 export interface ReappearanceLayerOptions {
   // Chamado ao clicar num reaparecimento (o mapa do lançamento usa pra focar
-  // a sonda no cabeçalho, igual ao clique num pouso). Não dispara pra um
-  // badge de cluster — aí o clique amplia o zoom (ou abre a lista, se o
-  // grupo nunca for se separar e tiver itens demais pro leque).
+  // a sonda no cabeçalho, igual ao clique num pouso). Não dispara pro hub —
+  // aí o clique abre a lista de todos; nem pra um badge de cluster — aí o
+  // clique amplia o zoom (ou abre a lista, se o grupo tiver itens demais).
   onClick?: (point: SondePoint) => void
   // Estende os limites do mapa com cada reaparecimento desenhado — só quem
   // enquadra o mapa pela primeira vez passa isto.
@@ -69,31 +72,7 @@ interface Entry {
   lon: number
 }
 
-/**
- * Posições em leque ao redor de `center`, um pequeno raio FIXO EM PIXELS
- * (não em metros — é puramente visual, pra desgrudar pinos que na vida real
- * estão a poucos metros um do outro e por isso nunca se separariam com
- * zoom). Convertido de volta pra lat/lon no zoom atual via
- * `containerPointToLatLng`, então continua correto se o mapa for arrastado
- * ou o zoom mudar (o efeito de desenho roda de novo em `zoomend`).
- */
-function fanOut(L: any, map: any, center: Clusterable, count: number): { lat: number; lon: number }[] {
-  if (count <= 1) return [{ lat: center.lat, lon: center.lon }]
-  const radiusPx = Math.max(16, count * 6)
-  const origin = map.latLngToContainerPoint([center.lat, center.lon])
-  const out: { lat: number; lon: number }[] = []
-  for (let i = 0; i < count; i++) {
-    const angle = (2 * Math.PI * i) / count - Math.PI / 2 // primeiro pino aponta pra cima
-    const px = L.point(origin.x + radiusPx * Math.cos(angle), origin.y + radiusPx * Math.sin(angle))
-    const ll = map.containerPointToLatLng(px)
-    out.push({ lat: ll.lat, lon: ll.lng })
-  }
-  return out
-}
-
-function drawPin(L: any, layer: any, e: Entry, pos: { lat: number; lon: number }, onClick?: (p: SondePoint) => void) {
-  // Linha do pouso ORIGINAL (não da posição em leque) até onde o pino está
-  // desenhado — as duas pontas precisam bater com o que a tela mostra.
+function drawSinglePin(L: any, layer: any, e: Entry, pos: Clusterable, onClick?: (p: SondePoint) => void) {
   L.polyline([[e.point.lat, e.point.lon], [pos.lat, pos.lon]], {
     color: REAPPEAR_COLOR, weight: 1.5, dashArray: '6 6', opacity: 0.75,
   }).addTo(layer).bindPopup(reappearancePopupHtml(e.point, e.r, e.index, e.total), POPUP_OPTIONS)
@@ -102,6 +81,75 @@ function drawPin(L: any, layer: any, e: Entry, pos: { lat: number; lon: number }
     zIndexOffset: 500,
   }).addTo(layer).bindPopup(reappearancePopupHtml(e.point, e.r, e.index, e.total), POPUP_OPTIONS)
   if (onClick) marker.on('click', () => onClick(e.point))
+}
+
+// Seta curta e sólida: uma pequena ponta triangular rotacionada na direção
+// hub→data, desenhada perto do hub (não perto do pino, onde ficaria escondida
+// atrás do próprio ícone). `screenAngle` já está em graus prontos pra
+// `rotate()` — mesma convenção de eixo usada pra posicionar as pontas
+// (0° = direita, cresce em sentido horário, igual ao sistema de tela).
+function arrowIcon(L: any, screenAngle: number) {
+  return L.divIcon({
+    html: `<div style="width:10px;height:10px;transform:rotate(${screenAngle}deg);transform-origin:center;filter:drop-shadow(0 1px 1px rgba(0,0,0,0.6));">` +
+      `<svg viewBox="0 0 10 10" width="10" height="10"><polygon points="0,1 9,5 0,9" fill="${REAPPEAR_COLOR}"/></svg></div>`,
+    className: '',
+    iconSize: [10, 10],
+    iconAnchor: [5, 5],
+  })
+}
+
+/**
+ * Hub + setas: um ponto sólido no local real (compartilhado pelo grupo todo)
+ * com uma seta curta por item, apontando pra um pino com a data — espaçadas
+ * o bastante (raio cresce com a contagem) pra nenhuma data encostar na
+ * vizinha. As linhas longas (tracejadas) de cada pouso original convergem
+ * todas no hub, não em posições artificiais diferentes.
+ */
+function drawFan(L: any, map: any, layer: any, g: { anchor: Clusterable; items: Entry[] }, onClick?: (p: SondePoint) => void) {
+  const hub = g.anchor
+  const n = g.items.length
+  L.circleMarker([hub.lat, hub.lon], {
+    radius: HUB_RADIUS_PX, color: REAPPEAR_COLOR, fillColor: REAPPEAR_COLOR, fillOpacity: 0.9, weight: 2,
+  }).addTo(layer).bindPopup(
+    clusterPopupHtml(g.items.map(e => reappearancePopupHtml(e.point, e.r, e.index, e.total))), POPUP_OPTIONS,
+  )
+
+  const hubPx = map.latLngToContainerPoint([hub.lat, hub.lon])
+  // Raio cresce com a contagem: o espaço ao longo do arco entre duas setas
+  // vizinhas (raio × ângulo entre elas) precisa passar da largura de um
+  // pino+rótulo de data (~40px) pra elas nunca se tocarem.
+  const radiusPx = Math.max(24, n * 8)
+
+  g.items.forEach((e, i) => {
+    const angle = (2 * Math.PI * i) / n - Math.PI / 2 // primeira seta aponta pra cima
+    const satPx = L.point(hubPx.x + radiusPx * Math.cos(angle), hubPx.y + radiusPx * Math.sin(angle))
+    const satLL = map.containerPointToLatLng(satPx)
+    const sat = { lat: satLL.lat, lon: satLL.lng }
+
+    // Linha longa até o pouso original — sempre termina no HUB (posição
+    // real), não na posição artificial da seta.
+    L.polyline([[e.point.lat, e.point.lon], [hub.lat, hub.lon]], {
+      color: REAPPEAR_COLOR, weight: 1.5, dashArray: '6 6', opacity: 0.65,
+    }).addTo(layer).bindPopup(reappearancePopupHtml(e.point, e.r, e.index, e.total), POPUP_OPTIONS)
+
+    // Talo curto (sólido, só visual) do hub até o pino desta data.
+    L.polyline([[hub.lat, hub.lon], [sat.lat, sat.lon]], {
+      color: REAPPEAR_COLOR, weight: 1.5, opacity: 0.9, interactive: false,
+    }).addTo(layer)
+    // Ponta da seta a 1/3 do caminho (perto do hub — na ponta do pino ela
+    // ficaria atrás do próprio ícone), apontando pro pino.
+    const arrowPx = L.point(hubPx.x + (satPx.x - hubPx.x) / 3, hubPx.y + (satPx.y - hubPx.y) / 3)
+    const arrowLL = map.containerPointToLatLng(arrowPx)
+    L.marker([arrowLL.lat, arrowLL.lng], {
+      icon: arrowIcon(L, angle * 180 / Math.PI), interactive: false, zIndexOffset: 490,
+    }).addTo(layer)
+
+    const marker = L.marker([sat.lat, sat.lon], {
+      icon: buildReappearanceIcon(L, PIN_SIZE, labelDate(e.r.at)),
+      zIndexOffset: 500,
+    }).addTo(layer).bindPopup(reappearancePopupHtml(e.point, e.r, e.index, e.total), POPUP_OPTIONS)
+    if (onClick) marker.on('click', () => onClick(e.point))
+  })
 }
 
 /**
@@ -138,14 +186,11 @@ export function drawReappearances(
 
   for (const g of clusterByPixel(map, entries, REAPPEAR_CLUSTER_RADIUS_PX)) {
     if (g.items.length === 1) {
-      drawPin(L, layer, g.items[0], g.items[0], opts.onClick)
+      drawSinglePin(L, layer, g.items[0], g.items[0], opts.onClick)
       continue
     }
     if (isClusterDegenerate(g.anchor, g.items) && g.items.length <= FAN_MAX) {
-      // Mesmo endereço físico, poucos itens: leque de pinos individuais em
-      // vez de um badge — cada um com sua própria linha até o SEU pouso.
-      const positions = fanOut(L, map, g.anchor, g.items.length)
-      g.items.forEach((e, i) => drawPin(L, layer, e, positions[i], opts.onClick))
+      drawFan(L, map, layer, g, opts.onClick)
       continue
     }
     const marker = L.marker([g.anchor.lat, g.anchor.lon], {
@@ -153,7 +198,7 @@ export function drawReappearances(
       zIndexOffset: 600,
     }).addTo(layer)
     if (isClusterDegenerate(g.anchor, g.items)) {
-      // Degenerado mas itens demais pro leque ficar legível: cartões
+      // Degenerado mas itens demais pro hub ficar legível: cartões
       // concatenados, mesmo padrão de várias estações no mesmo lugar.
       marker.bindPopup(clusterPopupHtml(g.items.map(e => reappearancePopupHtml(e.point, e.r, e.index, e.total))), POPUP_OPTIONS)
     } else {

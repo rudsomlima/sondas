@@ -767,19 +767,31 @@ implementação.
   proposital (ver "Reaparecimentos" acima) e um badge misto apagaria isso.
   `buildClusterIcon(L, count, color)` em `radiosondy.ts` é a mesma função pras
   duas coisas — só a cor muda (`REAPPEAR_COLOR` pro cluster de reaparecimento).
-- **Reaparecimentos degenerados viram LEQUE, não badge** (`fanOut` em
+- **Reaparecimentos degenerados viram HUB + SETAS, não badge** (`drawFan` em
   `reappearanceLayer.ts`) — diferente do cluster de pouso/estação. Um badge
   com número seria o pior caso aqui: cada item de um cluster degenerado é uma
   SONDA DIFERENTE com um POUSO ORIGINAL diferente, longe dali (caso real:
-  PS7BL recuperou X2932841, W0521239 e V5041139, cada uma vinda de um lugar
-  diferente — escondê-las atrás de "3" apagava justamente a informação que
-  a linha tracejada existe pra mostrar). `fanOut` desenha cada pino uns
-  pixels ao redor do ponto real (raio fixo em TELA, via
-  `containerPointToLatLng` — não em metros, é só visual), cada um com sua
-  própria linha até o SEU pouso — as linhas somem de vista só quando estão
-  MESMO escondidas atrás de outro pino, não mais escondidas atrás de um
-  número. Acima de `FAN_MAX` (6) itens, cai de volta pro badge com popup
-  concatenado — um leque de 10+ pinos ficaria ilegível.
+  PS7BL recuperou X2932841, W0521239 e V5041139 — mais uma 4ª sonda —, cada
+  uma vinda de um lugar diferente; escondê-las atrás de "3" apagava
+  justamente a informação que a linha tracejada existe pra mostrar).
+  - Uma primeira versão (v1) espalhava cada PINO uns pixels ao redor do ponto
+    real, cada um com sua própria linha longa até o seu pouso — funcionava,
+    mas as DATAS (rótulo embaixo de cada pino) ainda colidiam entre si em
+    raios pequenos, e as N linhas longas convergindo em N posições
+    ligeiramente diferentes (não a posição real) ficava visualmente confuso.
+  - **Versão atual**: um HUB — círculo sólido pequeno — fica exatamente no
+    local real (`L.circleMarker`, raio 5px, clicável — abre os cartões
+    concatenados de todos ali). As linhas longas e tracejadas de CADA pouso
+    original convergem todas no hub (posição real, não artificial). Do hub
+    saem SETAS curtas e sólidas — uma por item —, cada uma até um pino com só
+    a data, em raio que CRESCE com a contagem (`Math.max(24, n*8)`) pra
+    garantir que o arco entre duas setas vizinhas sempre passe da largura de
+    um pino+data (~40-50px) — datas nunca mais se tocam. Sem nenhuma
+    animação ou interação: o leque de setas já nasce assim, visível de cara.
+  - Acima de `FAN_MAX` (6) itens, cai de volta pro badge com popup
+    concatenado — um hub com 10+ setas ficaria ilegível de qualquer forma.
+  - Setas (`arrowIcon`) e talos (`L.polyline` sólida) são `interactive: false`
+    — só o hub e o pino de cada data abrem popup; a seta é puramente visual.
 - **Marcador em destaque nunca é agrupado**: o balão do lançamento aberto
   (`LaunchMap`), a sonda ao vivo/selecionada (`MissionMap`) — é o próprio
   propósito daquela tela, ficam sempre individuais, sempre por cima. Só o
