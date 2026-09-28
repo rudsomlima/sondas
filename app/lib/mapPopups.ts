@@ -14,6 +14,10 @@ import { STATUS_COLORS } from './tokens'
 import { GMT3 } from './types'
 import { getSettings } from './settings'
 import { sondeHubUrl } from './radiosondy'
+import { bearingToCardinal, formatDistance } from './geo'
+import { REAPPEAR_LABEL, reappearanceCountLabel, type Reappearance } from './reappearance'
+
+const REAPPEAR_COLOR = STATUS_COLORS.reappeared
 
 // ---------------------------------------------------------------------------
 // Ícones (paths do lucide, viewBox 24×24, traço).
@@ -120,6 +124,33 @@ export interface SondePopupOptions {
   banner?: { text: string; color: string }
 }
 
+// Distância + rumo do pouso até um reaparecimento, em texto curto.
+function reappearWhere(r: Reappearance): string {
+  if (r.distanceKm == null) return ''
+  const dir = r.bearingDeg == null ? '' : ` ${bearingToCardinal(r.bearingDeg)}`
+  return `${formatDistance(r.distanceKm)}${dir} do pouso`
+}
+
+/**
+ * Bloco "Reaparecimentos" no popup do POUSO: a mesma sonda reportada de novo
+ * depois do voo, em outro lugar. Fica aqui pra quem abre o pouso saber que
+ * existem outros pontos dela no mapa, e onde. Ver reappearance.ts.
+ */
+function reappearancesBlock(p: SondePoint): string {
+  const list = p.reappearances
+  if (!list?.length) return ''
+  const items = list.slice(0, 5).map(r => {
+    const d = parseDate(r.at)
+    return `<div class="mp-note" style="color:${REAPPEAR_COLOR}">` +
+      `<span class="mp-mono">${d ? fmtLocal(d) : esc(r.at)}</span>` +
+      (reappearWhere(r) ? ` · ${esc(reappearWhere(r))}` : '') +
+      (r.receiver ? ` · <span class="mp-mono">${esc(r.receiver)}</span>` : '') +
+      `</div>`
+  }).join('')
+  const more = list.length > 5 ? `<div class="mp-muted">+${list.length - 5}</div>` : ''
+  return block('radio', reappearanceCountLabel(list.length), items + more)
+}
+
 function receiversBlock(p: SondePoint): string {
   if (!p.receivers?.length) return ''
   const me = myCallsign()
@@ -149,13 +180,18 @@ export function sondePopupHtml(p: SondePoint, opts: SondePopupOptions = {}): str
   const rows = [
     first ? row('rocket', 'Lançamento', fmtLocal(first), 'Horário do 1º dado recebido da sonda') :
       onlyCache ? row('rocket', 'Lançamento', `~${fmtLocal(p.date)}`, 'Horário sinótico nominal (1º dado ainda desconhecido)') : '',
-    !onlyCache ? row('clock', 'Último reporte', fmtLocal(p.date, true), ago(p.date)) : '',
+    // Com reaparecimentos existe reporte MAIS NOVO que este — chamar isto de
+    // "último reporte" faria o cartão se contradizer com o bloco de baixo.
+    !onlyCache ? p.reappearances?.length
+      ? row('clock', 'Pouso (fim do voo)', fmtLocal(p.date, true), 'Último quadro do voo; reportes posteriores estão em Reaparecimentos')
+      : row('clock', 'Último reporte', fmtLocal(p.date, true), ago(p.date)) : '',
     p.altitude != null ? row('mountain', 'Altitude',
       `${Math.round(p.altitude).toLocaleString('pt-BR')} m` +
       (p.maxAltM ? ` <span class="mp-muted">· máx. ${Math.round(p.maxAltM).toLocaleString('pt-BR')} m</span>` : '')) : '',
     row('pin', 'Posição', `<span class="mp-mono">${p.lat.toFixed(5)}, ${p.lon.toFixed(5)}</span>`),
     receiversBlock(p),
     lastRx ? block('signal', 'Último sinal', `<div class="mp-value">${lastRx}</div>`) : '',
+    reappearancesBlock(p),
     p.recoveredBy || p.recoveryNote ? block('userCheck', p.recoveredBy ? 'Recuperada por' : 'Observação',
       (p.recoveredBy ? `<div class="mp-value mp-mono">${esc(p.recoveredBy)}</div>` : '') +
       (p.recoveryNote ? `<div class="mp-note">“${esc(p.recoveryNote)}”</div>` : '')) : '',
@@ -176,6 +212,42 @@ export function sondePopupHtml(p: SondePoint, opts: SondePopupOptions = {}): str
       button(`https://radiosondy.info/sonde_archive.php?sondenumber=${encodeURIComponent(p.serial)}`, 'external', 'radiosondy') +
       button(sondeHubUrl(p.serial, p.lat, p.lon), 'external', 'SondeHub') +
       button(`https://www.openstreetmap.org/directions?route=%3B${p.lat},${p.lon}`, 'navigation', 'Navegar') +
+    `</div>` +
+  `</div>`
+}
+
+/**
+ * Popup do marcador de REAPARECIMENTO. Sempre diz de onde a sonda veio: o
+ * cartão abre com o serial marcado como reaparecimento (não como pouso) e
+ * fecha apontando o pouso original — data, distância e rumo. É o vínculo que
+ * impede ler este ponto como um pouso solto em outro lugar.
+ */
+export function reappearancePopupHtml(p: SondePoint, r: Reappearance, index = 0, total = 1): string {
+  const when = parseDate(r.at)
+  const landingWhen = p.date
+  const rows = [
+    when ? row('clock', 'Reportada em', fmtLocal(when, true), ago(when)) : '',
+    r.alt != null ? row('mountain', 'Altitude', `${Math.round(r.alt).toLocaleString('pt-BR')} m`) : '',
+    row('pin', 'Posição', `<span class="mp-mono">${r.lat.toFixed(5)}, ${r.lon.toFixed(5)}</span>`),
+    r.receiver ? row('signal', 'Recebida por', `<span class="mp-mono">${esc(r.receiver)}</span>`) : '',
+    r.frames ? row('activity', 'Quadros', r.frames.toLocaleString('pt-BR')) : '',
+    block('rocket', 'Pouso original',
+      `<div class="mp-value mp-mono">${fmtLocal(landingWhen, true)}</div>` +
+      `<div class="mp-note">${esc(`${p.lat.toFixed(5)}, ${p.lon.toFixed(5)}`)}` +
+      (reappearWhere(r) ? ` · ${esc(reappearWhere(r))}` : '') + `</div>`),
+  ].filter(Boolean).join('')
+  return `<div class="mp">` +
+    `<div class="mp-banner" style="background:${REAPPEAR_COLOR}22;color:${REAPPEAR_COLOR};border-bottom-color:${REAPPEAR_COLOR}55">` +
+      `${icon('radio', REAPPEAR_COLOR)}<span>Não é um pouso — a sonda foi reportada de novo aqui</span></div>` +
+    `<div class="mp-head">` +
+      `<div class="mp-headtext"><div class="mp-title">${esc(p.serial)}</div>` +
+      `<div class="mp-sub">${esc(REAPPEAR_LABEL)}${total > 1 ? ` ${index + 1}/${total}` : ''}</div></div>` +
+      `<span class="mp-badge" style="color:${REAPPEAR_COLOR};border-color:${REAPPEAR_COLOR}66;background:${REAPPEAR_COLOR}1a">${esc(REAPPEAR_LABEL)}</span>` +
+    `</div>` +
+    `<div class="mp-body">${rows}</div>` +
+    `<div class="mp-foot">` +
+      button(`https://radiosondy.info/sonde_archive.php?sondenumber=${encodeURIComponent(p.serial)}`, 'external', 'radiosondy') +
+      button(`https://www.openstreetmap.org/directions?route=%3B${r.lat},${r.lon}`, 'navigation', 'Navegar') +
     `</div>` +
   `</div>`
 }

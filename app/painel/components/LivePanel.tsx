@@ -1,8 +1,11 @@
 'use client'
 
-import { Wind, Loader2, Sun, Moon, Antenna, MapPinOff } from 'lucide-react'
+import { Wind, Loader2, Sun, Moon, Antenna, MapPinOff, Radio } from 'lucide-react'
 import { flightStatus, FLIGHT_STATUS_LABEL, type TodayFlight } from '@/app/lib/radiosondy'
-import { isDaytime, formatGmt3, launchDisplayTime } from '@/app/lib/launchUtils'
+import { isDaytime, formatGmt3, formatGmt3Date, launchDisplayTime } from '@/app/lib/launchUtils'
+import { STATUS_COLORS } from '@/app/lib/tokens'
+import { formatDistance, bearingToCardinal } from '@/app/lib/geo'
+import type { SondePoint } from '@/app/lib/sondePoints'
 import type { Launch } from '@/app/lib/types'
 import type { SelectedTarget } from '../selection'
 
@@ -13,11 +16,18 @@ interface LivePanelProps {
   selected: SelectedTarget | null
   onSelect: (t: SelectedTarget | null) => void
   mySerials?: Set<string> // serials sendo recebidos pelo receptor do usuário
+  // Sondas de outros dias reportadas de novo hoje: o POUSO original é a
+  // posição, e o reporte de hoje vem anexado (ver splitTodayFlights). Ficam
+  // numa lista à parte de propósito — não são voo de hoje.
+  reappearedToday?: SondePoint[]
 }
+
+const NO_REAPPEARED: SondePoint[] = []
 
 // Painel esquerdo: sondas de hoje + últimos lançamentos com posição.
 export default function LivePanel({
   todayFlights, liveFlightChecked, recentLaunches, selected, onSelect, mySerials,
+  reappearedToday = NO_REAPPEARED,
 }: LivePanelProps) {
   return (
     <div className="flex flex-col gap-4">
@@ -74,6 +84,47 @@ export default function LivePanel({
           </div>
         )}
       </div>
+
+      {reappearedToday.length > 0 && (
+        <div className="panel p-4">
+          <p className="panel-title mb-1 flex items-center gap-1.5" style={{ color: STATUS_COLORS.reappeared }}>
+            <Radio size={12} /> Reaparecimentos de hoje
+          </p>
+          <p className="text-[10px] text-dim mb-3">
+            Sondas de outros dias reportadas de novo hoje, em outro lugar. Não são voos de hoje — o pouso original
+            segue no lugar dele no mapa, ligado a cada reaparecimento por uma linha tracejada.
+          </p>
+          <div className="space-y-2">
+            {reappearedToday.map(p => {
+              const r = p.reappearances?.[p.reappearances.length - 1]
+              const isSelected = selected?.serial === p.serial
+              return (
+                <button
+                  key={p.serial}
+                  onClick={() => onSelect(isSelected ? null : {
+                    serial: p.serial, lat: p.lat, lon: p.lon, altitude: p.altitude, isLive: false,
+                  })}
+                  title="Selecionar o POUSO original desta sonda"
+                  className={`w-full text-left p-2.5 rounded border transition-all ${
+                    isSelected ? 'border-blue-500/60 bg-blue-500/10' : 'border-border hover:border-border-strong bg-bg'
+                  }`}
+                >
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="mono text-xs text-amber-400">{p.serial}</span>
+                    {r?.distanceKm != null && (
+                      <span className="text-[10px] mono" style={{ color: STATUS_COLORS.reappeared }}>
+                        {formatDistance(r.distanceKm)}{r.bearingDeg != null ? ` ${bearingToCardinal(r.bearingDeg)}` : ''} do pouso
+                      </span>
+                    )}
+                  </div>
+                  {r && <div className="text-[10px] text-faint mono mt-0.5">reportada {formatGmt3Date(r.at)}</div>}
+                  <div className="text-[10px] text-dim mono">pouso {formatGmt3Date(p.date)}</div>
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      )}
 
       <div className="panel p-4">
         <p className="panel-title mb-3">Últimos lançamentos</p>

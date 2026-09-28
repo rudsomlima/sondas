@@ -21,6 +21,8 @@ import { haversineKm } from './geo'
 import { gmt3DateStr } from './launchUtils'
 import { writeLiveFlights, readTelegramSettings } from './blobStore'
 import { notifyFlightEvent } from './telegramEvents'
+import { findRecords } from './sondeRegistryServer'
+import { splitTodayFlights } from './sondePoints'
 import type { PollStationStatus } from './types'
 import { DEFAULT_WATCH_RADIUS_KM } from './telegramTypes'
 import { nowGMT3 } from './types'
@@ -140,7 +142,14 @@ function reportAgeMs(f: TodayFlight): number {
 }
 
 async function notifyRecentEvents(station: { id: string; name: string; lat: number; lon: number }, flights: TodayFlight[]) {
-  for (const f of flights) {
+  // Sonda velha reaparecendo (achada e religada em outro lugar) não é
+  // lançamento nem pouso: o feed do radiosondy.info a devolve com a data de
+  // HOJE e sem isso o cron mandava "sonda pousou" de um voo de semanas atrás
+  // (X2932841, voo em 09/09/2026, reportada em 26/09). O registro no R2 é
+  // quem sabe do voo original. Ver app/lib/reappearance.ts.
+  const records = await findRecords(flights.map(f => f.sondeNumber)).catch(() => new Map())
+  const { flights: real } = splitTodayFlights(flights, records)
+  for (const f of real) {
     const age = reportAgeMs(f)
     let event: 'launch' | 'landing' | null = null
     if (f.isLive && age < LAUNCH_MAX_AGE_MS) event = 'launch'

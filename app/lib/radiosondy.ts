@@ -334,7 +334,7 @@ export async function fetchRadiosondyFeatures(year: number, month: number, start
 // si; o espaço entre o primeiro pouso ~2h30 e o segundo lançamento 12h depois
 // é ~9h30 — 4h fica bem dentro disso). Ampliado de 3h para 4h depois de
 // observar que alguns voos duram 3h10-3h30 e ficavam fora da janela anterior.
-const MAX_MATCH_WINDOW_MS = 4 * 60 * 60 * 1000
+export const MAX_MATCH_WINDOW_MS = 4 * 60 * 60 * 1000
 
 // Janela separada para o "live check": tempo máximo desde o lançamento dentro
 // do qual a sonda pode ainda estar transmitindo (feed ao vivo). Mantida em 3h
@@ -405,10 +405,19 @@ export function statusColor(status: string): string {
 // pouso registrado) em buildHighlightLiveBalloonIcon.
 export const LIVE_COLOR = STATUS_COLORS.live
 
-export const LEGEND_ITEMS: { label: string; color: string }[] = [
+// Reaparecimento: a mesma sonda reportada depois do voo, em outro lugar. Cor
+// e ícone próprios (alfinete, não o cilindro do payload) pra nunca ser lido
+// como um pouso. Ver reappearance.ts.
+export const REAPPEAR_COLOR = STATUS_COLORS.reappeared
+
+export const LEGEND_ITEMS: { label: string; color: string; title?: string }[] = [
   { label: 'Encontrada', color: statusColor('FOUND') },
   { label: 'Perdida', color: statusColor('LOST') },
   { label: 'Desconhecida', color: statusColor('UNKNOWN') },
+  {
+    label: 'Reaparecimento', color: REAPPEAR_COLOR,
+    title: 'A mesma sonda reportada de novo depois do voo, em outro lugar — alfinete ligado ao pouso original por uma linha tracejada',
+  },
 ]
 
 let balloonIconCounter = 0
@@ -532,6 +541,52 @@ function parachuteSvgMarkup(color: string, widthPx: number, heightPx: number): s
       <path d="M 78 64 Q 78 20 50 12 Q 65 30 65 64 Z" clip-path="url(#${clipId})" fill="#EEE"/>
       <rect x="0" y="0" width="100" height="63" fill="url(#${whiteGradId})" clip-path="url(#${clipId})" opacity="0.3"/>
     </svg>`
+}
+
+/**
+ * Marcador de REAPARECIMENTO: alfinete com ondas de rádio saindo dele, na cor
+ * violeta. De propósito nada parecido com o cilindro do payload (pouso) nem
+ * com o balão de paraquedas (em voo) — é a sonda reportada de novo, em outro
+ * lugar, depois do voo, e ler isso como "pousou aqui" é justamente o erro que
+ * este marcador existe pra evitar. Ver reappearance.ts.
+ */
+function reappearSvgMarkup(color: string, widthPx: number, heightPx: number): string {
+  const n = balloonIconCounter++
+  return `
+    <svg width="${widthPx}" height="${heightPx}" viewBox="0 0 24 32" xmlns="http://www.w3.org/2000/svg" style="filter:drop-shadow(0 1px 3px rgba(0,0,0,0.6))">
+      <defs>
+        <linearGradient id="reappear-grad-${n}" x1="0%" y1="0%" x2="120%" y2="0%">
+          <stop offset="0%" stop-color="${color}"/>
+          <stop offset="100%" stop-color="black"/>
+        </linearGradient>
+      </defs>
+      <path d="M12 31 C12 31 3 19.5 3 13 A9 9 0 0 1 21 13 C21 19.5 12 31 12 31 Z"
+            fill="url(#reappear-grad-${n})" stroke="black" stroke-width="1.2"/>
+      <circle cx="12" cy="12.5" r="2.6" fill="#FFF"/>
+      <path d="M8.2 8.7 A5.4 5.4 0 0 0 8.2 16.3" fill="none" stroke="#FFF" stroke-width="1.4" stroke-linecap="round"/>
+      <path d="M15.8 8.7 A5.4 5.4 0 0 1 15.8 16.3" fill="none" stroke="#FFF" stroke-width="1.4" stroke-linecap="round"/>
+    </svg>`
+}
+
+// Rótulo do reaparecimento: só a data (dd/mm), em violeta. Sem sol/lua — o
+// período do dia diz respeito ao lançamento, e aqui não houve lançamento.
+function reappearLabelMarkup(text: string): string {
+  return `<div style="display:flex;align-items:center;justify-content:center;margin-top:2px;background:${REAPPEAR_COLOR};` +
+    `border:1px solid rgba(255,255,255,0.5);border-radius:4px;padding:1px 4px;white-space:nowrap;">` +
+    `<span style="color:#fff;font-size:10px;font-family:monospace;font-weight:700;line-height:1.3;">${text}</span></div>`
+}
+
+export function buildReappearanceIcon(L: any, widthPx: number, dateText?: string) {
+  const heightPx = Math.round(widthPx * 32 / 24)
+  const svg = reappearSvgMarkup(REAPPEAR_COLOR, widthPx, heightPx)
+  const labelHtml = dateText ? reappearLabelMarkup(dateText) : ''
+  const labelH = dateText ? LABEL_HEIGHT_PX : 0
+  return L.divIcon({
+    html: `<div style="display:flex;flex-direction:column;align-items:center;width:${widthPx}px;">${svg}${labelHtml}</div>`,
+    className: '',
+    iconSize: [widthPx, heightPx + labelH],
+    iconAnchor: [widthPx / 2, heightPx - 1], // a ponta do alfinete é o ponto
+  })
 }
 
 export function buildBalloonIcon(L: any, color: string, widthPx: number, label?: IconLabel) {

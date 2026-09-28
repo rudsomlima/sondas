@@ -585,6 +585,75 @@ lembrado em `sondas_painel_map_period`). Bug real que isso corrigiu: o painel
 usava só os lançamentos do mês (`positionedMonth`), uma sonda por slot
 sinótico, com o horário nominal — e parecia "mostrar só as minhas".
 
+### Reaparecimentos (`app/lib/reappearance.ts`)
+
+A MESMA sonda reportada de novo **depois do voo, em outro lugar**: recuperada,
+levada pra casa de quem achou e religada, ou reportada por outra pessoa dias
+depois. Caso real: **X2932841**, lançada em 09/09/2026 e recuperada, reportada
+de novo em 26/09/2026 a ~48 km do pouso.
+
+**Regra da casa: o POUSO ORIGINAL é a posição e a data da sonda em todo o app.**
+Cada reporte posterior e distante é um `Reappearance` à parte, identificado de
+forma própria e sempre ligado ao pouso de onde veio. Nada é descartado e nada
+é confundido com pouso novo.
+
+- **Detecção** (um só lugar, `isReappearanceOf`): mais de `REAPPEAR_GAP_MS`
+  (2 h) sem quadro **e** mais de `REAPPEAR_MIN_KM` (1 km) de distância. As duas
+  condições juntas: sonda não recuperada que segue transmitindo do chão, no
+  mesmo lugar, por dias **não** é reaparecimento — é o mesmo pouso dando sinal,
+  e continua atualizando a posição normalmente.
+- **Nas fontes** (`flightSegments`, `sondeSources.ts`): a trilha é partida em
+  episódios pelo mesmo gap. O voo é o bloco de maior altitude (era o antigo
+  `mainFlightSegment`, que **descartava** o resto); os blocos posteriores agora
+  voltam como `reappearances` em vez de se perderem.
+- **No registro** (`SondeRecord.reappearances`): `mergeSondeRecords` decide qual
+  das duas cópias de `lastPos` é o pouso (`splitLanding`) — vale nas **duas
+  direções** de propósito, porque um registro gravado antes desta regra pode ter
+  o reaparecimento no lugar do pouso, e reler a fonte tem que conseguir
+  devolver cada um ao seu lugar. `lastFrameUtc` nunca passa do pouso (a página
+  de arquivo do radiosondy.info informa o quadro mais recente de *todos*, sem
+  coordenada) e "último sinal" é o do voo — o receptor de um reaparecimento
+  fica registrado no próprio reaparecimento. `ENRICH_VERSION` subiu pra 3 pra
+  os registros antigos serem relidos uma vez.
+- **Nos pontos dos mapas** (`SondePoint.reappearances`): `mergeSondePoints` faz
+  a mesma classificação, e só entre dois reportes de verdade — um ponto vindo só
+  do cache de lançamentos tem a data do horário sinótico *nominal*, e o pouso do
+  próprio voo cai horas depois dela (compará-los transformaria pouso legítimo em
+  reaparecimento). `withLanding` refaz distância/rumo sempre que o pouso muda
+  (ex.: o relato de recuperação chegou depois e moveu a posição).
+- **Desenho** (`reappearanceLayer.ts`, usado por `YearMap`, `MissionMap` e
+  `LaunchMap`): alfinete violeta com ondas de rádio (`buildReappearanceIcon`,
+  `STATUS_COLORS.reappeared`) — nunca o cilindro do payload, que significa
+  pouso — ligado ao pouso original por uma **linha tracejada violeta**. A linha
+  é o ponto todo: sem ela o marcador pareceria uma sonda solta em outro lugar.
+  Popup próprio (`reappearancePopupHtml`) que abre dizendo "não é um pouso" e
+  fecha apontando o pouso original com data, coordenada, distância e rumo; o
+  popup do pouso lista os reaparecimentos e troca "Último reporte" por "Pouso
+  (fim do voo)", pra o cartão não se contradizer.
+- **Sondas de hoje** (`splitTodayFlights`): o feed do mês do radiosondy.info
+  devolve o reporte **mais recente** de cada sonda, então uma sonda velha
+  reaparecendo entrava em `fetchTodayFlights` como voo de hoje — aparecia como
+  "Pousada" no painel, contava como lançamento do dia e disparava alerta de
+  pouso no Telegram. `splitTodayFlights(flights, records)` tira esses reportes
+  das listas de voo e os devolve como o **pouso original + o reaparecimento
+  ligado a ele**. Só o registro sabe disso (é ele que guarda o voo); sem
+  registro da sonda o app segue tratando como voo, igual antes. Aplicado em
+  `/painel` (TopStatusBar, LivePanel, MissionMap, `useLaunchLandingWatcher` e o
+  `reportSondes`, que grava o reaparecimento como reaparecimento em vez de
+  sobrescrever `lastPos` no R2), em `/historico` (LiveCard) e **no servidor**,
+  em `notifyRecentEvents` (`liveFlightsCache.ts`), que é o cron e não tem o
+  navegador pra fazer isso por ele.
+- **Onde mais aparece**: selo no acordeão do mês (`MonthAccordion`, ícone de
+  rádio violeta com data/distância na dica, sem mexer no dia/horário do
+  lançamento), contador no cabeçalho do mapa do ano e do mapa do lançamento,
+  selo "REAPARECIMENTO" no `ReceiverPanel` e no aviso do navegador
+  (`useReceiverAlerts`) — é no receptor do próprio usuário que uma sonda
+  religada em casa aparece primeiro.
+- **Análises** continua sendo mapa/estatística de **pousos**: os
+  reaparecimentos não entram no mapa de calor nem na rosa de deriva, e isso é
+  o comportamento correto — o que garante isso é `pointFromRecord` usar o
+  pouso, não o reporte mais recente.
+
 ### Recuperações do SondeHub (`app/lib/sondehubRecovery.ts`)
 
 Posições vindas só de telemetria RF do SondeHub nascem `status: 'UNKNOWN'`.
@@ -621,6 +690,14 @@ lista por um parcial menor.
 - Não busque meses inteiros a cada requisição — sempre passe pelo padrão incremental "busca a partir do último dia armazenado" do `syncMonth`.
 - O cache em memória do servidor, o cache localStorage do cliente e o Blob store são três camadas independentes; uma correção numa não se propaga pras outras.
 - O feed ao vivo do radiosondy.info (`export_map.php?live_map=1`) retorna timestamps `report` com um `z` minúsculo no final (ex.: `"2026-06-23 12:57:32z"`) — acrescentar outro `Z` pro `Date` parsear produz uma data inválida silenciosamente. Sempre remova o `z`/`Z` existente antes de reacrescentar um (ver o padrão correto em `gmt3DateStr`/`formatGmt3`).
+- **Nunca deixe um reporte posterior ao voo sobrescrever o pouso** — nem em
+  `lastPos`/`lastFrameUtc` do registro, nem na posição/data de um `SondePoint`,
+  nem no destaque do `LaunchMap` (o feed do mês devolve o reporte mais recente
+  da sonda, não o do voo: por isso `rdFeature` só vale dentro de
+  `MAX_MATCH_WINDOW_MS` do lançamento). Ele é um reaparecimento e tem lugar
+  próprio — ver "Reaparecimentos" acima. Quebrar isso faz a sonda mudar de dia
+  e de mês em todo o app e ressuscita o alerta de "pouso" de um voo de semanas
+  atrás.
 - `TodayFlight.isLive === false` significa só "parou de transmitir", **não** "pousou" — a sonda some do SondeHub quando desce abaixo do horizonte dos receptores, às vezes ainda a km do chão (caso real: W3770310, último frame a 1.249 m caindo a 6 m/s). Nunca rotule `!isLive` direto como "Pousada": use `flightStatus()`/`FLIGHT_STATUS_LABEL` (`app/lib/radiosondy.ts`), que só diz pousada com evidência (recuperação no radiosondy.info, último frame < 500 m ou velocidade vertical ~0) e cai em "Sinal perdido" no resto. Não troque isso por um limiar só de altitude absoluta — estações altas (La Paz ~4.000 m) quebrariam.
 - O horário mostrado de um lançamento vem de `launchDisplayTime()`, não de `l.time_local` direto — ver "Uma entrada de lançamento por sonda". `time_local`/`time_utc` são identidade interna; sobrescrevê-los com o horário real quebra caches, merges e `radiosondyMatch`.
 - `Launch` mora em `app/lib/types.ts` (import compartilhado) — ao adicionar um campo, deixe-o opcional pra que os YearStores já persistidos no R2 continuem válidos.

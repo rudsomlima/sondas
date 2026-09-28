@@ -15,9 +15,10 @@ import { cacheStationKey, isWyomingEnabled, useWyomingEnabled, wyomingQuery } fr
 import { useSondeRegistry } from '../historico/hooks/useSondeRegistry'
 import { useRecoveredLaunches } from '../historico/hooks/useRecoveredLaunches'
 import { useSondeLaunches } from '../historico/hooks/useSondeLaunches'
-import { attachPositions, mergeWithRegistry, isPointInMonth } from '@/app/lib/sondePoints'
+import { attachPositions, mergeWithRegistry, isPointInMonth, splitTodayFlights, todayFlightReappearance } from '@/app/lib/sondePoints'
 import { launchSortMs } from '@/app/lib/sondeLaunches'
 import { reportSondes } from '@/app/lib/sondeRegistryClient'
+import type { SondeRecord } from '@/app/lib/sondeRegistry'
 import { parseUtcDateStr } from '@/app/lib/launchUtils'
 import { useReceiver } from './hooks/useReceiver'
 import { useReceiverAlerts } from './hooks/useReceiverAlerts'
@@ -57,8 +58,6 @@ export default function PainelPage() {
   const { todayData, todayLoading, todayError, lastFetchAt, refresh: refreshToday } = useTodayData(station)
   const { todayFlights, liveFlightChecked, liveError, sourceHealth, refresh: refreshLive } = useLiveFlights(station, todayData?.today)
   const receiver = useReceiver()
-  useReceiverAlerts(receiver.mySondes, receiver.checked, setSelected)
-  useLaunchLandingWatcher(todayFlights, station)
   const geo = useGeolocation()
 
   const mySerials = useMemo(() => new Set(receiver.mySondes.map(m => m.serial)), [receiver.mySondes])
@@ -91,13 +90,33 @@ export default function PainelPage() {
   [yearSourcePoints, records, station.id, year])
   const monthPoints = useMemo(() => yearPoints.filter(p => isPointInMonth(p, year, month)), [yearPoints, year, month])
 
-  // Sondas de hoje também vão pro registro (posição, último receptor).
+  // Sonda velha reaparecendo hoje (achada e religada em outro lugar) NÃO é voo
+  // de hoje: sai das listas e do alerta de pouso, e volta como o pouso
+  // original + o reaparecimento ligado a ele. Ver app/lib/reappearance.ts.
+  const today = useMemo(() => splitTodayFlights(todayFlights, records), [todayFlights, records])
+  useLaunchLandingWatcher(today.flights, station)
+  // Seriais que estão reaparecendo agora — inclusive no MEU receptor, que é
+  // justamente onde uma sonda recuperada e religada em casa aparece.
+  const reappearedSerials = useMemo(() => {
+    const set = new Set(today.bySerial.keys())
+    for (const m of receiver.mySondes) {
+      if (todayFlightReappearance({ ...m, sondeNumber: m.serial, altitude: m.alt }, records)) set.add(m.serial)
+    }
+    return set
+  }, [today, receiver.mySondes, records])
+  useReceiverAlerts(receiver.mySondes, receiver.checked, setSelected, reappearedSerials)
+
+  // Sondas de hoje também vão pro registro (posição, último receptor). Sonda
+  // reaparecendo é gravada como REAPARECIMENTO: mandar a posição dela como
+  // `lastPos` sobrescreveria o pouso original no R2.
   useEffect(() => {
     if (todayFlights.length === 0) return
-    reportSondes(todayFlights.flatMap(f => {
+    reportSondes(todayFlights.flatMap((f): ({ serial: string } & Partial<SondeRecord>)[] => {
       const d = parseUtcDateStr(f.lastReportUtc)
       if (isNaN(d.getTime())) return []
       const at = d.toISOString().replace(/\.\d{3}Z$/, 'Z')
+      const reappeared = today.bySerial.get(f.sondeNumber)
+      if (reappeared) return [{ serial: f.sondeNumber, reappearances: [reappeared] }]
       return [{
         serial: f.sondeNumber,
         lastPos: { lat: f.lat, lon: f.lon, alt: f.altitude, at },
@@ -107,7 +126,7 @@ export default function PainelPage() {
         frequencyMHz: f.frequencyMHz,
       }]
     }), station.id)
-  }, [todayFlights, station.id])
+  }, [todayFlights, today, station.id])
 
   // Lançamentos sem posição ganham o pouso casado por horário (qualquer fonte).
   const attachedMonth = useMemo(() => attachPositions(monthLaunches, monthPoints).launches, [monthLaunches, monthPoints])
@@ -165,14 +184,14 @@ export default function PainelPage() {
   // Keep a selected live target moving as fresh telemetry arrives.
   useEffect(() => {
     if (!selected || selected.launch) return
-    const fresh = todayFlights.find(f => f.sondeNumber === selected.serial)
+    const fresh = today.flights.find(f => f.sondeNumber === selected.serial)
     if (!fresh) return
     if (fresh.lat === selected.lat && fresh.lon === selected.lon && fresh.lastReportUtc === selected.lastReportUtc) return
     setSelected(prev => prev ? {
       ...prev, lat: fresh.lat, lon: fresh.lon, altitude: fresh.altitude,
       climbing: fresh.climbing, isLive: fresh.isLive, lastReportUtc: fresh.lastReportUtc, source: fresh.source,
     } : prev)
-  }, [todayFlights, selected])
+  }, [today, selected])
 
   const changeStation = useCallback((s: Station) => {
     setStation(s)
@@ -197,7 +216,7 @@ export default function PainelPage() {
     <div className="p-4 lg:h-[calc(100vh-0px)] flex flex-col">
       <TopStatusBar
         station={station} todayData={todayData} todayLoading={todayLoading}
-        todayError={todayError} liveError={liveError} todayFlights={todayFlights}
+        todayError={todayError} liveError={liveError} todayFlights={today.flights}
         lastFetchAt={lastFetchAt} onRefresh={refreshAll}
         onToggleStationPicker={() => setShowStationPicker(v => !v)}
       />
@@ -212,10 +231,11 @@ export default function PainelPage() {
             liveConfigured={receiver.liveConfigured} liveConnected={receiver.liveConnected}
             ttgoBattV={receiver.ttgoBattV} sleeping={receiver.sleeping} waitingLate={receiver.waitingLate}
             liveLastMessageAt={receiver.liveLastMessageAt} power={receiver.power} boot={receiver.boot}
-            selected={selected} onSelect={setSelected}
+            selected={selected} onSelect={setSelected} reappearedSerials={reappearedSerials}
           />
           <LivePanel
-            todayFlights={todayFlights} liveFlightChecked={liveFlightChecked}
+            todayFlights={today.flights} liveFlightChecked={liveFlightChecked}
+            reappearedToday={today.reappeared}
             recentLaunches={recentLaunches} selected={selected} onSelect={setSelected} mySerials={mySerials}
           />
         </div>
@@ -224,7 +244,8 @@ export default function PainelPage() {
           {/* Mesmo conjunto do mapa do histórico anual (useYearSondePoints +
               registro do R2), com filtro Mês/Ano no próprio mapa. */}
           <MissionMap
-            station={station} points={yearPoints} records={records} todayFlights={todayFlights}
+            station={station} points={yearPoints} records={records} todayFlights={today.flights}
+            reappearedToday={today.reappeared}
             selected={selected} chasePos={geo.pos ? { lat: geo.pos.lat, lon: geo.pos.lon } : null}
             receiverPos={receiverPos} receiverName={callsign}
           />

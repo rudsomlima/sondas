@@ -37,7 +37,10 @@ function writeNotified(set: Set<string>) {
 export function useReceiverAlerts(
   mySondes: MyReceiverSonde[],
   checked: boolean,
-  onSelect: (t: SelectedTarget) => void
+  onSelect: (t: SelectedTarget) => void,
+  // Seriais que são a MESMA sonda reaparecendo depois do voo (não sonda nova):
+  // o aviso diz isso em vez de anunciar um lançamento que não houve.
+  reappearedSerials?: Set<string>,
 ) {
   const initializedRef = useRef(false)
   const onSelectRef = useRef(onSelect)
@@ -75,8 +78,9 @@ export function useReceiverAlerts(
           m.type ?? null,
           distKm != null ? `${Math.round(distKm)} km de casa` : null,
         ].filter(Boolean)
-        const n = new Notification('Nova sonda no seu receptor', {
-          body: `${m.serial}${parts.length ? ' — ' + parts.join(' · ') : ''}`,
+        const reappeared = reappearedSerials?.has(m.serial)
+        const n = new Notification(reappeared ? 'Sonda reaparecendo no seu receptor' : 'Nova sonda no seu receptor', {
+          body: `${m.serial}${reappeared ? ' (já pousou antes — reaparecimento)' : ''}${parts.length ? ' — ' + parts.join(' · ') : ''}`,
           tag: m.serial, // dedupe nativo do navegador
         })
         n.onclick = () => {

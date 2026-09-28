@@ -1,8 +1,11 @@
 'use client'
 
-import { CheckCircle2, XCircle, Clock, Wind, Sun, Moon, Loader2 } from 'lucide-react'
+import { CheckCircle2, XCircle, Clock, Wind, Sun, Moon, Loader2, Radio } from 'lucide-react'
 import { sondeHubUrl, flightStatus, FLIGHT_STATUS_LABEL, TodayFlight } from '@/app/lib/radiosondy'
-import { isDaytime, sameLaunch, formatGmt3, launchDisplayTime } from '@/app/lib/launchUtils'
+import { isDaytime, sameLaunch, formatGmt3, formatGmt3Date, launchDisplayTime } from '@/app/lib/launchUtils'
+import { STATUS_COLORS } from '@/app/lib/tokens'
+import { bearingToCardinal, formatDistance } from '@/app/lib/geo'
+import type { SondePoint } from '@/app/lib/sondePoints'
 import type { Launch, TodayData } from '@/app/lib/types'
 
 interface LiveCardProps {
@@ -11,6 +14,9 @@ interface LiveCardProps {
   todayError?: string | null
   liveError?: string | null
   todayFlights: TodayFlight[]
+  // Sondas de outros dias reportadas de novo hoje (ver splitTodayFlights).
+  // Não contam como voo de hoje — só avisam que a sonda reapareceu.
+  reappearedToday?: SondePoint[]
   liveFlightChecked: boolean
   lastFetchAt: Date | null
   selectedLaunch: Launch | null
@@ -22,7 +28,7 @@ interface LiveCardProps {
 // radiosondy.info/sondehub.org (voo quase em tempo real).
 export default function LiveCard({
   todayData, todayLoading, todayError, liveError, todayFlights, liveFlightChecked, lastFetchAt,
-  selectedLaunch, onExpandMonth, onSelectLaunch,
+  selectedLaunch, onExpandMonth, onSelectLaunch, reappearedToday = [],
 }: LiveCardProps) {
   // Sondehub casa por proximidade geográfica (raio), então sozinho pode
   // pegar um voo de outra estação passando perto — só conta como "teve voo"
@@ -136,6 +142,29 @@ export default function LiveCard({
               ) : (
                 <span className="text-xs text-gray-400">Sem dados de voo do radiosondy.info ainda</span>
               )}
+            </div>
+          )}
+          {reappearedToday.length > 0 && (
+            <div className="mt-2 pt-2 border-t border-border flex flex-col gap-1">
+              <span className="text-xs font-semibold flex items-center gap-1" style={{ color: STATUS_COLORS.reappeared }}
+                title="Sondas de outros dias reportadas de novo hoje, em outro lugar. Não são lançamentos de hoje: o pouso original continua no dia e no lugar dele.">
+                <Radio size={11} /> Reaparecimento hoje
+              </span>
+              {reappearedToday.map(p => {
+                const r = p.reappearances?.[p.reappearances.length - 1]
+                return (
+                  <div key={p.serial} className="flex items-center gap-1.5 flex-wrap text-[11px]">
+                    <span className="mono text-amber-400 font-medium">{p.serial}</span>
+                    <span className="text-dim">pouso {formatGmt3Date(p.date)}</span>
+                    {r?.distanceKm != null && (
+                      <span className="mono" style={{ color: STATUS_COLORS.reappeared }}>
+                        {formatDistance(r.distanceKm)}{r.bearingDeg != null ? ` ${bearingToCardinal(r.bearingDeg)}` : ''} do pouso
+                      </span>
+                    )}
+                    {r && <span className="text-faint mono">{formatGmt3Date(r.at)}</span>}
+                  </div>
+                )
+              })}
             </div>
           )}
           {lastFetchAt && (

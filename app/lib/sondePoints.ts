@@ -16,8 +16,13 @@ import {
 } from './sondehub'
 import { applyRecoveryToPosition, fetchRecoveries, type SondeRecovery } from './sondehubRecovery'
 import { isValidPosition, launchInstantMs } from './launchData'
+import { parseUtcDateStr } from './launchUtils'
 import { sondePopupHtml, type SondePopupOptions } from './mapPopups'
 import type { SondeRecord } from './sondeRegistry'
+import {
+  isReappearanceOf, mergeReappearances, reappearanceFrom, withLanding,
+  type LandingRef, type Reappearance,
+} from './reappearance'
 import type { Launch, LaunchPosition } from './types'
 import type { Station } from './stations'
 
@@ -45,6 +50,20 @@ export interface SondePoint {
   maxAltM?: number
   frequencyMHz?: number
   sondeType?: string
+  // A mesma sonda reportada de novo depois do voo, em outro lugar. lat/lon e
+  // `date` deste ponto seguem sendo o POUSO; cada reaparecimento é desenhado
+  // com marcador próprio, ligado a ele (ver reappearance.ts).
+  reappearances?: Reappearance[]
+}
+
+// Ponto com data nominal (horário sinótico do lançamento), não um reporte de
+// verdade: não serve de referência pra decidir o que é reaparecimento.
+function isNominal(p: SondePoint): boolean {
+  return p.sources.length === 1 && p.sources[0] === 'cache'
+}
+
+function landingRef(p: SondePoint): LandingRef {
+  return { lat: p.lat, lon: p.lon, at: p.date.toISOString() }
 }
 
 function pointKey(p: SondePoint): string {
@@ -86,9 +105,12 @@ export function pointsFromLaunches(launches: Launch[]): SondePoint[] {
 /**
  * Une listas de pontos por serial. Posição/instante vêm do reporte mais
  * recente (o último frame de RF do SondeHub costuma estar mais perto do chão
- * que o registro do radiosondy.info); status FOUND/LOST sobrevive a um
- * UNKNOWN de outra fonte; associação geográfica só fica se nenhuma fonte
- * ligar a sonda à estação.
+ * que o registro do radiosondy.info) — EXCETO quando o reporte mais recente
+ * está longe e horas depois do outro: aí ele é um reaparecimento da sonda em
+ * outro lugar, o pouso original continua sendo a posição do ponto e o reporte
+ * novo entra em `reappearances` (ver reappearance.ts). Status FOUND/LOST
+ * sobrevive a um UNKNOWN de outra fonte; associação geográfica só fica se
+ * nenhuma fonte ligar a sonda à estação.
  */
 export function mergeSondePoints(...lists: SondePoint[][]): SondePoint[] {
   const byKey = new Map<string, SondePoint>()
@@ -97,10 +119,25 @@ export function mergeSondePoints(...lists: SondePoint[][]): SondePoint[] {
       const key = pointKey(p)
       const prev = byKey.get(key)
       if (!prev) { byKey.set(key, { ...p, sources: [...p.sources] }); continue }
-      const newer = p.date.getTime() > prev.date.getTime() ? p : prev
+      const [early, late] = p.date.getTime() > prev.date.getTime() ? [prev, p] : [p, prev]
+      // Só dois reportes de verdade podem ser comparados: um ponto vindo só do
+      // cache de lançamentos tem a data do horário sinótico nominal, e o
+      // pouso do próprio voo cai horas depois dela.
+      const reappeared = !isNominal(early) && !isNominal(late) &&
+        isReappearanceOf(landingRef(early), landingRef(late))
+      const newer = reappeared ? early : late
+      const extra = reappeared
+        ? reappearanceFrom(landingRef(early), {
+            lat: late.lat, lon: late.lon, alt: late.altitude, at: late.date.toISOString(),
+            receiver: late.lastReceiver,
+          })
+        : undefined
       byKey.set(key, {
         ...prev,
         lat: newer.lat, lon: newer.lon, date: newer.date,
+        reappearances: withLanding(landingRef(newer), mergeReappearances(
+          mergeReappearances(prev.reappearances, p.reappearances), extra ? [extra] : undefined,
+        )),
         altitude: newer.altitude ?? prev.altitude ?? p.altitude,
         status: prev.status !== 'UNKNOWN' ? prev.status : p.status,
         sources: [...new Set([...prev.sources, ...p.sources])],
@@ -147,6 +184,7 @@ function registryFields(r: SondeRecord): Partial<SondePoint> {
     lastReceiver: r.lastReceiver, lastReceiverAt: r.lastReceiverAt,
     firstFrameUtc: r.firstFrameUtc, maxAltM: r.maxAltM,
     frequencyMHz: r.frequencyMHz, sondeType: r.type,
+    reappearances: r.reappearances,
   }
 }
 
@@ -157,11 +195,12 @@ export function pointFromRecord(r: SondeRecord): SondePoint | null {
   if (!where || !when) return null
   const date = new Date(when)
   if (isNaN(date.getTime())) return null
-  return {
+  const p: SondePoint = {
     serial: r.serial, lat: where.lat, lon: where.lon, status: r.status ?? 'UNKNOWN', date,
     altitude: r.lastPos?.alt, sources: ['registry'],
     ...registryFields(r),
   }
+  return { ...p, reappearances: withLanding(landingRef(p), p.reappearances) }
 }
 
 /**
@@ -190,11 +229,15 @@ export function applyRegistryToPoints(points: SondePoint[], records: Map<string,
       sondeType: p.sondeType ?? f.sondeType,
       recoveredBy: p.recoveredBy ?? f.recoveredBy,
       recoveryNote: p.recoveryNote ?? f.recoveryNote,
+      reappearances: mergeReappearances(p.reappearances, f.reappearances),
     }
     if (p.status === 'UNKNOWN' && r.status && r.status !== 'UNKNOWN') {
       next.status = r.status
       if (r.status === 'FOUND' && r.recoveryPos) { next.lat = r.recoveryPos.lat; next.lon = r.recoveryPos.lon }
     }
+    // O pouso pode ter mudado aqui (relato de recuperação): distâncias e o
+    // próprio "é reaparecimento?" são refeitos em relação a ele.
+    next.reappearances = withLanding(landingRef(next), next.reappearances)
     if (JSON.stringify(next) === JSON.stringify(p)) return p
     changed = true
     return next
@@ -238,11 +281,79 @@ export function pointToRecord(p: SondePoint): ({ serial: string } & Partial<Sond
     ...(found ? { recoveryPos: { lat: p.lat, lon: p.lon } } : { lastPos: { lat: p.lat, lon: p.lon, alt: p.altitude, at }, lastFrameUtc: at }),
     recoveredBy: p.recoveredBy,
     recoveryNote: p.recoveryNote,
+    reappearances: p.reappearances,
     lastReceiver: p.lastReceiver,
     lastReceiverAt: p.lastReceiverAt,
     frequencyMHz: p.frequencyMHz,
     type: p.sondeType,
   }
+}
+
+// ---------------------------------------------------------------------------
+// Sondas de hoje ↔ reaparecimentos
+
+/** O pouso que o registro conhece (posição de recuperação quando FOUND). */
+export function recordLanding(r: SondeRecord | undefined): LandingRef | undefined {
+  if (!r) return undefined
+  const where = r.status === 'FOUND' && r.recoveryPos ? r.recoveryPos : r.lastPos
+  const at = where?.at ?? r.lastFrameUtc
+  if (!where || !at) return undefined
+  return { lat: where.lat, lon: where.lon, at }
+}
+
+/**
+ * Um reporte de HOJE que na verdade é uma sonda velha reaparecendo, e não um
+ * voo de hoje. Sem isso a X2932841 (lançada em 09/09/2026, recuperada e
+ * reportada de novo em 26/09) aparecia em "Sondas de hoje" como "Pousada" e
+ * chegava a disparar alerta de pouso no Telegram.
+ *
+ * Só o registro sabe disso — é ele que guarda o voo original. Sem registro da
+ * sonda, devolve null e o app segue tratando o reporte como voo, igual antes.
+ */
+export function todayFlightReappearance(
+  f: { sondeNumber: string; lat: number; lon: number; lastReportUtc: string; altitude?: number; lastReceiver?: string },
+  records: Map<string, SondeRecord>,
+): Reappearance | null {
+  const landing = recordLanding(records.get(f.sondeNumber))
+  if (!landing) return null
+  const at = parseUtcDateStr(f.lastReportUtc)
+  if (isNaN(at.getTime())) return null
+  const report = { lat: f.lat, lon: f.lon, at: at.toISOString() }
+  if (!isReappearanceOf(landing, report)) return null
+  return reappearanceFrom(landing, { ...report, alt: f.altitude, receiver: f.lastReceiver })
+}
+
+export interface TodayFlightSplit<T> {
+  /** Reportes que são voo mesmo (de hoje). */
+  flights: T[]
+  /** Sondas velhas reaparecendo: o PONTO DO POUSO original, com o reporte de
+   *  hoje anexado como reaparecimento — pronto pra drawReappearances. */
+  reappeared: SondePoint[]
+  /** Serial → o reaparecimento de hoje (pros rótulos das listas). */
+  bySerial: Map<string, Reappearance>
+}
+
+/**
+ * Separa "voo de hoje" de "sonda velha reaparecendo" numa lista de sondas de
+ * hoje. Quem reaparece sai das listas de voo e volta como o pouso original +
+ * o reaparecimento ligado a ele — a regra da casa, aplicada de uma vez pro
+ * painel, pro histórico e pros alertas do Telegram.
+ */
+export function splitTodayFlights<T extends { sondeNumber: string; lat: number; lon: number; lastReportUtc: string; altitude?: number; lastReceiver?: string }>(
+  flights: T[], records: Map<string, SondeRecord>,
+): TodayFlightSplit<T> {
+  if (records.size === 0) return { flights, reappeared: [], bySerial: new Map() }
+  const out: T[] = []
+  const reappeared: SondePoint[] = []
+  const bySerial = new Map<string, Reappearance>()
+  for (const f of flights) {
+    const r = todayFlightReappearance(f, records)
+    if (!r) { out.push(f); continue }
+    bySerial.set(f.sondeNumber, r)
+    const landing = pointFromRecord(records.get(f.sondeNumber)!)
+    if (landing) reappeared.push({ ...landing, reappearances: mergeReappearances(landing.reappearances, [r]) })
+  }
+  return out.length === flights.length ? { flights, reappeared, bySerial } : { flights: out, reappeared, bySerial }
 }
 
 export function isPointInMonth(p: SondePoint, year: number, month: number): boolean {
@@ -286,7 +397,8 @@ export function applyRecoveriesToPoints(points: SondePoint[], recoveries: Map<st
     const pos = applyRecoveryToPosition(pointToPosition(p), rec)
     if (pos.status === 'UNKNOWN') return p
     changed = true
-    return { ...p, status: pos.status, lat: pos.lat, lon: pos.lon, recoveredBy: pos.recoveredBy, recoveryNote: pos.recoveryNote }
+    const next: SondePoint = { ...p, status: pos.status, lat: pos.lat, lon: pos.lon, recoveredBy: pos.recoveredBy, recoveryNote: pos.recoveryNote }
+    return { ...next, reappearances: withLanding(landingRef(next), next.reappearances) }
   })
   return changed ? out : points
 }

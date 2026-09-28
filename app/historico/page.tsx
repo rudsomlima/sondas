@@ -13,7 +13,7 @@ import { useRecoveredLaunches } from './hooks/useRecoveredLaunches'
 import { useSondeLaunches } from './hooks/useSondeLaunches'
 import { useSondeRegistry } from './hooks/useSondeRegistry'
 import { cacheStationKey, useWyomingEnabled, wyomingQuery } from '@/app/lib/appSettings'
-import { attachPositions, isPointInMonth, mergeSondePoints, mergeWithRegistry, pointsFromLaunches, type SondePoint } from '@/app/lib/sondePoints'
+import { attachPositions, isPointInMonth, mergeSondePoints, mergeWithRegistry, pointsFromLaunches, splitTodayFlights, type SondePoint } from '@/app/lib/sondePoints'
 import { useYearData } from './hooks/useYearData'
 import { useSondePoints } from './hooks/useSondePoints'
 import { useTodayData } from './hooks/useTodayData'
@@ -121,6 +121,10 @@ export default function HistoricoPage() {
   // Uma entrada por sonda + 1º quadro, receptores e último sinal (só exibição:
   // o YearStore/cache do ano continuam sendo a verdade da Wyoming).
   const displayLaunches = useSondeLaunches(recoveredLaunches, sondePoints, records)
+  // Sonda velha reportada de novo hoje não é voo de hoje: sai do card "Ao
+  // vivo" como voo e volta como reaparecimento, ligada ao pouso original.
+  // Ver app/lib/reappearance.ts.
+  const today = useMemo(() => splitTodayFlights(todayFlights, records), [todayFlights, records])
   const dataRef = useRef(data)
   dataRef.current = data
 
@@ -297,7 +301,8 @@ export default function HistoricoPage() {
         todayLoading={todayLoading}
         todayError={todayError}
         liveError={liveError}
-        todayFlights={todayFlights}
+        todayFlights={today.flights}
+        reappearedToday={today.reappeared}
         liveFlightChecked={liveFlightChecked}
         lastFetchAt={lastFetchAt}
         selectedLaunch={selectedLaunch}

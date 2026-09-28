@@ -14,6 +14,10 @@ import { fetchRecoveryDirect, recoveryStatus } from './sondehubRecovery'
 import { toIsoUtc, type ReceiverStat, type SondeRecord } from './sondeRegistry'
 import { parseUploaderPosition, stationKey, type ReceiverStation } from './receiverStations'
 import { analyzeTrajectory, type TrajectoryPoint } from './trajectory'
+import {
+  REAPPEAR_GAP_MS, reappearanceFrom, mergeReappearances,
+  type LandingRef, type Reappearance,
+} from './reappearance'
 import type { RegistryFlight } from './sondeRegistry'
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'
@@ -64,27 +68,54 @@ function flightFromPoints(points: TrajectoryPoint[], source: RegistryFlight['sou
 }
 
 /**
- * O voo propriamente dito dentro de uma lista de quadros: separa em blocos
- * onde há mais de 2 h sem quadro e fica com o bloco que tem a maior altitude.
- * Existe porque as fontes guardam quadros soltos de muito depois — casos
- * reais: V5041139 voou em 11/2025 e U0460617 em 2022, mas o SondeHub tem
- * quadros delas em 2026 (sonda achada e religada). Sem isso duração, deriva,
- * último sinal e até o ano do registro saíam absurdos.
+ * Separa os quadros de uma sonda em episódios: blocos sem mais de 2 h de
+ * silêncio entre quadros (REAPPEAR_GAP_MS). O voo é o bloco que alcançou a
+ * maior altitude; os demais posteriores são REAPARECIMENTOS — a sonda achada
+ * e religada em outro lugar (casos reais: V5041139 voou em 11/2025 e
+ * U0460617 em 2022, mas o SondeHub tem quadros delas em 2026; X2932841 voou
+ * em 09/09/2026 e reapareceu em 26/09/2026).
+ *
+ * Antes os blocos posteriores eram descartados — sem isso duração, deriva,
+ * último sinal e até o ano do registro saíam absurdos. Agora eles são
+ * devolvidos à parte, pro registro guardá-los ligados ao pouso em vez de
+ * perdê-los (ver reappearance.ts).
  */
-const FLIGHT_GAP_MS = 2 * 3600_000
-export function mainFlightSegment<T extends { timeMs: number; alt: number }>(items: T[]): T[] {
+export function flightSegments<T extends { timeMs: number; alt: number }>(items: T[]): { flight: T[]; later: T[][] } {
   const sorted = items.filter(i => Number.isFinite(i.timeMs)).sort((a, b) => a.timeMs - b.timeMs)
-  if (sorted.length === 0) return sorted
+  if (sorted.length === 0) return { flight: sorted, later: [] }
   const segments: T[][] = [[sorted[0]]]
   for (let i = 1; i < sorted.length; i++) {
-    if (sorted[i].timeMs - sorted[i - 1].timeMs > FLIGHT_GAP_MS) segments.push([])
+    if (sorted[i].timeMs - sorted[i - 1].timeMs > REAPPEAR_GAP_MS) segments.push([])
     segments[segments.length - 1].push(sorted[i])
   }
   const peak = (seg: T[]) => Math.max(...seg.map(x => (Number.isFinite(x.alt) ? x.alt : -Infinity)))
-  return segments.reduce((best, seg) => {
+  const flight = segments.reduce((best, seg) => {
     const pb = peak(best), ps = peak(seg)
     return ps > pb || (ps === pb && seg.length > best.length) ? seg : best
   })
+  const flightEnd = flight[flight.length - 1].timeMs
+  return { flight, later: segments.filter(s => s !== flight && s[0].timeMs > flightEnd) }
+}
+
+/** Só o voo (compatibilidade com quem não se importa com os episódios). */
+export function mainFlightSegment<T extends { timeMs: number; alt: number }>(items: T[]): T[] {
+  return flightSegments(items).flight
+}
+
+/**
+ * Episódio pós-voo → Reappearance: o último quadro dele (onde a sonda estava
+ * ao parar de transmitir de novo), com quem recebeu e quantos quadros foram.
+ */
+function segmentToReappearance<T extends { timeMs: number }>(
+  seg: T[], landing: LandingRef | undefined,
+  at: (f: T) => { lat: number; lon: number; alt?: number; at: string; receiver?: string } | null,
+): Reappearance | null {
+  for (let i = seg.length - 1; i >= 0; i--) {
+    const f = at(seg[i])
+    if (!f) continue
+    return reappearanceFrom(landing, { ...f, frames: seg.length })
+  }
+  return null
 }
 
 function base(serial: string, source: SondeRecord['sources'][number]): SondeRecord {
@@ -219,12 +250,13 @@ export function parseRadiosondyCsv(serial: string, csv: string): SondeRecord | n
   const iAlt = idx('ALTITUDE'), iDesc = idx('DESCRIPTION')
   if (iStation < 0 || iTime < 0) return null
 
-  // Linhas → quadros com instante, e só o trecho principal do voo.
-  const rows = mainFlightSegment(lines.slice(1).map(line => {
+  // Linhas → quadros com instante, separando o voo dos reaparecimentos.
+  const episodes = flightSegments(lines.slice(1).map(line => {
     const c = splitCsvLine(line)
     const at = toIsoUtc(c[iTime]?.trim())
     return { c, at, timeMs: at ? new Date(at).getTime() : NaN, alt: parseFloat(c[iAlt]) }
   }).filter(r => r.at))
+  const rows = episodes.flight
 
   const stats = new Map<string, ReceiverStat>()
   let first: { at: string; lat: number; lon: number; alt: number } | null = null
@@ -276,6 +308,16 @@ export function parseRadiosondyCsv(serial: string, csv: string): SondeRecord | n
     rec.lastReceiver = last.station
     rec.lastReceiverAt = last.at
   }
+  // Episódios depois do voo: a sonda reportada de novo em outro lugar. Ficam
+  // à parte, ligados a este pouso — não mexem em lastPos/lastFrameUtc.
+  rec.reappearances = mergeReappearances(episodes.later.flatMap(seg => {
+    const r = segmentToReappearance(seg, rec.lastPos, ({ c, at }) => {
+      const lat = parseFloat(c[iLat]), lon = parseFloat(c[iLon]), alt = parseFloat(c[iAlt])
+      if (!at || !Number.isFinite(lat) || !Number.isFinite(lon)) return null
+      return { lat, lon, alt: Number.isFinite(alt) ? alt : undefined, at, receiver: c[iStation]?.trim() || undefined }
+    })
+    return r ? [r] : []
+  }))
   return rec
 }
 
@@ -309,9 +351,10 @@ export async function fetchSondeHubTelemetry(serial: string): Promise<{ record: 
   const data: unknown = await res.json()
   const list: any[] = Array.isArray(data) ? data : Object.values(data ?? {})
   const valid = list.filter(f => f && typeof f.lat === 'number' && typeof f.lon === 'number' && f.datetime)
-  const frames = mainFlightSegment(valid.map(f => ({
+  const episodes = flightSegments(valid.map(f => ({
     ...f, timeMs: new Date(f.datetime).getTime(), alt: typeof f.alt === 'number' ? f.alt : NaN,
   })))
+  const frames = episodes.flight
   if (frames.length === 0) return null
 
   const stats = new Map<string, ReceiverStat>()
@@ -359,6 +402,19 @@ export async function fetchSondeHubTelemetry(serial: string): Promise<{ record: 
     rec.lastReceiver = last.uploader_callsign.trim()
     rec.lastReceiverAt = rec.lastFrameUtc
   }
+  // Quadros de depois do voo (sonda religada em outro lugar) — guardados
+  // ligados a este pouso, nunca sobrescrevendo-o. Ver reappearance.ts.
+  rec.reappearances = mergeReappearances(episodes.later.flatMap(seg => {
+    const r = segmentToReappearance(seg, rec.lastPos, f => {
+      const at = toIsoUtc(f.datetime)
+      if (!at) return null
+      return {
+        lat: f.lat, lon: f.lon, alt: typeof f.alt === 'number' ? f.alt : undefined, at,
+        receiver: typeof f.uploader_callsign === 'string' && f.uploader_callsign.trim() ? f.uploader_callsign.trim() : undefined,
+      }
+    })
+    return r ? [r] : []
+  }))
   rec.stationsCaptured = true
   rec.flight = flightFromPoints(frames.map(f => ({
     lat: f.lat, lon: f.lon, alt: typeof f.alt === 'number' ? f.alt : NaN, velV: 0, timeMs: new Date(f.datetime).getTime(),

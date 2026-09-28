@@ -5,7 +5,7 @@ import 'leaflet/dist/leaflet.css'
 import { AlertCircle, Loader2, ExternalLink, AlertTriangle, RefreshCw, X, Antenna, Radio, Rocket, Undo2, Maximize2, Minimize2 } from 'lucide-react'
 import {
   externalRadiosondyUrl, launchUtcInstant, fetchRadiosondyFeatures,
-  findRecoveredMatch, fetchLiveFlights, findLiveMatch, isWithinMatchWindow,
+  findRecoveredMatch, fetchLiveFlights, findLiveMatch, isWithinMatchWindow, MAX_MATCH_WINDOW_MS,
   statusColor, buildBalloonIcon,
   buildHighlightBalloonIcon, buildHighlightLiveBalloonIcon, LIVE_COLOR,
   gmt3IconLabel, LEGEND_ITEMS,
@@ -23,6 +23,9 @@ import type { SondeRecord } from '@/app/lib/sondeRegistry'
 import { POPUP_OPTIONS } from '@/app/lib/mapPopups'
 import { useReceiverStations } from '@/app/lib/receiverStationsClient'
 import { drawReceiverStations, receptorsFromPoints } from '@/app/lib/receiverStationsLayer'
+import { drawReappearances } from '@/app/lib/reappearanceLayer'
+import { reappearanceCountLabel } from '@/app/lib/reappearance'
+import { STATUS_COLORS } from '@/app/lib/tokens'
 import { getSettings } from '@/app/lib/settings'
 import { useFullscreen } from '@/app/lib/useFullscreen'
 import { isWyomingEnabled } from '@/app/lib/appSettings'
@@ -119,6 +122,9 @@ export default function LaunchMap({ launch, onClose, onResult, onPosition, conte
   const recordsRef = useRef(records)
   recordsRef.current = records
   const stationsLayerRef = useRef<any>(null)
+  // Camada dos reaparecimentos (sonda reportada de novo depois do voo).
+  const reappearLayerRef = useRef<any>(null)
+  const [reappearCount, setReappearCount] = useState(0)
   // Sondas da camada principal (destaque + radiosondy.info do mês), pra saber
   // quais estações receptoras desenhar.
   const mainPointsRef = useRef<Map<string, SondePoint>>(new Map())
@@ -255,7 +261,15 @@ export default function LaunchMap({ launch, onClose, onResult, onPosition, conte
       const { lat, lon, sondeNumber, status: posStatus } = pos
       drawnSerialsRef.current = new Set([sondeNumber, ...contextFeatures.map(f => f.sondeNumber)])
       setResolvedSerial(sondeNumber)
-      const rdFeature = contextFeatures.find(f => f.sondeNumber === sondeNumber)
+      // O ponto do radiosondy.info pra esta sonda só serve de pouso se estiver
+      // na janela de voo do lançamento. Fora dela é a sonda REAPARECENDO (o
+      // feed do mês traz o reporte mais recente, não o do voo — X2932841 voou
+      // em 09/09/2026 e o feed a devolve em 26/09): mover o destaque pra lá
+      // mostraria o reaparecimento como se fosse o pouso. Ele é desenhado como
+      // reaparecimento pela camada própria. Ver app/lib/reappearance.ts.
+      const rdAny = contextFeatures.find(f => f.sondeNumber === sondeNumber)
+      const launchMs = launchUtcInstant(launch.year, launch.month, launch.day, launch.time_utc, launch.time_local).getTime()
+      const rdFeature = rdAny && rdAny.date.getTime() - launchMs <= MAX_MATCH_WINDOW_MS ? rdAny : undefined
       const markerLat = rdFeature ? rdFeature.lat : lat
       const markerLon = rdFeature ? rdFeature.lon : lon
       const markerStatus = rdFeature ? rdFeature.status : posStatus
@@ -590,6 +604,21 @@ export default function LaunchMap({ launch, onClose, onResult, onPosition, conte
     })
   }, [contextPoints, records, receiverStations, drawTick, bestPoint])
 
+  // Reaparecimentos de qualquer sonda do mapa: a MESMA sonda reportada de novo
+  // depois do voo, em outro lugar. Alfinete violeta ligado ao pouso original
+  // por tracejado — o pouso continua desenhado onde sempre esteve.
+  // Ver app/lib/reappearance.ts.
+  useEffect(() => {
+    const L = leafletRef.current
+    const map = mapRef.current
+    if (!L || !map) return
+    if (!reappearLayerRef.current) reappearLayerRef.current = L.layerGroup().addTo(map)
+    const layer = reappearLayerRef.current
+    layer.clearLayers()
+    const all = [...mainPointsRef.current.values(), ...contextPoints].map(bestPoint)
+    setReappearCount(drawReappearances(L, layer, all, { onClick: setFocused }))
+  }, [contextPoints, records, drawTick, bestPoint])
+
   // Sonda clicada: mantém o cabeçalho atualizado quando o registro completa.
   useEffect(() => {
     setFocused(prev => prev ? bestPoint(prev) : prev)
@@ -602,6 +631,7 @@ export default function LaunchMap({ launch, onClose, onResult, onPosition, conte
       leafletRef.current = null
       contextLayerRef.current = null
       stationsLayerRef.current = null
+      reappearLayerRef.current = null
     }
   }, [])
 
@@ -650,6 +680,12 @@ export default function LaunchMap({ launch, onClose, onResult, onPosition, conte
         {isSondeHubPos && (
           <span className="text-xs text-violet-400 flex items-center gap-1">
             <AlertTriangle size={12} /> via sondehub.org
+          </span>
+        )}
+        {reappearCount > 0 && (
+          <span className="text-xs flex items-center gap-1" style={{ color: STATUS_COLORS.reappeared }}
+            title="A mesma sonda reportada de novo depois do voo, em outro lugar. O pouso segue no lugar dele; cada reaparecimento é o alfinete ligado a ele pela linha tracejada.">
+            <Radio size={12} /> {reappearanceCountLabel(reappearCount)}
           </span>
         )}
         {serial && !status && !error && (

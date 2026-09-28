@@ -1,6 +1,6 @@
 'use client'
 
-import { ChevronDown, Wind, Trash2, Sun, Moon, Map as MapIcon, MapPin } from 'lucide-react'
+import { ChevronDown, Wind, Trash2, Sun, Moon, Map as MapIcon, MapPin, Radio } from 'lucide-react'
 import LaunchMap from '../LaunchMap'
 import YearMap from '../YearMap'
 import SourceBadges from '@/app/components/ui/SourceBadges'
@@ -12,6 +12,9 @@ import type { Launch, LaunchPosition } from '@/app/lib/types'
 import type { SondePoint } from '@/app/lib/sondePoints'
 import type { SondeRecord } from '@/app/lib/sondeRegistry'
 import { useWyomingEnabled } from '@/app/lib/appSettings'
+import { reappearanceCountLabel } from '@/app/lib/reappearance'
+import { formatGmt3Date } from '@/app/lib/launchUtils'
+import { STATUS_COLORS } from '@/app/lib/tokens'
 
 interface MonthAccordionProps {
   year: number
@@ -184,9 +187,16 @@ export default function MonthAccordion({
                                   : noMatch
                                     ? 'Sem correspondência no radiosondy.info'
                                     : 'Ver no mapa a posição mais próxima após o lançamento'
+                                // Sonda deste lançamento reportada de novo
+                                // depois do voo, em outro lugar: marca o
+                                // lançamento sem mexer no dia/horário dele —
+                                // o pouso original é o que vale aqui.
+                                const reappearances = l.position?.sondeNumber
+                                  ? records?.get(l.position.sondeNumber)?.reappearances
+                                  : undefined
                                 return (
+                                  <span key={i} className="flex items-center gap-0.5">
                                   <button
-                                    key={i}
                                     onClick={() => {
                                       // Mesmo marcado "sem correspondência" (o cron marca isso
                                       // cedo, antes do pouso ser registrado), o mapa ainda tenta
@@ -203,6 +213,17 @@ export default function MonthAccordion({
                                     {!display.exact && '~'}{display.time}
                                     <SourceBadges confidence={computeConfidence(l, station.wyomingSupported !== false, wyomingOn)} />
                                   </button>
+                                  {reappearances?.length ? (
+                                    <span
+                                      style={{ color: STATUS_COLORS.reappeared }}
+                                      title={`${reappearanceCountLabel(reappearances.length)} desta sonda — reportada de novo depois do voo, em outro lugar: ` +
+                                        reappearances.map(r => formatGmt3Date(r.at) + (r.distanceKm != null ? ` (${Math.round(r.distanceKm)} km do pouso)` : '')).join('; ') +
+                                        '. O pouso original continua neste lançamento.'}
+                                    >
+                                      <Radio size={10} />
+                                    </span>
+                                  ) : null}
+                                  </span>
                                 )
                               })}
                           </div>

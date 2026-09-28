@@ -11,6 +11,9 @@ import { mergeWithRegistry, sondePointPopup, type SondePoint } from '@/app/lib/s
 import { launchSitePopupHtml, POPUP_OPTIONS } from '@/app/lib/mapPopups'
 import { useReceiverStations } from '@/app/lib/receiverStationsClient'
 import { drawReceiverStations, receptorsFromPoints } from '@/app/lib/receiverStationsLayer'
+import { countReappearances, drawReappearances } from '@/app/lib/reappearanceLayer'
+import { reappearanceCountLabel } from '@/app/lib/reappearance'
+import { STATUS_COLORS } from '@/app/lib/tokens'
 import { getSettings } from '@/app/lib/settings'
 import { useFullscreen } from '@/app/lib/useFullscreen'
 import { useYearSondePoints } from './hooks/useYearSondePoints'
@@ -88,6 +91,9 @@ export default function YearMap({ year, station, launches, onClose, onPoints }: 
         }).addTo(layer).bindPopup(sondePointPopup(p), POPUP_OPTIONS)
         bounds.extend([p.lat, p.lon])
       }
+      // Sondas reportadas de novo depois do voo: alfinete violeta ligado ao
+      // pouso por uma linha tracejada (o pouso acima continua no lugar dele).
+      drawReappearances(L, layer, points, { bounds })
       // Enquadra só na primeira vez: não "pula" o mapa enquanto o usuário navega.
       if (!fittedRef.current) {
         if (points.length > 0) { mapRef.current.fitBounds(bounds, { padding: [30, 30], maxZoom: 11 }); fittedRef.current = true }
@@ -110,6 +116,7 @@ export default function YearMap({ year, station, launches, onClose, onPoints }: 
   }, [])
 
   const fromRegistry = points.filter(p => p.sources.length === 1 && p.sources[0] === 'registry').length
+  const reappearances = countReappearances(points)
   const shownError = !stationInfo ? 'Estação inválida ou sem coordenadas cadastradas.'
     : !status && points.length === 0 ? 'Nenhuma posição foi encontrada no cache, radiosondy.info, SondeHub ou registro do app.'
     : error
@@ -122,6 +129,12 @@ export default function YearMap({ year, station, launches, onClose, onPoints }: 
       <div className="px-3 py-2 bg-surface border-b border-border flex items-center gap-3 flex-wrap">
         <span className="text-xs text-gray-300">Mapa consolidado de {year}</span>
         {points.length > 0 && <span className="text-[11px] text-emerald-400 mono">{points.length} posições</span>}
+        {reappearances > 0 && (
+          <span className="text-[11px] mono" style={{ color: STATUS_COLORS.reappeared }}
+            title="Sondas reportadas de novo depois do voo, em outro lugar — cada uma ligada ao pouso original por uma linha tracejada">
+            {reappearanceCountLabel(reappearances)}
+          </span>
+        )}
         {sources.length > 0 && <span className="text-[11px] text-dim">fontes: {sources.join(' + ')}{fromRegistry > 0 ? ` + registro (${fromRegistry} só no app)` : ''}</span>}
         {status && points.length > 0 && <span className="text-[11px] text-blue-300 flex items-center gap-1"><Loader2 size={10} className="animate-spin" /> complementando…</span>}
         <button onClick={refresh} className="ml-auto text-gray-400 hover:text-white" title="Tentar novamente">
@@ -142,7 +155,7 @@ export default function YearMap({ year, station, launches, onClose, onPoints }: 
         <div ref={mapDivRef} className="absolute inset-0" />
         {!status && points.length > 0 && (
           <div className="absolute bottom-3 right-3 z-[900] bg-bg/70 backdrop-blur-sm rounded-md p-2.5 text-xs text-gray-200 space-y-1.5">
-            {LEGEND_ITEMS.map(item => <div key={item.label} className="flex items-center gap-2">
+            {LEGEND_ITEMS.map(item => <div key={item.label} className="flex items-center gap-2" title={item.title}>
               <span className="inline-block w-2.5 h-3 rounded-sm" style={{ background: item.color }} />{item.label}
             </div>)}
           </div>

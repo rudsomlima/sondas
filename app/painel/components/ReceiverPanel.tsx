@@ -7,6 +7,7 @@ import { formatGmt3 } from '@/app/lib/launchUtils'
 import type { ReceiverStatus } from '@/app/lib/sondehub'
 import { ABNORMAL_RESET_REASONS, type RdzPower, type RdzBoot } from '@/app/lib/mqtt'
 import { LEVEL_LABEL } from '@/app/lib/powerPlan'
+import { STATUS_COLORS } from '@/app/lib/tokens'
 import type { MyReceiverSonde } from '../hooks/useReceiverStatus'
 import type { ReceiverSource } from '../hooks/useReceiver'
 import type { SelectedTarget } from '../selection'
@@ -28,6 +29,8 @@ interface ReceiverPanelProps {
   boot: RdzBoot | null // motivo do reset deste boot — ver ABNORMAL_RESET_REASONS
   selected: SelectedTarget | null
   onSelect: (t: SelectedTarget | null) => void
+  // Seriais que são a MESMA sonda reaparecendo depois do voo (não sonda nova).
+  reappearedSerials?: Set<string>
 }
 
 // Razões de sleep publicadas pelo firmware (deep sleep v2) em pt.
@@ -78,7 +81,7 @@ export default function ReceiverPanel({
   status, mySondes, checked, enabled, callsign,
   source, liveConfigured, liveConnected, ttgoBattV, sleeping, waitingLate,
   liveLastMessageAt, power, boot,
-  selected, onSelect,
+  selected, onSelect, reappearedSerials,
 }: ReceiverPanelProps) {
   // Ticker próprio de 1s — não depende de re-renders de outras partes do
   // app (poll do SondeHub, geolocalização, etc.), que antes faziam o
@@ -325,6 +328,12 @@ export default function ReceiverPanel({
                       <span className="mono text-xs text-amber-400">{m.serial}</span>
                       {m.type && <span className="text-[10px] text-dim mono">{m.type}</span>}
                       {m.isLive && <span className="text-[10px] text-live pulse-soft">EM VOO</span>}
+                      {reappearedSerials?.has(m.serial) && (
+                        <span className="text-[10px] mono flex items-center gap-0.5" style={{ color: STATUS_COLORS.reappeared }}
+                          title="A MESMA sonda que já pousou antes, reportada de novo daqui — não é sonda nova. O pouso original segue no lugar dele no histórico e nos mapas.">
+                          <Radio size={9} /> REAPARECIMENTO
+                        </span>
+                      )}
                     </div>
                     <div className="flex items-center gap-2 mt-1 text-[10px] mono flex-wrap">
                       {m.frequency !== undefined && (

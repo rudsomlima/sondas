@@ -88,6 +88,16 @@ export function formatGmt3(utcStr: string): string {
     `${pad(local.getUTCHours())}:${pad(local.getUTCMinutes())}:${pad(local.getUTCSeconds())}`
 }
 
+/** Mesmo formato de formatGmt3, a partir de um Date (ou ISO) já em UTC. */
+export function formatGmt3Date(d: Date | string): string {
+  const date = typeof d === 'string' ? new Date(d) : d
+  if (isNaN(date.getTime())) return String(d)
+  const local = new Date(date.getTime() + GMT3)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${pad(local.getUTCDate())}-${pad(local.getUTCMonth() + 1)}-${local.getUTCFullYear()} ` +
+    `${pad(local.getUTCHours())}:${pad(local.getUTCMinutes())}:${pad(local.getUTCSeconds())}`
+}
+
 export function formatBytes(bytes: number): string {
   return bytes < 1024 * 1024
     ? `${(bytes / 1024).toFixed(1)} KB`

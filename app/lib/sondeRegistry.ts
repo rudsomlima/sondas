@@ -14,6 +14,10 @@
  *
  * Módulo puro (sem rede, sem R2): tipos, mesclagem e conversões.
  */
+import {
+  REAPPEAR_GAP_MS, mergeReappearances, reappearanceFrom, splitLanding, withLanding,
+  type Reappearance,
+} from './reappearance'
 
 export type SondeRecordSource =
   | 'radiosondy-archive'  // página sonde_archive.php (status, receptores, 1º/último quadro)
@@ -57,6 +61,10 @@ export interface RegistryFlight {
 
 export interface SondeRecord {
   serial: string
+  // A MESMA sonda reportada de novo depois do voo, em outro lugar (achada e
+  // religada). `lastPos`/`lastFrameUtc` continuam sendo o POUSO — estes são
+  // episódios à parte, ligados a ele. Ver reappearance.ts.
+  reappearances?: Reappearance[]
   type?: string
   frequencyMHz?: number
   launchSite?: string
@@ -177,15 +185,51 @@ function betterFlight(a?: RegistryFlight, b?: RegistryFlight): RegistryFlight | 
 }
 
 /**
+ * Das duas cópias de `lastPos`, qual é o pouso — e o que sobra vira
+ * reaparecimento em vez de sobrescrever o pouso.
+ *
+ * Vale nas duas direções de propósito: a cópia JÁ GRAVADA no R2 pode ser um
+ * reaparecimento registrado como pouso antes desta regra existir (X2932841
+ * ficou com a posição de 26/09 no lugar do pouso de 09/09), e o
+ * enriquecimento reler a fonte tem que conseguir devolver o pouso ao lugar.
+ */
+function landingOf(a: SondeRecord, b: SondeRecord): { pos?: RegistryPosition; extra?: Reappearance } {
+  if (!a.lastPos || !a.lastPos.at) return { pos: b.lastPos ?? a.lastPos }
+  if (!b.lastPos || !b.lastPos.at) return { pos: a.lastPos }
+  const { landing, reappeared } = splitLanding(
+    { ...a.lastPos, at: a.lastPos.at }, { ...b.lastPos, at: b.lastPos.at },
+  )
+  return {
+    pos: landing,
+    extra: reappeared
+      ? reappearanceFrom(landing, { lat: reappeared.lat, lon: reappeared.lon, alt: reappeared.alt, at: reappeared.at })
+      : undefined,
+  }
+}
+
+/**
  * Mescla aditiva: nunca apaga um dado conhecido por falta dele na outra cópia.
- * Primeiro quadro = o mais antigo; último quadro/posição/último receptor = o
- * mais recente; status FOUND > LOST > UNKNOWN; receptores = união.
+ * Primeiro quadro = o mais antigo; posição/último quadro = o POUSO (um reporte
+ * posterior e distante vira reaparecimento, não pouso novo); status FOUND >
+ * LOST > UNKNOWN; receptores = união.
  */
 export function mergeSondeRecords(a: SondeRecord | undefined, b: SondeRecord): SondeRecord {
-  if (!a) return { ...b, sources: [...(b.sources ?? [])] }
-  const lastPosNewer = (b.lastPos && !a.lastPos) ||
-    (!!b.lastPos && !!a.lastPos && ms(b.lastPos.at) > ms(a.lastPos.at))
+  if (!a) {
+    const copy = { ...b, sources: [...(b.sources ?? [])] }
+    copy.reappearances = withLanding(b.lastPos?.at ? { ...b.lastPos, at: b.lastPos.at } : undefined, b.reappearances)
+    return copy
+  }
+  const landing = landingOf(a, b)
+  // "Último sinal" é o do VOO: um receptor que ouviu a sonda num
+  // reaparecimento fica registrado no próprio reaparecimento, não aqui.
   const receiverFromB = !!b.lastReceiver && (!a.lastReceiver || ms(b.lastReceiverAt) > ms(a.lastReceiverAt))
+  // O último quadro do voo é o pouso. Um "Last Frame" posterior ao pouso (a
+  // página de arquivo do radiosondy.info informa o quadro mais recente de
+  // todos, inclusive de um reaparecimento, e sem coordenada) não pode virar o
+  // fim do voo — senão a sonda muda de dia/mês em todo o app.
+  const landingAt = landing.pos?.at
+  const latestFrame = latest(a.lastFrameUtc, b.lastFrameUtc)
+  const lastFrameUtc = landingAt && ms(latestFrame) > ms(landingAt) + REAPPEAR_GAP_MS ? landingAt : latestFrame
   const statusA = a.status ?? 'UNKNOWN'
   const statusB = b.status ?? 'UNKNOWN'
   const statusWinner = (STATUS_RANK[statusB] ?? 0) > (STATUS_RANK[statusA] ?? 0) ? b : a
@@ -196,11 +240,15 @@ export function mergeSondeRecords(a: SondeRecord | undefined, b: SondeRecord): S
     launchSite: a.launchSite ?? b.launchSite,
     stations: union(a.stations, b.stations),
     firstFrameUtc: earliest(a.firstFrameUtc, b.firstFrameUtc),
-    lastFrameUtc: latest(a.lastFrameUtc, b.lastFrameUtc),
+    lastFrameUtc,
     launchPos: (a.launchPos && b.launchPos)
       ? (ms(b.launchPos.at) < ms(a.launchPos.at) ? b.launchPos : a.launchPos)
       : a.launchPos ?? b.launchPos,
-    lastPos: lastPosNewer ? b.lastPos : a.lastPos ?? b.lastPos,
+    lastPos: landing.pos,
+    reappearances: withLanding(
+      landing.pos?.at ? { ...landing.pos, at: landing.pos.at } : undefined,
+      mergeReappearances(mergeReappearances(a.reappearances, b.reappearances), landing.extra ? [landing.extra] : undefined),
+    ),
     maxAltM: Math.max(a.maxAltM ?? 0, b.maxAltM ?? 0) || undefined,
     status: statusWinner.status ?? a.status ?? b.status,
     // Relato de recuperação acompanha o status vencedor; senão, qualquer um.
@@ -209,8 +257,16 @@ export function mergeSondeRecords(a: SondeRecord | undefined, b: SondeRecord): S
     recoveredAt: statusWinner.recoveredAt ?? a.recoveredAt ?? b.recoveredAt,
     recoveryPos: statusWinner.recoveryPos ?? a.recoveryPos ?? b.recoveryPos,
     receivers: mergeReceivers(a.receivers, b.receivers),
-    lastReceiver: receiverFromB ? b.lastReceiver : a.lastReceiver ?? b.lastReceiver,
-    lastReceiverAt: receiverFromB ? b.lastReceiverAt : a.lastReceiverAt ?? b.lastReceiverAt,
+    ...(() => {
+      const call = receiverFromB ? b.lastReceiver : a.lastReceiver ?? b.lastReceiver
+      const at = receiverFromB ? b.lastReceiverAt : a.lastReceiverAt ?? b.lastReceiverAt
+      const afterLanding = !!landingAt && ms(at) > ms(landingAt) + REAPPEAR_GAP_MS
+      const fallbackCall = receiverFromB ? a.lastReceiver : b.lastReceiver
+      const fallbackAt = receiverFromB ? a.lastReceiverAt : b.lastReceiverAt
+      return afterLanding
+        ? { lastReceiver: fallbackCall, lastReceiverAt: fallbackCall ? fallbackAt : undefined }
+        : { lastReceiver: call, lastReceiverAt: at }
+    })(),
     frames: Math.max(a.frames ?? 0, b.frames ?? 0) || undefined,
     stationsCaptured: a.stationsCaptured || b.stationsCaptured || undefined,
     flight: betterFlight(a.flight, b.flight),
@@ -284,6 +340,19 @@ export function sanitizeRecord(input: unknown): SondeRecord | null {
     recoveryNote: str(r.recoveryNote, 500),
     recoveredAt: toIsoUtc(str(r.recoveredAt, 40)),
     recoveryPos: pos(r.recoveryPos),
+    reappearances: Array.isArray(r.reappearances)
+      ? r.reappearances.slice(0, 20).flatMap(x => {
+          const p = pos(x)
+          const at = p?.at
+          if (!p || !at) return []
+          const call = str((x as Record<string, unknown>)?.receiver, 40)
+          return [{
+            lat: p.lat, lon: p.lon, alt: p.alt, at,
+            receiver: call && CALLSIGN_RE.test(call) ? call : undefined,
+            frames: num((x as Record<string, unknown>)?.frames),
+          }]
+        })
+      : undefined,
     receivers: receivers?.length ? receivers : undefined,
     lastReceiver: lastReceiver && CALLSIGN_RE.test(lastReceiver) ? lastReceiver : undefined,
     lastReceiverAt: toIsoUtc(str(r.lastReceiverAt, 40)),
@@ -299,7 +368,10 @@ export function sanitizeRecord(input: unknown): SondeRecord | null {
 const HOUR = 3600_000
 const RECENT_FLIGHT_MS = 6 * HOUR
 // 2 = dados de voo (estouro/duração/deriva) + só o trecho principal do voo.
-export const ENRICH_VERSION = 2
+// 3 = reaparecimentos guardados à parte, com o pouso original preservado
+//     (registros gravados antes disso podem ter um reaparecimento no lugar do
+//     pouso — a releitura devolve cada um ao seu lugar).
+export const ENRICH_VERSION = 3
 
 /**
  * O que ainda vale consultar nas fontes pesadas pra este registro. Voo

@@ -21,6 +21,7 @@ import type { SondeRecord } from '@/app/lib/sondeRegistry'
 import { launchSitePopupHtml, POPUP_OPTIONS, simplePopupHtml } from '@/app/lib/mapPopups'
 import { useReceiverStations } from '@/app/lib/receiverStationsClient'
 import { drawReceiverStations, receptorsFromPoints } from '@/app/lib/receiverStationsLayer'
+import { drawReappearances } from '@/app/lib/reappearanceLayer'
 
 const BALLOON_SIZE = 15
 const LIVE_BALLOON_SIZE = 40
@@ -33,6 +34,9 @@ interface MissionMapProps {
   points: SondePoint[]
   records?: Map<string, SondeRecord> // registro do R2, pra completar as sondas de hoje
   todayFlights: TodayFlight[]
+  // Sondas de outros dias reportadas de novo hoje, com o POUSO original como
+  // posição e o reporte de hoje anexado (ver splitTodayFlights).
+  reappearedToday?: SondePoint[]
   selected: SelectedTarget | null
   chasePos: { lat: number; lon: number } | null
   receiverPos?: { lat: number; lon: number } | null // posição do "meu receptor" (rxlat/rxlon via MQTT)
@@ -42,6 +46,7 @@ interface MissionMapProps {
 // Mapa central do mission control: todas as sondas do ano (ou só do mês) +
 // sondas de hoje + trajetória do voo selecionado + posição do caçador.
 const NO_RECORDS = new Map<string, SondeRecord>()
+const NO_REAPPEARED: SondePoint[] = []
 const PERIOD_KEY = 'sondas_painel_map_period'
 type MapPeriod = 'year' | 'month'
 
@@ -67,7 +72,7 @@ function flightToPoint(f: TodayFlight): SondePoint {
   }
 }
 
-export default function MissionMap({ station, points, records = NO_RECORDS, todayFlights, selected, chasePos, receiverPos, receiverName }: MissionMapProps) {
+export default function MissionMap({ station, points, records = NO_RECORDS, todayFlights, reappearedToday = NO_REAPPEARED, selected, chasePos, receiverPos, receiverName }: MissionMapProps) {
   const [period, setPeriodState] = useState<MapPeriod>('year')
   useEffect(() => {
     try { const v = localStorage.getItem(PERIOD_KEY); if (v === 'year' || v === 'month') setPeriodState(v) } catch { }
@@ -179,8 +184,23 @@ export default function MissionMap({ station, points, records = NO_RECORDS, toda
         }
         L.marker([f.lat, f.lon], { icon, zIndexOffset: 1000 }).addTo(layer).bindPopup(sondePointPopup(pt, { banner }), POPUP_OPTIONS)
       }
+
+      // Reaparecimentos: alfinete violeta ligado ao pouso original por
+      // tracejado. `reappearedToday` são sondas velhas que reapareceram HOJE —
+      // elas não estão em todayFlights (não é voo de hoje) e podem estar fora
+      // do período visível, então entram com o pouso delas desenhado aqui.
+      // Ver app/lib/reappearance.ts.
+      drawReappearances(L, layer, visiblePoints)
+      const shown = new Set(visiblePoints.map(p => p.serial))
+      for (const p of reappearedToday) {
+        if (shown.has(p.serial) || !isValidCoordinate(p.lat, p.lon)) continue
+        L.marker([p.lat, p.lon], {
+          icon: buildBalloonIcon(L, statusColor(p.status), BALLOON_SIZE, gmt3IconLabelWithMonth(p.date)),
+        }).addTo(layer).bindPopup(sondePointPopup(p), POPUP_OPTIONS)
+      }
+      drawReappearances(L, layer, reappearedToday.filter(p => !shown.has(p.serial)))
     }
-  }, [station, visiblePoints, records, todayFlights, period, mapReady])
+  }, [station, visiblePoints, records, todayFlights, reappearedToday, period, mapReady])
 
   // Trajetória do voo selecionado.
   useEffect(() => {
@@ -292,7 +312,7 @@ export default function MissionMap({ station, points, records = NO_RECORDS, toda
         )}
         <div className="absolute bottom-3 right-3 z-[900] bg-white/85 backdrop-blur-sm rounded-md p-2.5 text-xs text-black space-y-1.5">
           {LEGEND_ITEMS.map(item => (
-            <div key={item.label} className="flex items-center gap-2">
+            <div key={item.label} className="flex items-center gap-2" title={item.title}>
               <span className="inline-block w-2.5 h-3 rounded-sm flex-shrink-0" style={{ background: item.color }} />
               {item.label}
             </div>

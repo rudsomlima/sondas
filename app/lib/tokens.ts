@@ -9,6 +9,9 @@ export const STATUS_COLORS = {
   found: '#3b82f6',
   lost: '#ef4444',
   unknown: '#eab308',
+  // Sonda reportada de novo depois do voo, em outro lugar (reappearance.ts).
+  // Violeta: não é status de pouso nenhum, e não colide com os três acima.
+  reappeared: '#a855f7',
 } as const
 
 export const SOURCE_COLORS = {
