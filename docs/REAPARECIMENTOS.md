@@ -89,6 +89,10 @@ verdade dela.
 - **O reaparecimento não aparece** — ele depende do registro saber o pouso.
   Sondas sem relato de recuperação e sem intervalo de silêncio não têm como
   ser separadas; o enriquecimento resolve quando reler a fonte.
+- **O popup se contradiz** (posição no pouso, "Último reporte" dias depois) e
+  o mapa não mostra alfinete — era um ponto incoerente, corrigido em
+  `applyRegistryToPoints`. Se voltar a acontecer, é sinal de que posição e
+  data do ponto deixaram de vir do mesmo evento.
 - **A recepção do voo parece inflada** — quem só ouviu a sonda depois do pouso
   é removido da recepção do voo, e quem já ouvia antes tem o último sinal
   limitado ao pouso. Registros antigos são corrigidos na leitura.

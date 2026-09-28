@@ -609,6 +609,17 @@ forma própria e sempre ligado ao pouso de onde veio. Nada é descartado e nada
   episódios pelo mesmo gap. O voo é o bloco de maior altitude (era o antigo
   `mainFlightSegment`, que **descartava** o resto); os blocos posteriores agora
   voltam como `reappearances` em vez de se perderem.
+- **Ponto coerente** (`applyRegistryToPoints`): quando o reporte que o ponto
+  traz é um reaparecimento do voo que o registro conhece, o ponto INTEIRO passa
+  a ser o pouso — posição, data, altitude e último sinal — e o reporte que ele
+  trazia vira reaparecimento. Antes só a POSIÇÃO era trocada (pelo relato de
+  recuperação) e sobravam data/altitude/receptor do reaparecimento: um cartão
+  que se contradizia ("Posição" no pouso, "Último reporte" dias depois) e,
+  pior, `withLanding` media os reaparecimentos contra essa data errada —
+  todos ficavam "anteriores ao pouso" e eram descartados em silêncio, então o
+  mapa não desenhava alfinete nenhum. **Ao mexer aqui, mantenha posição e data
+  sempre do mesmo evento**: é a incoerência entre as duas que quebra tudo
+  silenciosamente rio abaixo.
 - **Registro já contaminado** (`normalizeRecord`): um registro gravado antes
   desta regra guarda o reaparecimento em `lastPos` no lugar do pouso, e todo
   consumidor lê o registro como está — esperar o enriquecimento reler a fonte

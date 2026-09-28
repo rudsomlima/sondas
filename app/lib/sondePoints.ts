@@ -231,13 +231,43 @@ export function applyRegistryToPoints(points: SondePoint[], records: Map<string,
       recoveryNote: p.recoveryNote ?? f.recoveryNote,
       reappearances: mergeReappearances(p.reappearances, f.reappearances),
     }
-    if (p.status === 'UNKNOWN' && r.status && r.status !== 'UNKNOWN') {
+    // O REPORTE DESTE PONTO é um reaparecimento do voo que o registro conhece?
+    // Acontece o tempo todo: o feed do mês devolve só o reporte mais recente da
+    // sonda, e pra uma sonda recuperada e ainda transmitindo isso é de dias
+    // depois. Nesse caso o ponto INTEIRO passa a ser o pouso — posição, data,
+    // altitude e último sinal — e o reporte que ele trazia vira reaparecimento.
+    //
+    // Antes daqui só a posição era trocada, e sobravam data/altitude/receptor
+    // do reaparecimento: um cartão que se contradizia ("Posição" no pouso,
+    // "Último reporte" dias depois) e, pior, `withLanding` media tudo contra
+    // essa data errada e descartava os reaparecimentos em silêncio.
+    const landing = recordLanding(r)
+    const own = { lat: p.lat, lon: p.lon, at: p.date.toISOString() }
+    const isReappeared = !!landing && isReappearanceOf(landing, own)
+    let extra: Reappearance | undefined
+    if (isReappeared && landing?.at) {
+      next.lat = landing.lat
+      next.lon = landing.lon
+      next.date = new Date(landing.at)
+      next.altitude = r.lastPos?.alt
+      next.status = r.status ?? next.status
+      // "Último sinal" volta a ser o do voo; quem ouviu o reaparecimento fica
+      // registrado dentro dele.
+      next.lastReceiver = f.lastReceiver
+      next.lastReceiverAt = f.lastReceiverAt
+      extra = reappearanceFrom(landing, {
+        lat: p.lat, lon: p.lon, alt: p.altitude, at: own.at, receiver: p.lastReceiver,
+      })
+    } else if (p.status === 'UNKNOWN' && r.status && r.status !== 'UNKNOWN') {
       next.status = r.status
       if (r.status === 'FOUND' && r.recoveryPos) { next.lat = r.recoveryPos.lat; next.lon = r.recoveryPos.lon }
     }
-    // O pouso pode ter mudado aqui (relato de recuperação): distâncias e o
-    // próprio "é reaparecimento?" são refeitos em relação a ele.
-    next.reappearances = withLanding(landingRef(next), next.reappearances)
+    // Distâncias e o próprio "é reaparecimento?" são refeitos contra o pouso
+    // — agora sempre coerente com a posição E a data do ponto.
+    next.reappearances = withLanding(
+      landingRef(next),
+      mergeReappearances(next.reappearances, extra ? [extra] : undefined),
+    )
     if (JSON.stringify(next) === JSON.stringify(p)) return p
     changed = true
     return next

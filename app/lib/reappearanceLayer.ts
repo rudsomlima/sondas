@@ -42,12 +42,24 @@ export function drawReappearances(
   L: any, layer: any, points: SondePoint[], opts: ReappearanceLayerOptions = {},
 ): number {
   let drawn = 0
+  // A mesma sonda pode chegar aqui duas vezes (o marcador em destaque e o de
+  // contexto do mapa do lançamento, por exemplo): sem isto os alfinetes e as
+  // linhas ficam empilhados, e o popup abre no de cima sem o usuário perceber
+  // que há outro atrás.
+  const visto = new Set<string>()
   for (const p of points) {
     const list = p.reappearances
     if (!list?.length) continue
     for (let i = 0; i < list.length; i++) {
       const r = list[i]
       if (!Number.isFinite(r.lat) || !Number.isFinite(r.lon)) continue
+      // Chave tolerante, igual à de mergeReappearances: o mesmo episódio chega
+      // por dois caminhos com milissegundos e casas decimais diferentes
+      // ("...:26Z" vs "...:26.000Z"), e comparar texto cru não colapsa nada.
+      const minuto = Math.round(new Date(r.at).getTime() / 60_000)
+      const chave = `${p.serial}|${minuto}|${r.lat.toFixed(3)},${r.lon.toFixed(3)}`
+      if (visto.has(chave)) continue
+      visto.add(chave)
       // Tracejado do pouso até aqui — desenhado antes, pra ficar sob o pino.
       L.polyline([[p.lat, p.lon], [r.lat, r.lon]], {
         color: REAPPEAR_COLOR, weight: 1.5, dashArray: '6 6', opacity: 0.75,

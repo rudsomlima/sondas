@@ -185,8 +185,10 @@ export function sondePopupHtml(p: SondePoint, opts: SondePopupOptions = {}): str
     !onlyCache ? p.reappearances?.length
       ? row('clock', 'Pouso (fim do voo)', fmtLocal(p.date, true), 'Último quadro do voo; reportes posteriores estão em Reaparecimentos')
       : row('clock', 'Último reporte', fmtLocal(p.date, true), ago(p.date)) : '',
-    p.altitude != null ? row('mountain', 'Altitude',
-      `${Math.round(p.altitude).toLocaleString('pt-BR')} m` +
+    // A altitude máxima do voo vale por si: um pouso sem altitude registrada
+    // (posição vinda do relato de recuperação) não pode esconder o estouro.
+    p.altitude != null || p.maxAltM ? row('mountain', 'Altitude',
+      (p.altitude != null ? `${Math.round(p.altitude).toLocaleString('pt-BR')} m` : '<span class="mp-muted">—</span>') +
       (p.maxAltM ? ` <span class="mp-muted">· máx. ${Math.round(p.maxAltM).toLocaleString('pt-BR')} m</span>` : '')) : '',
     row('pin', 'Posição', `<span class="mp-mono">${p.lat.toFixed(5)}, ${p.lon.toFixed(5)}</span>`),
     receiversBlock(p),

@@ -216,17 +216,31 @@ export function normalizeRecord(r: SondeRecord): SondeRecord {
   const moved = reappearanceFrom(landing, {
     lat: last.lat, lon: last.lon, alt: r.lastPos.alt, at: last.at, receiver: r.lastReceiver,
   })
-  // O receptor do último sinal era o do reaparecimento: vai junto com ele.
+  // O receptor do último sinal era o do reaparecimento: vai junto com ele, e
+  // o "último sinal" do voo volta a ser quem fechou a recepção do voo — em vez
+  // de sumir e deixar o cartão sem essa linha.
   const receiverMoved = ms(r.lastReceiverAt) >= ms(last.at) - 60_000
+  const receivers = trimReceiversToFlight(r.receivers, at)
+  const flightLast = lastFlightReceiver(receivers)
   return {
     ...r,
     lastPos: { lat: rec.lat, lon: rec.lon, alt: rec.alt, at },
     lastFrameUtc: at,
-    lastReceiver: receiverMoved ? undefined : r.lastReceiver,
-    lastReceiverAt: receiverMoved ? undefined : r.lastReceiverAt,
-    receivers: trimReceiversToFlight(r.receivers, at),
+    lastReceiver: receiverMoved ? flightLast?.callsign : r.lastReceiver,
+    lastReceiverAt: receiverMoved ? flightLast?.lastAt : r.lastReceiverAt,
+    receivers,
     reappearances: withLanding(landing, mergeReappearances(r.reappearances, [moved])),
   }
+}
+
+/** Quem ouviu a sonda por último dentro do voo. */
+function lastFlightReceiver(receivers: ReceiverStat[] | undefined): ReceiverStat | undefined {
+  let best: ReceiverStat | undefined
+  for (const x of receivers ?? []) {
+    if (!x.lastAt) continue
+    if (!best || ms(x.lastAt) > ms(best.lastAt)) best = x
+  }
+  return best
 }
 
 /**
