@@ -6,7 +6,7 @@ import { AlertCircle, Loader2, ExternalLink, AlertTriangle, RefreshCw, X, Antenn
 import {
   externalRadiosondyUrl, launchUtcInstant, fetchRadiosondyFeatures,
   findRecoveredMatch, fetchLiveFlights, findLiveMatch, isWithinMatchWindow, MAX_MATCH_WINDOW_MS,
-  statusColor, buildBalloonIcon,
+  statusColor, buildBalloonIcon, buildClusterIcon,
   buildHighlightBalloonIcon, buildHighlightLiveBalloonIcon, LIVE_COLOR,
   gmt3IconLabel, LEGEND_ITEMS,
   RadiosondyFeature, roundToSynopticHour, sondeHubUrl, parsePopupTelemetry,
@@ -20,7 +20,8 @@ import {
   pointToPosition, sondePointPopup, type SondePoint,
 } from '@/app/lib/sondePoints'
 import type { SondeRecord } from '@/app/lib/sondeRegistry'
-import { POPUP_OPTIONS } from '@/app/lib/mapPopups'
+import { POPUP_OPTIONS, clusterPopupHtml } from '@/app/lib/mapPopups'
+import { clusterByPixel, clusterBounds, isClusterDegenerate } from '@/app/lib/markerClustering'
 import { useReceiverStations } from '@/app/lib/receiverStationsClient'
 import { drawReceiverStations, receptorsFromPoints } from '@/app/lib/receiverStationsLayer'
 import { drawReappearances } from '@/app/lib/reappearanceLayer'
@@ -34,6 +35,7 @@ import { fetchLiveTrajectory, fetchArchiveTrajectory, analyzeTrajectory, FlightA
 import { drawTrajectory } from '@/app/components/TrajectoryLayer'
 
 const BALLOON_SIZE = 15
+const BALLOON_CLUSTER_RADIUS_PX = 26 // cobre o balão (15px) + rótulo de dia (16px)
 
 
 interface LaunchMapProps {
@@ -399,6 +401,10 @@ export default function LaunchMap({ launch, onClose, onResult, onPosition, conte
           streets.addTo(map)
           L.control.layers({ 'Mapa': streets, 'Satélite': satellite }).addTo(map)
           markersLayerRef.current = L.layerGroup().addTo(map)
+          // Reagrupa (clusterByPixel depende do zoom atual) quando o zoom
+          // muda — drawTick já é dependência dos efeitos de contexto,
+          // reaparecimentos e estações receptoras.
+          map.on('zoomend', () => setDrawTick(t => t + 1))
           mapRef.current = map
           leafletRef.current = L
         }
@@ -432,6 +438,10 @@ export default function LaunchMap({ launch, onClose, onResult, onPosition, conte
           streets.addTo(map)
           L.control.layers({ 'Mapa': streets, 'Satélite': satellite }).addTo(map)
           markersLayerRef.current = L.layerGroup().addTo(map)
+          // Reagrupa (clusterByPixel depende do zoom atual) quando o zoom
+          // muda — drawTick já é dependência dos efeitos de contexto,
+          // reaparecimentos e estações receptoras.
+          map.on('zoomend', () => setDrawTick(t => t + 1))
           mapRef.current = map
           leafletRef.current = L
         }
@@ -556,6 +566,10 @@ export default function LaunchMap({ launch, onClose, onResult, onPosition, conte
           streets.addTo(map)
           L.control.layers({ 'Mapa': streets, 'Satélite': satellite }).addTo(map)
           markersLayerRef.current = L.layerGroup().addTo(map)
+          // Reagrupa (clusterByPixel depende do zoom atual) quando o zoom
+          // muda — drawTick já é dependência dos efeitos de contexto,
+          // reaparecimentos e estações receptoras.
+          map.on('zoomend', () => setDrawTick(t => t + 1))
           mapRef.current = map
           leafletRef.current = L
         }
@@ -574,7 +588,9 @@ export default function LaunchMap({ launch, onClose, onResult, onPosition, conte
   }, [launch.year, launch.month, launch.day, launch.time_utc, launch.time_local, launch.position?.status, station, attempt])
 
   // Contexto: sondas do mês vindas de outras fontes que a camada principal
-  // (radiosondy.info + destaque) não desenhou.
+  // (radiosondy.info + destaque) não desenhou. Marcadores próximos demais
+  // pra este zoom viram um badge com contagem (ver markerClustering.ts) —
+  // o destaque do lançamento aberto nunca entra aqui, sempre fica individual.
   useEffect(() => {
     const L = leafletRef.current
     const map = mapRef.current
@@ -582,13 +598,23 @@ export default function LaunchMap({ launch, onClose, onResult, onPosition, conte
     if (!contextLayerRef.current) contextLayerRef.current = L.layerGroup().addTo(map)
     const layer = contextLayerRef.current
     layer.clearLayers()
-    for (const p of contextPoints) {
-      if (drawnSerialsRef.current.has(p.serial)) continue
-      const m = L.marker([p.lat, p.lon], { icon: buildBalloonIcon(L, statusColor(p.status), BALLOON_SIZE, gmt3IconLabel(p.date)) })
-        .addTo(layer)
-      bindSonde(m, p, false)
+    const pending = contextPoints.filter(p => !drawnSerialsRef.current.has(p.serial))
+    for (const g of clusterByPixel(map, pending, BALLOON_CLUSTER_RADIUS_PX)) {
+      if (g.items.length === 1) {
+        const p = g.items[0]
+        const m = L.marker([p.lat, p.lon], { icon: buildBalloonIcon(L, statusColor(p.status), BALLOON_SIZE, gmt3IconLabel(p.date)) })
+          .addTo(layer)
+        bindSonde(m, p, false)
+      } else {
+        const marker = L.marker([g.anchor.lat, g.anchor.lon], { icon: buildClusterIcon(L, g.items.length) }).addTo(layer)
+        if (isClusterDegenerate(g.anchor, g.items)) {
+          marker.bindPopup(clusterPopupHtml(g.items.map(p => sondePointPopup(bestPoint(p)))), POPUP_OPTIONS)
+        } else {
+          marker.on('click', () => map.fitBounds(clusterBounds(L, g.items), { padding: [50, 50], maxZoom: map.getZoom() + 4 }))
+        }
+      }
     }
-  }, [contextPoints, drawTick, bindSonde])
+  }, [contextPoints, drawTick, bindSonde, bestPoint])
 
   // Estações receptoras de todas as sondas do mapa (+ o meu receptor).
   useEffect(() => {
@@ -598,7 +624,7 @@ export default function LaunchMap({ launch, onClose, onResult, onPosition, conte
     if (!stationsLayerRef.current) stationsLayerRef.current = L.layerGroup().addTo(map)
     const all = [...mainPointsRef.current.values(), ...contextPoints].map(bestPoint)
     const settings = getSettings()
-    drawReceiverStations(L, stationsLayerRef.current, receiverStations, receptorsFromPoints(all), {
+    drawReceiverStations(L, map, stationsLayerRef.current, receiverStations, receptorsFromPoints(all), {
       callsign: settings.uploaderCallsign,
       pos: settings.homeLat != null && settings.homeLon != null ? { lat: settings.homeLat, lon: settings.homeLon } : null,
     })
@@ -616,7 +642,7 @@ export default function LaunchMap({ launch, onClose, onResult, onPosition, conte
     const layer = reappearLayerRef.current
     layer.clearLayers()
     const all = [...mainPointsRef.current.values(), ...contextPoints].map(bestPoint)
-    setReappearCount(drawReappearances(L, layer, all, { onClick: setFocused }))
+    setReappearCount(drawReappearances(L, map, layer, all, { onClick: setFocused }))
   }, [contextPoints, records, drawTick, bestPoint])
 
   // Sonda clicada: mantém o cabeçalho atualizado quando o registro completa.

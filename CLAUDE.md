@@ -721,6 +721,83 @@ fontes ao vivo (`launchesWithSondes` sobre `sondePoints` —
 radiosondy.info/SondeHub/registro) quando o mês é expandido de novo. Elas não
 são dado guardado; são o que as fontes respondem naquele momento.
 
+### Marcadores agrupados por zoom (`app/lib/markerClustering.ts`)
+
+Em zoom baixo, muitos pontos numa área pequena (ex.: região metropolitana de
+Natal com centenas de sondas do ano) se sobrepunham no mapa — o único
+agrupamento que existia antes (`receiverStationsLayer.ts`) era por distância
+GEOGRÁFICA fixa (~100m), não por pixels de tela, então não resolvia isso: em
+zoom baixo, pontos a 2-3 km entre si ocupam poucos pixels e continuavam sendo
+desenhados como marcadores separados.
+
+`clusterByPixel(map, points, radiusPx)` projeta cada ponto em pixel via
+`map.latLngToContainerPoint` e agrupa por proximidade NA TELA, não em graus.
+**Só `zoomend` precisa disparar redesenho, não `moveend`**: a distância em
+pixels entre dois lat/lon fixos não muda ao arrastar o mapa (translação), só
+muda com o zoom — por isso não há debounce de arrasto em lugar nenhum dessa
+implementação.
+
+- ⚠️ **É TRANSITIVO (union-find/single-linkage), não guloso de uma passagem
+  só.** Uma primeira versão gulosa (abrir grupo a partir de um ponto, puxar
+  pra dentro só quem está perto DELE) formava cadeias de vários grupos
+  pequenos ADJACENTES que continuavam grudados uns nos outros — o mesmo
+  problema de sobreposição, só que com badges no lugar de balões (bug real,
+  visto em produção: "2 2 4 5" lado a lado, indistinguíveis). Union-find
+  garante que se A está perto de B e B está perto de C, os três caem no
+  MESMO grupo mesmo que A e C estejam longe entre si — O(n²) pra montar as
+  arestas, de sobra pro volume deste app (no máximo ~300 pontos por mapa).
+  Qualquer futura reescrita desta função tem que preservar essa
+  transitividade, ou o "cluster soup" volta.
+- **Ordem importa**: quem chama já ordena a lista por prioridade antes de
+  agrupar (mesmo truque que `receiverStationsLayer.ts` já fazia com
+  `isMine`/contagem) — o item de MENOR índice em cada grupo (`group.anchor`)
+  vira o head/a posição do badge, sem recalcular centróide.
+- **`isClusterDegenerate(anchor, items)`**: alguns grupos nunca vão se
+  separar por mais que se aproxime o zoom (ex.: várias sondas recuperadas
+  pela mesma pessoa, mesmo endereço — real, visto num print de usuário).
+  Mede distância haversine real, não pixels (que dependem do zoom). Nesse
+  caso o clique NÃO tenta `fitBounds` (ficaria girando pra sempre): abre um
+  popup com os cards individuais concatenados (`clusterPopupHtml`,
+  `mapPopups.ts`), reaproveitando `sondePointPopup`/`reappearancePopupHtml`
+  já existentes e o mesmo padrão `.mp + .mp` que várias estações no mesmo
+  lugar já usavam. Caso normal: clique faz `map.fitBounds` no grupo, o zoom
+  sobe, `zoomend` dispara redesenho e o agrupamento se desfaz sozinho.
+- **Pousos e reaparecimentos clusterizam SEPARADOS**, nunca juntos no mesmo
+  badge — a distinção visual entre os dois (violeta vs. cor de status) é
+  proposital (ver "Reaparecimentos" acima) e um badge misto apagaria isso.
+  `buildClusterIcon(L, count, color)` em `radiosondy.ts` é a mesma função pras
+  duas coisas — só a cor muda (`REAPPEAR_COLOR` pro cluster de reaparecimento).
+- **Marcador em destaque nunca é agrupado**: o balão do lançamento aberto
+  (`LaunchMap`), a sonda ao vivo/selecionada (`MissionMap`) — é o próprio
+  propósito daquela tela, ficam sempre individuais, sempre por cima. Só o
+  conjunto "de contexto" (demais sondas do mês/ano) entra no agrupamento.
+- **`drawReceiverStations` e `drawReappearances` ganharam um parâmetro
+  `map`** (antes só `L`) — assinatura muda em todos os call sites dos três
+  mapas. `receiverStationsLayer.ts` trocou o agrupamento de
+  `lat.toFixed(3):lon.toFixed(3)` fixo pra `clusterByPixel`; o resto da
+  função (rótulo `"CALLSIGN +N"`, popups concatenados) ficou idêntico. Raio
+  de 55px (bem maior que o de sondas, 26px) porque o rótulo de estação é
+  TEXTO — "PU7KZI-SDR-Studio +4" — bem mais largo que o ícone de antena
+  (24px); um raio do tamanho do ícone deixava rótulos vizinhos colidindo
+  mesmo com os pontos-âncora tecnicamente "sem sobrepor".
+- **Uma estação receptora pode coincidir com um cluster de reaparecimento no
+  MUNDO REAL** — quem recupera uma sonda costuma guardá-la perto de casa,
+  que é também onde fica a antena dele (caso visto: PS7BL). As duas camadas
+  clusterizam SEPARADAS de propósito (ver acima), então isso pode aparecer
+  como um rótulo de estação bem próximo de um badge de reaparecimento no
+  mesmo lugar — não é um bug de clustering, é coincidência geográfica real
+  entre dois tipos de marcador diferentes. Evitar isso de vez exigiria as
+  camadas saberem umas das outras (fora do escopo desta implementação).
+- ⚠️ **`clusterByPixel`/`drawReappearances` exigem que o mapa já tenha uma
+  vista definida** (`map.latLngToContainerPoint` lança "Set map center and
+  zoom first" sem isso) — em `YearMap.tsx`, o `fitBounds`/`setView` da
+  primeira carga precisou ser calculado a partir dos PONTOS CRUS (geometria
+  pura, `L.latLngBounds`, sem projeção) e executado **antes** do laço de
+  clustering, não depois como no código original (que enquadrava só no fim).
+  Bug real encontrado e corrigido durante a implementação — qualquer nova
+  chamada de clustering na primeira renderização de um mapa precisa da mesma
+  ordem: vista primeiro, projeção depois.
+
 ### Recuperações do SondeHub (`app/lib/sondehubRecovery.ts`)
 
 Posições vindas só de telemetria RF do SondeHub nascem `status: 'UNKNOWN'`.

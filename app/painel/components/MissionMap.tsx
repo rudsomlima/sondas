@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import 'leaflet/dist/leaflet.css'
 import {
-  statusColor, buildBalloonIcon, buildHighlightBalloonIcon,
+  statusColor, buildBalloonIcon, buildClusterIcon, buildHighlightBalloonIcon,
   buildHighlightLiveBalloonIcon, gmt3IconLabel, gmt3IconLabelWithMonth,
   LIVE_COLOR, LEGEND_ITEMS, flightStatus, FLIGHT_STATUS_LABEL,
 } from '@/app/lib/radiosondy'
@@ -18,13 +18,15 @@ import { isValidCoordinate } from '@/app/lib/launchData'
 import { parseUtcDateStr } from '@/app/lib/launchUtils'
 import { applyRegistryToPoints, sondePointPopup, type SondePoint } from '@/app/lib/sondePoints'
 import type { SondeRecord } from '@/app/lib/sondeRegistry'
-import { launchSitePopupHtml, POPUP_OPTIONS, simplePopupHtml } from '@/app/lib/mapPopups'
+import { launchSitePopupHtml, POPUP_OPTIONS, simplePopupHtml, clusterPopupHtml } from '@/app/lib/mapPopups'
+import { clusterByPixel, clusterBounds, isClusterDegenerate } from '@/app/lib/markerClustering'
 import { useReceiverStations } from '@/app/lib/receiverStationsClient'
 import { drawReceiverStations, receptorsFromPoints } from '@/app/lib/receiverStationsLayer'
 import { drawReappearances } from '@/app/lib/reappearanceLayer'
 
 const BALLOON_SIZE = 15
 const LIVE_BALLOON_SIZE = 40
+const BALLOON_CLUSTER_RADIUS_PX = 26 // cobre o balão (15px) + rótulo de dia (16px)
 
 
 interface MissionMapProps {
@@ -92,6 +94,10 @@ export default function MissionMap({ station, points, records = NO_RECORDS, toda
   const receiverLayerRef = useRef<any>(null)
   const [trajNote, setTrajNote] = useState<string | null>(null)
   const [mapReady, setMapReady] = useState(false)
+  // Bumped a cada `zoomend` — entra na dependência do efeito de marcadores
+  // pra reagrupar (clusterByPixel depende do zoom atual). Só zoom importa:
+  // arrastar o mapa não muda a distância em pixels entre dois lat/lon fixos.
+  const [zoomTick, setZoomTick] = useState(0)
 
   // Inicialização única do Leaflet.
   useEffect(() => {
@@ -108,6 +114,7 @@ export default function MissionMap({ station, points, records = NO_RECORDS, toda
       chaseLayerRef.current = L.layerGroup().addTo(map)
       receiverLayerRef.current = L.layerGroup().addTo(map)
       map.setView([station.lat, station.lon], 9)
+      map.on('zoomend', () => setZoomTick(t => t + 1))
       setMapReady(true)
       setTimeout(() => map.invalidateSize(), 50)
     }
@@ -146,8 +153,9 @@ export default function MissionMap({ station, points, records = NO_RECORDS, toda
 
     function redraw() {
       const L = leafletRef.current
+      const map = mapRef.current
       const layer = markersLayerRef.current
-      if (!L || !layer) return
+      if (!L || !map || !layer) return
       layer.clearLayers()
 
       // Estação (marcador fixo discreto)
@@ -155,16 +163,37 @@ export default function MissionMap({ station, points, records = NO_RECORDS, toda
         radius: 6, color: '#3b82f6', fillColor: '#3b82f6', fillOpacity: 0.6, weight: 2,
       }).addTo(layer).bindPopup(launchSitePopupHtml(station), POPUP_OPTIONS)
 
-      // Todas as sondas do período — mesmo conjunto e mesmo popup do mapa anual.
+      // Todas as sondas do período — mesmo conjunto e mesmo popup do mapa anual
+      // — mais as sondas velhas que reapareceram hoje (fora do período visível,
+      // então entram aqui também). Marcadores próximos demais pra este zoom
+      // viram um badge com contagem (ver markerClustering.ts). "Hoje" tem
+      // marcador próprio e nunca é agrupado — é o próprio propósito da tela.
       const todaySerials = new Set(todayFlights.map(f => f.sondeNumber))
-      for (const p of visiblePoints) {
-        if (todaySerials.has(p.serial) || !isValidCoordinate(p.lat, p.lon)) continue // hoje tem marcador próprio
+      const shown = new Set(visiblePoints.map(p => p.serial))
+      const pointLabel = (p: SondePoint) => {
         const first = p.firstFrameUtc ? new Date(p.firstFrameUtc) : null
         const labelDate = first && !isNaN(first.getTime()) ? first : p.date
-        L.marker([p.lat, p.lon], {
-          icon: buildBalloonIcon(L, statusColor(p.status), BALLOON_SIZE,
-            period === 'year' ? gmt3IconLabelWithMonth(labelDate) : gmt3IconLabel(labelDate)),
-        }).addTo(layer).bindPopup(sondePointPopup(p), POPUP_OPTIONS)
+        return period === 'year' ? gmt3IconLabelWithMonth(labelDate) : gmt3IconLabel(labelDate)
+      }
+      const balloonPoints = [
+        ...visiblePoints.filter(p => !todaySerials.has(p.serial) && isValidCoordinate(p.lat, p.lon))
+          .map(p => ({ p, label: pointLabel(p), lat: p.lat, lon: p.lon })),
+        ...reappearedToday.filter(p => !shown.has(p.serial) && isValidCoordinate(p.lat, p.lon))
+          .map(p => ({ p, label: gmt3IconLabelWithMonth(p.date), lat: p.lat, lon: p.lon })),
+      ]
+      for (const g of clusterByPixel(map, balloonPoints, BALLOON_CLUSTER_RADIUS_PX)) {
+        if (g.items.length === 1) {
+          const { p, label } = g.items[0]
+          L.marker([p.lat, p.lon], { icon: buildBalloonIcon(L, statusColor(p.status), BALLOON_SIZE, label) })
+            .addTo(layer).bindPopup(sondePointPopup(p), POPUP_OPTIONS)
+        } else {
+          const marker = L.marker([g.anchor.lat, g.anchor.lon], { icon: buildClusterIcon(L, g.items.length) }).addTo(layer)
+          if (isClusterDegenerate(g.anchor, g.items)) {
+            marker.bindPopup(clusterPopupHtml(g.items.map(({ p }) => sondePointPopup(p))), POPUP_OPTIONS)
+          } else {
+            marker.on('click', () => map.fitBounds(clusterBounds(L, g.items), { padding: [50, 50], maxZoom: map.getZoom() + 4 }))
+          }
+        }
       }
 
       // Sondas de hoje (em voo = paraquedas pulsante; pousada = balão destacado)
@@ -190,17 +219,10 @@ export default function MissionMap({ station, points, records = NO_RECORDS, toda
       // elas não estão em todayFlights (não é voo de hoje) e podem estar fora
       // do período visível, então entram com o pouso delas desenhado aqui.
       // Ver app/lib/reappearance.ts.
-      drawReappearances(L, layer, visiblePoints)
-      const shown = new Set(visiblePoints.map(p => p.serial))
-      for (const p of reappearedToday) {
-        if (shown.has(p.serial) || !isValidCoordinate(p.lat, p.lon)) continue
-        L.marker([p.lat, p.lon], {
-          icon: buildBalloonIcon(L, statusColor(p.status), BALLOON_SIZE, gmt3IconLabelWithMonth(p.date)),
-        }).addTo(layer).bindPopup(sondePointPopup(p), POPUP_OPTIONS)
-      }
-      drawReappearances(L, layer, reappearedToday.filter(p => !shown.has(p.serial)))
+      drawReappearances(L, map, layer, visiblePoints)
+      drawReappearances(L, map, layer, reappearedToday.filter(p => !shown.has(p.serial)))
     }
-  }, [station, visiblePoints, records, todayFlights, reappearedToday, period, mapReady])
+  }, [station, visiblePoints, records, todayFlights, reappearedToday, period, mapReady, zoomTick])
 
   // Trajetória do voo selecionado.
   useEffect(() => {
@@ -286,8 +308,8 @@ export default function MissionMap({ station, points, records = NO_RECORDS, toda
       ...visiblePoints,
       ...applyRegistryToPoints(todayFlights.map(flightToPoint), records),
     ])
-    drawReceiverStations(L, layer, receiverStations, counts, { callsign: receiverName, pos: receiverPos })
-  }, [visiblePoints, todayFlights, records, receiverStations, receiverPos, receiverName, mapReady])
+    drawReceiverStations(L, mapRef.current, layer, receiverStations, counts, { callsign: receiverName, pos: receiverPos })
+  }, [visiblePoints, todayFlights, records, receiverStations, receiverPos, receiverName, mapReady, zoomTick])
 
   return (
     <div className="panel overflow-hidden h-full flex flex-col">

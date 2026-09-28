@@ -1,17 +1,18 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import 'leaflet/dist/leaflet.css'
 import { AlertCircle, Loader2, RefreshCw, X, Maximize2, Minimize2 } from 'lucide-react'
-import { statusColor, buildBalloonIcon, gmt3IconLabelWithMonth, LEGEND_ITEMS } from '@/app/lib/radiosondy'
+import { statusColor, buildBalloonIcon, buildClusterIcon, gmt3IconLabelWithMonth, LEGEND_ITEMS } from '@/app/lib/radiosondy'
 import { findStation } from '@/app/lib/stations'
 import { createBaseMap } from '@/app/lib/leafletBase'
 import type { Launch } from '@/app/lib/types'
 import { mergeWithRegistry, sondePointPopup, type SondePoint } from '@/app/lib/sondePoints'
-import { launchSitePopupHtml, POPUP_OPTIONS } from '@/app/lib/mapPopups'
+import { launchSitePopupHtml, POPUP_OPTIONS, clusterPopupHtml } from '@/app/lib/mapPopups'
 import { useReceiverStations } from '@/app/lib/receiverStationsClient'
 import { drawReceiverStations, receptorsFromPoints } from '@/app/lib/receiverStationsLayer'
 import { countReappearances, drawReappearances } from '@/app/lib/reappearanceLayer'
+import { clusterByPixel, clusterBounds, isClusterDegenerate } from '@/app/lib/markerClustering'
 import { reappearanceCountLabel } from '@/app/lib/reappearance'
 import { STATUS_COLORS } from '@/app/lib/tokens'
 import { getSettings } from '@/app/lib/settings'
@@ -20,6 +21,7 @@ import { useYearSondePoints } from './hooks/useYearSondePoints'
 import { useSondeRegistry } from './hooks/useSondeRegistry'
 
 const BALLOON_SIZE = 15
+const BALLOON_CLUSTER_RADIUS_PX = 26 // cobre o balão (15px) + rótulo de dia/mês (16px)
 
 interface YearMapProps {
   year: number
@@ -43,6 +45,10 @@ export default function YearMap({ year, station, launches, onClose, onPoints }: 
   const markersLayerRef = useRef<any>(null)
   const stationsLayerRef = useRef<any>(null)
   const fittedRef = useRef(false)
+  // Bumped a cada `zoomend` — entra na dependência do efeito de desenho pra
+  // reagrupar os marcadores quando o nível de zoom muda (só zoom importa:
+  // arrastar o mapa não muda distância em pixels entre dois lat/lon fixos).
+  const [zoomTick, setZoomTick] = useState(0)
   const receiverStations = useReceiverStations()
   // Tela cheia do mapa (botão no cabeçalho); o Leaflet precisa recalcular o
   // tamanho ao entrar/sair.
@@ -74,41 +80,63 @@ export default function YearMap({ year, station, launches, onClose, onPoints }: 
       if (cancelled || !mapDivRef.current) return
       leafletRef.current = L
       if (!mapRef.current) {
-        const { map, markersLayer } = createBaseMap(L, mapDivRef.current)
-        mapRef.current = map
+        const { map: newMap, markersLayer } = createBaseMap(L, mapDivRef.current)
+        mapRef.current = newMap
         markersLayerRef.current = markersLayer
         stationsLayerRef.current = L.layerGroup().addTo(mapRef.current)
+        // Reagrupa (clusterByPixel depende do zoom atual) quando o zoom muda.
+        newMap.on('zoomend', () => setZoomTick(t => t + 1))
       }
+      const map = mapRef.current
       const layer = markersLayerRef.current
       layer.clearLayers()
-      const bounds = L.latLngBounds([])
+      // Limites a partir dos pontos crus (+ reaparecimentos, que podem estar
+      // longe do pouso) — geometria pura, não depende do mapa já ter uma
+      // vista (zoom/centro) definida.
+      const rawBounds = L.latLngBounds(points.map(p => [p.lat, p.lon]))
+      for (const p of points) for (const r of p.reappearances ?? []) rawBounds.extend([r.lat, r.lon])
+      // Enquadra ANTES de agrupar: `clusterByPixel`/`drawReappearances`
+      // projetam lat/lon em pixels de tela (`latLngToContainerPoint`), que o
+      // Leaflet só sabe fazer depois que o mapa já tem zoom/centro — na
+      // primeira carga, sem isso, o Leaflet lança "Set map center and zoom
+      // first". Só a primeira vez muda a vista; depois disso ela já existe.
+      if (!fittedRef.current) {
+        if (points.length > 0) { map.fitBounds(rawBounds, { padding: [30, 30], maxZoom: 11 }); fittedRef.current = true }
+        else map.setView([stationInfo.lat, stationInfo.lon], 8)
+      }
       L.circleMarker([stationInfo.lat, stationInfo.lon], {
         radius: 6, color: '#3b82f6', fillColor: '#3b82f6', fillOpacity: 0.65, weight: 2,
       }).addTo(layer).bindPopup(launchSitePopupHtml(stationInfo), POPUP_OPTIONS)
-      for (const p of points) {
-        L.marker([p.lat, p.lon], {
-          icon: buildBalloonIcon(L, statusColor(p.status), BALLOON_SIZE, gmt3IconLabelWithMonth(p.date)),
-        }).addTo(layer).bindPopup(sondePointPopup(p), POPUP_OPTIONS)
-        bounds.extend([p.lat, p.lon])
+      // Marcadores próximos demais pra este zoom viram um badge com contagem
+      // (ver markerClustering.ts) — some sozinho ao aproximar o zoom.
+      for (const g of clusterByPixel(map, points, BALLOON_CLUSTER_RADIUS_PX)) {
+        if (g.items.length === 1) {
+          const p = g.items[0]
+          L.marker([p.lat, p.lon], {
+            icon: buildBalloonIcon(L, statusColor(p.status), BALLOON_SIZE, gmt3IconLabelWithMonth(p.date)),
+          }).addTo(layer).bindPopup(sondePointPopup(p), POPUP_OPTIONS)
+        } else {
+          const marker = L.marker([g.anchor.lat, g.anchor.lon], { icon: buildClusterIcon(L, g.items.length) }).addTo(layer)
+          if (isClusterDegenerate(g.anchor, g.items)) {
+            marker.bindPopup(clusterPopupHtml(g.items.map(p => sondePointPopup(p))), POPUP_OPTIONS)
+          } else {
+            marker.on('click', () => map.fitBounds(clusterBounds(L, g.items), { padding: [50, 50], maxZoom: map.getZoom() + 4 }))
+          }
+        }
       }
       // Sondas reportadas de novo depois do voo: alfinete violeta ligado ao
       // pouso por uma linha tracejada (o pouso acima continua no lugar dele).
-      drawReappearances(L, layer, points, { bounds })
-      // Enquadra só na primeira vez: não "pula" o mapa enquanto o usuário navega.
-      if (!fittedRef.current) {
-        if (points.length > 0) { mapRef.current.fitBounds(bounds, { padding: [30, 30], maxZoom: 11 }); fittedRef.current = true }
-        else mapRef.current.setView([stationInfo.lat, stationInfo.lon], 8)
-      }
+      drawReappearances(L, map, layer, points, {})
       // Estações que receberam alguma sonda do ano (+ o meu receptor).
       const settings = getSettings()
-      drawReceiverStations(L, stationsLayerRef.current, receiverStations, receptorsFromPoints(points), {
+      drawReceiverStations(L, map, stationsLayerRef.current, receiverStations, receptorsFromPoints(points), {
         callsign: settings.uploaderCallsign,
         pos: settings.homeLat != null && settings.homeLon != null ? { lat: settings.homeLat, lon: settings.homeLon } : null,
       })
-      setTimeout(() => mapRef.current?.invalidateSize(), 50)
+      setTimeout(() => map?.invalidateSize(), 50)
     })()
     return () => { cancelled = true }
-  }, [points, stationInfo, receiverStations])
+  }, [points, stationInfo, receiverStations, zoomTick])
 
   useEffect(() => () => {
     mapRef.current?.remove()

@@ -656,3 +656,31 @@ export function buildHighlightLiveBalloonIcon(L: any, color: string, widthPx: nu
     iconAnchor: [widthPx / 2, Math.round(heightPx * 0.88)],
   })
 }
+
+/**
+ * Badge de agrupamento (cluster) por pixel — vários marcadores próximos
+ * demais pra este nível de zoom viram um só círculo com a contagem. Ver
+ * app/lib/markerClustering.ts. Tamanho FIXO (não escala com a contagem, pra
+ * não "pular" visualmente ao reagrupar) e cor tintada por quem chama:
+ * neutro pra pousos, REAPPEAR_COLOR pra reaparecimentos — nunca a cor de um
+ * status específico, pra não sugerir que todo o grupo tem aquele status.
+ */
+const CLUSTER_COLOR = '#9aa4b2' // neutro (var(--text-dim)) — grupo de pousos, sem status único
+
+export function buildClusterIcon(L: any, count: number, color: string = CLUSTER_COLOR, sizePx = 28) {
+  const text = count > 99 ? '99+' : String(count)
+  const fontSize = text.length > 2 ? 10 : 11
+  const html = `
+    <div style="width:${sizePx}px;height:${sizePx}px;border-radius:50%;
+      display:flex;align-items:center;justify-content:center;
+      background:#232a35;border:2px solid ${color};
+      box-shadow:0 1px 4px rgba(0,0,0,0.6);">
+      <span style="color:#fff;font-size:${fontSize}px;font-family:monospace;font-weight:700;">${text}</span>
+    </div>`
+  return L.divIcon({
+    html,
+    className: '',
+    iconSize: [sizePx, sizePx],
+    iconAnchor: [sizePx / 2, sizePx / 2],
+  })
+}

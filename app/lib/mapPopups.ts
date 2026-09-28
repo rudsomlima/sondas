@@ -255,6 +255,22 @@ export function reappearancePopupHtml(p: SondePoint, r: Reappearance, index = 0,
 }
 
 // ---------------------------------------------------------------------------
+// Cluster "degenerado": marcadores que nunca se separam por zoom (mesma casa
+// de quem recolheu várias sondas, por exemplo) — ver isClusterDegenerate em
+// markerClustering.ts. Concatena os popups individuais no mesmo cartão, igual
+// ao padrão já usado pra várias estações receptoras no mesmo lugar (.mp + .mp
+// em globals.css), com o mesmo truncamento de receiversBlock (+N).
+const CLUSTER_POPUP_LIMIT = 4
+
+export function clusterPopupHtml(cards: string[]): string {
+  const shown = cards.slice(0, CLUSTER_POPUP_LIMIT).join('')
+  const more = cards.length > CLUSTER_POPUP_LIMIT
+    ? `<div class="mp" style="padding:8px 12px"><span class="mp-muted">+${cards.length - CLUSTER_POPUP_LIMIT} mais — aproxime o zoom pra ver todas</span></div>`
+    : ''
+  return shown + more
+}
+
+// ---------------------------------------------------------------------------
 // Estação receptora
 
 export function stationPopupHtml(st: ReceiverStation, opts: { mine?: boolean; sondes?: number } = {}): string {
