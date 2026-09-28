@@ -154,7 +154,7 @@ export default function YearMap({ year, station, launches, onClose, onPoints }: 
       <div className={`relative bg-bg ${fs.isFullscreen ? 'flex-1 min-h-0' : 'h-[280px] sm:h-[340px] lg:h-[420px]'}`}>
         <div ref={mapDivRef} className="absolute inset-0" />
         {!status && points.length > 0 && (
-          <div className="absolute bottom-3 right-3 z-[900] bg-bg/70 backdrop-blur-sm rounded-md p-2.5 text-xs text-gray-200 space-y-1.5">
+          <div className="absolute bottom-3 right-3 z-[900] bg-white/85 backdrop-blur-sm rounded-md p-2.5 text-xs text-black space-y-1.5">
             {LEGEND_ITEMS.map(item => <div key={item.label} className="flex items-center gap-2" title={item.title}>
               <span className="inline-block w-2.5 h-3 rounded-sm" style={{ background: item.color }} />{item.label}
             </div>)}

@@ -3,6 +3,8 @@
  * Antes duplicados em 4 arquivos (api/sounding, blobStore, historico/page, LaunchMap).
  */
 
+import type { Reappearance } from './reappearance'
+
 export const GMT3 = -3 * 60 * 60 * 1000
 
 // Date.now() já é um instante absoluto (UTC); nunca usar getTimezoneOffset()
@@ -90,6 +92,10 @@ export interface Launch {
   // Novos campos opcionais (reformulação mission control):
   sources?: LaunchSources
   flightStats?: FlightStats
+  // A MESMA sonda reportada de novo depois do voo, em outro lugar. Só
+  // exibição: o pouso deste lançamento continua em `position`, intocado.
+  // Ver app/lib/reappearance.ts.
+  reappearances?: Reappearance[]
 }
 
 export interface YearStore {

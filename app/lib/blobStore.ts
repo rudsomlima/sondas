@@ -117,6 +117,38 @@ export async function listYearStores(): Promise<R2FileInfo[]> {
   }
 }
 
+/**
+ * Remove os lançamentos de UM mês do YearStore, mantendo o resto do ano.
+ * É o que o botão "Deletar mês" do /historico usa: antes ele só limpava o
+ * cache do navegador e logo em seguida ressincronizava o mês do servidor, e o
+ * mês voltava sempre. Apaga de verdade e não tem desfazer.
+ *
+ * `freeze` marca o mês como "completo" (`monthsComplete`) — é o que impede a
+ * sincronização automática de rebuscá-lo na Wyoming e ressuscitar tudo na
+ * próxima carga da página. Só vale pra mês PASSADO: congelar o mês corrente
+ * travaria a coleta dos lançamentos que ainda vão acontecer.
+ *
+ * Devolve quantos lançamentos foram removidos e se o mês ficou congelado.
+ */
+export async function deleteMonthFromYearStore(
+  station: string, year: number, month: number, freeze: boolean,
+): Promise<{ removed: number; frozen: boolean }> {
+  const store = await readYearStore(station, year)
+  if (!store) return { removed: 0, frozen: false }
+  const kept = (store.launches ?? []).filter(l => l.month !== month)
+  const removed = (store.launches ?? []).length - kept.length
+  const monthsComplete = store.monthsComplete ?? []
+  const frozen = freeze && !monthsComplete.includes(month)
+  if (removed === 0 && !frozen) return { removed: 0, frozen: false }
+  await writeYearStore(station, {
+    ...store,
+    launches: kept,
+    monthsComplete: frozen ? [...monthsComplete, month] : monthsComplete,
+    updatedAt: Date.now(),
+  })
+  return { removed, frozen: freeze }
+}
+
 export async function deleteYearStore(station: string, year: number): Promise<void> {
   const client = getClient()
   if (!client) return

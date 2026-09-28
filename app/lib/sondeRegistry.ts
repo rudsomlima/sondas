@@ -15,7 +15,7 @@
  * Módulo puro (sem rede, sem R2): tipos, mesclagem e conversões.
  */
 import {
-  REAPPEAR_GAP_MS, mergeReappearances, reappearanceFrom, splitLanding, withLanding,
+  REAPPEAR_GAP_MS, isReappearanceOf, mergeReappearances, reappearanceFrom, splitLanding, withLanding,
   type Reappearance,
 } from './reappearance'
 
@@ -184,6 +184,72 @@ function betterFlight(a?: RegistryFlight, b?: RegistryFlight): RegistryFlight | 
   return b.points > a.points ? b : a
 }
 
+// Um voo não dura mais que isto: além daqui, um instante não pertence a ele.
+// Serve pra não aceitar um "pouso" datado de semanas depois do 1º quadro.
+const MAX_FLIGHT_MS = 12 * 3600_000
+
+/**
+ * Conserta, NA LEITURA, um registro gravado antes da regra de reaparecimentos
+ * (ou por um navegador antigo): `lastPos` guardando um reporte posterior ao
+ * voo no lugar do pouso. Caso real: X2932841 ficou com a posição de 26/09 no
+ * lugar do pouso de 09/09 — e todo consumidor (mapas, histórico, análises)
+ * lia o registro como está, sem esperar o enriquecimento reler a fonte.
+ *
+ * A âncora é a posição do RELATO DE RECUPERAÇÃO (quem achou a sonda disse
+ * onde): ela nunca é contaminada por um reporte posterior. Sem relato de
+ * recuperação não há como afirmar nada, e o registro passa intacto — o
+ * enriquecimento conserta quando reler a fonte.
+ */
+export function normalizeRecord(r: SondeRecord): SondeRecord {
+  const rec = r.recoveryPos
+  if (r.status !== 'FOUND' || !rec || !r.lastPos?.at) return r
+  // Instante do pouso: o do relato de recuperação — mas nunca um que caia
+  // fora da duração possível do voo (relato registrado semanas depois
+  // jogaria a sonda pro mês errado, que é justamente o que se quer evitar).
+  let at = rec.at ?? r.recoveredAt ?? r.firstFrameUtc
+  const first = ms(r.firstFrameUtc)
+  if (Number.isFinite(first) && (!at || ms(at) - first > MAX_FLIGHT_MS)) at = r.firstFrameUtc
+  if (!at) return r
+  const landing = { lat: rec.lat, lon: rec.lon, at }
+  const last = { lat: r.lastPos.lat, lon: r.lastPos.lon, at: r.lastPos.at }
+  if (!isReappearanceOf(landing, last)) return r
+  const moved = reappearanceFrom(landing, {
+    lat: last.lat, lon: last.lon, alt: r.lastPos.alt, at: last.at, receiver: r.lastReceiver,
+  })
+  // O receptor do último sinal era o do reaparecimento: vai junto com ele.
+  const receiverMoved = ms(r.lastReceiverAt) >= ms(last.at) - 60_000
+  return {
+    ...r,
+    lastPos: { lat: rec.lat, lon: rec.lon, alt: rec.alt, at },
+    lastFrameUtc: at,
+    lastReceiver: receiverMoved ? undefined : r.lastReceiver,
+    lastReceiverAt: receiverMoved ? undefined : r.lastReceiverAt,
+    receivers: trimReceiversToFlight(r.receivers, at),
+    reappearances: withLanding(landing, mergeReappearances(r.reappearances, [moved])),
+  }
+}
+
+/**
+ * Tira da recepção do VOO o que só ouviu a sonda depois do pouso. Quem começou
+ * a receber depois do pouso (a sonda foi recuperada e seguiu transmitindo em
+ * terra por dias — caso real: PS7BL aparecia com 638 quadros da X2932841
+ * "desde 20/09", nove dias depois do voo) não participou do voo e sai da
+ * lista; quem já recebia antes fica, com o último sinal limitado ao pouso.
+ */
+function trimReceiversToFlight(receivers: ReceiverStat[] | undefined, landingAt: string): ReceiverStat[] | undefined {
+  if (!receivers?.length) return receivers
+  const end = ms(landingAt)
+  if (!Number.isFinite(end)) return receivers
+  let changed = false
+  const out: ReceiverStat[] = []
+  for (const x of receivers) {
+    if (Number.isFinite(ms(x.firstAt)) && ms(x.firstAt) > end) { changed = true; continue }
+    if (Number.isFinite(ms(x.lastAt)) && ms(x.lastAt) > end) { out.push({ ...x, lastAt: landingAt }); changed = true; continue }
+    out.push(x)
+  }
+  return changed ? (out.length ? out : undefined) : receivers
+}
+
 /**
  * Das duas cópias de `lastPos`, qual é o pouso — e o que sobra vira
  * reaparecimento em vez de sobrescrever o pouso.
@@ -217,8 +283,10 @@ export function mergeSondeRecords(a: SondeRecord | undefined, b: SondeRecord): S
   if (!a) {
     const copy = { ...b, sources: [...(b.sources ?? [])] }
     copy.reappearances = withLanding(b.lastPos?.at ? { ...b.lastPos, at: b.lastPos.at } : undefined, b.reappearances)
-    return copy
+    return normalizeRecord(copy)
   }
+  a = normalizeRecord(a)
+  b = normalizeRecord(b)
   const landing = landingOf(a, b)
   // "Último sinal" é o do VOO: um receptor que ouviu a sonda num
   // reaparecimento fica registrado no próprio reaparecimento, não aqui.

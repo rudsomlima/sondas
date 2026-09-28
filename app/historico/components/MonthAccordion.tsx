@@ -121,7 +121,9 @@ export default function MonthAccordion({
                 {launches.length > 0 && (
                   deleteMonthConfirm === m ? (
                     <div className="flex items-center gap-1.5 flex-shrink-0">
-                      <span className="text-xs text-yellow-400">Remover mês?</span>
+                      <span className="text-xs text-yellow-400" title="Apaga os lançamentos deste mês no servidor (R2) e no cache deste navegador. Não tem desfazer.">
+                        Apagar no servidor?
+                      </span>
                       <button
                         onClick={onConfirmDeleteMonth}
                         className="px-2 py-1 bg-red-600 text-xs text-white rounded hover:bg-red-700 transition-all"
@@ -139,7 +141,7 @@ export default function MonthAccordion({
                     <button
                       onClick={() => onRequestDeleteMonth(m)}
                       className="p-2 text-gray-400 hover:text-red-400 hover:bg-red-500/10 rounded transition-all"
-                      title="Deletar mês"
+                      title="Apagar os lançamentos deste mês — no servidor e neste navegador. Sem desfazer."
                     >
                       <Trash2 size={14} />
                     </button>
@@ -191,9 +193,10 @@ export default function MonthAccordion({
                                 // depois do voo, em outro lugar: marca o
                                 // lançamento sem mexer no dia/horário dele —
                                 // o pouso original é o que vale aqui.
-                                const reappearances = l.position?.sondeNumber
-                                  ? records?.get(l.position.sondeNumber)?.reappearances
-                                  : undefined
+                                // Vem do lançamento (launchesWithSondes já
+                                // juntou ponto + registro) — o ponto está à
+                                // frente do R2 e o selo não pode esperar por ele.
+                                const reappearances = l.reappearances
                                 return (
                                   <span key={i} className="flex items-center gap-0.5">
                                   <button

@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { readYearStore, writeYearStore } from '@/app/lib/blobStore'
+import { readYearStore, writeYearStore, deleteMonthFromYearStore } from '@/app/lib/blobStore'
+import { findRecords } from '@/app/lib/sondeRegistryServer'
+import { anchorLaunchesToRecords } from '@/app/lib/sondeLaunches'
 import { findStation, Station } from '@/app/lib/stations'
 import { fetchRadiosondyLaunches } from '@/app/lib/radiosondy'
 import { fetchSondeHubApproxLaunches, fetchSondeHubArchiveLaunches } from '@/app/lib/sondehub'
@@ -322,6 +324,20 @@ function radiosondyApproxToLaunch({ feature, ...launch }: Awaited<ReturnType<typ
   return { ...launch, position: { lat: feature.lat, lon: feature.lon, sondeNumber: feature.sondeNumber, status: feature.status } }
 }
 
+/**
+ * Lançamento aproximado nasce da DATA DO REPORTE da sonda — que, pra uma sonda
+ * recuperada e ainda transmitindo em terra, é de dias depois do voo. Ancora
+ * cada um no 1º quadro que o registro conhece (e move a posição pro pouso), e
+ * descarta o que, já no dia certo, não pertence mais a este mês.
+ * Ver anchorLaunchesToRecords em app/lib/sondeLaunches.ts.
+ */
+async function anchorApprox(launches: Launch[], year: number, month: number): Promise<Launch[]> {
+  const serials = launches.flatMap(l => l.position?.sondeNumber ? [l.position.sondeNumber] : [])
+  if (serials.length === 0) return launches
+  const records = await findRecords(serials).catch(() => new Map())
+  return anchorLaunchesToRecords(launches, records).filter(l => l.year === year && l.month === month)
+}
+
 async function fetchApproxLaunches(
   stationInfo: Station | undefined, year: number, month: number, isCurrentMonth: boolean
 ): Promise<Launch[]> {
@@ -345,7 +361,7 @@ async function fetchApproxLaunches(
       if (!byKey.has(key)) byKey.set(key, l)
     }
   }
-  return [...byKey.values()]
+  return anchorApprox([...byKey.values()], year, month)
 }
 
 // Wyoming DESLIGADA nas configurações (ver app/lib/appSettings.ts): o mês vem
@@ -391,7 +407,7 @@ async function fetchComplementaryLaunches(
       if (!byKey.has(key)) byKey.set(key, l)
     }
   }
-  return [...byKey.values()]
+  return anchorApprox([...byKey.values()], year, month)
 }
 
 async function syncMonth(
@@ -692,6 +708,27 @@ export async function GET(request: NextRequest) {
       }
 
       return NextResponse.json({ year, station, rechecked, downgraded, checked: candidates.length })
+    }
+
+    if (action === 'delete-month') {
+      // Apaga de verdade os lançamentos de um mês no R2 (botão "Deletar mês"
+      // do /historico). Destrutivo e sem desfazer: o mês só volta se for
+      // sincronizado de novo a partir da Wyoming/radiosondy.info — por isso
+      // quem chama NÃO deve ressincronizar logo depois.
+      const year = parseInt(searchParams.get('year') ?? '')
+      const month = parseInt(searchParams.get('month') ?? '')
+      if (!Number.isInteger(year) || year < 1900 || year > 2200) {
+        return NextResponse.json({ error: 'Ano inválido.' }, { status: 400 })
+      }
+      if (!Number.isInteger(month) || month < 1 || month > 12) {
+        return NextResponse.json({ error: 'Mês inválido.' }, { status: 400 })
+      }
+      // Mês corrente ainda está sendo coletado: apaga o que está gravado, mas
+      // não congela — senão os lançamentos que ainda vão acontecer nunca
+      // entrariam. A resposta diz isso pro histórico avisar o usuário.
+      const isCurrentMonth = year === local.getUTCFullYear() && month === local.getUTCMonth() + 1
+      const { removed, frozen } = await deleteMonthFromYearStore(station, year, month, !isCurrentMonth)
+      return NextResponse.json({ ok: true, year, month, station, removed, frozen })
     }
 
     return NextResponse.json({ error: 'Unknown action' }, { status: 400 })

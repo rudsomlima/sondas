@@ -8,7 +8,7 @@ import { Station, DEFAULT_STATION, getSelectedStation, setSelectedStation } from
 import type { Launch, LaunchPosition } from '@/app/lib/types'
 import { nowGMT3 } from '@/app/lib/types'
 import { isValidPosition, launchInstantMs, mergeLaunchCollections, sourceCounts } from '@/app/lib/launchData'
-import { launchKey, sameLaunch } from '@/app/lib/launchUtils'
+import { launchKey, sameLaunch, MONTHS_FULL } from '@/app/lib/launchUtils'
 import { useRecoveredLaunches } from './hooks/useRecoveredLaunches'
 import { useSondeLaunches } from './hooks/useSondeLaunches'
 import { useSondeRegistry } from './hooks/useSondeRegistry'
@@ -36,6 +36,7 @@ export default function HistoricoPage() {
   const [noMatchLaunches, setNoMatchLaunchesState] = useState<Set<string>>(new Set())
   const [showYearMap, setShowYearMap] = useState(false)
   const [deleteMonthConfirm, setDeleteMonthConfirm] = useState<number | null>(null)
+  const [deleteMonthMsg, setDeleteMonthMsg] = useState<string | null>(null)
   const [deleteYearConfirm, setDeleteYearConfirm] = useState(false)
   const [rechecking, setRechecking] = useState(false)
   const [recheckMsg, setRecheckMsg] = useState<string | null>(null)
@@ -177,18 +178,42 @@ export default function HistoricoPage() {
     setNoMatchLaunchesState(updater)
   }, [])
 
-  const handleConfirmDeleteMonth = useCallback(() => {
+  // Apaga o mês DE VERDADE: no R2 (YearStore) e no cache deste navegador.
+  // Não ressincroniza depois — era isso que fazia o mês voltar na hora, e o
+  // botão parecer que não apagava nada. Sem desfazer: só volta se o mês for
+  // sincronizado de novo (botão Atualizar / sync automático).
+  const handleConfirmDeleteMonth = useCallback(async () => {
     if (deleteMonthConfirm === null) return
     const targetMonth = deleteMonthConfirm
+    setDeleteMonthConfirm(null)
+    setDeleteMonthMsg(null)
     clearMonth(year, targetMonth, cacheStationKey(station.id))
     setData(prev => prev ? {
       ...prev,
       launches: prev.launches.filter(l => l.month !== targetMonth),
       count: prev.launches.filter(l => l.month !== targetMonth).length,
     } : null)
-    setDeleteMonthConfirm(null)
-    syncMonths(year, [targetMonth])
-  }, [deleteMonthConfirm, year, station.id, setData, syncMonths])
+    try {
+      const res = await fetch(
+        `/api/sounding?action=delete-month&year=${year}&month=${targetMonth}&station=${station.id}`,
+        { cache: 'no-store' },
+      )
+      const json = await res.json()
+      if (!res.ok || json.error) throw new Error(json.error || `Erro ${res.status}`)
+      const nome = MONTHS_FULL[targetMonth - 1]
+      const quanto = json.removed > 0
+        ? `${json.removed} lançamento(s) apagado(s) do servidor`
+        : 'nada havia gravado no servidor; só o cache local foi limpo'
+      // Mês corrente não congela: a coleta segue e o que as fontes reportarem
+      // volta na próxima sincronização. Melhor dizer do que o usuário
+      // descobrir sozinho recarregando a página.
+      setDeleteMonthMsg(json.frozen === false && json.removed >= 0 && targetMonth === clock.getUTCMonth() + 1 && year === clock.getUTCFullYear()
+        ? `${nome}: ${quanto}. Como é o mês corrente, ele continua sendo coletado — o que as fontes reportarem volta na próxima sincronização.`
+        : `${nome}: ${quanto}.`)
+    } catch (e: any) {
+      setDeleteMonthMsg(`Apagado só neste navegador — o servidor recusou: ${e.message}`)
+    }
+  }, [deleteMonthConfirm, year, station.id, setData])
 
   const handleRecheckWyoming = useCallback(async () => {
     setRechecking(true)
@@ -293,6 +318,12 @@ export default function HistoricoPage() {
         {showStationPicker && <StationPicker station={station} onSelect={changeStation} />}
         {recheckMsg && (
           <p className="text-xs text-gray-400 mt-2">{recheckMsg}</p>
+        )}
+        {deleteMonthMsg && (
+          <p className="text-xs text-yellow-300 mt-2 flex items-start gap-2">
+            <span className="flex-1">{deleteMonthMsg}</span>
+            <button onClick={() => setDeleteMonthMsg(null)} className="text-gray-400 hover:text-white">dispensar</button>
+          </p>
         )}
       </div>
 

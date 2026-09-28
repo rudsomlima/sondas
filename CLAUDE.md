@@ -587,6 +587,9 @@ sinótico, com o horário nominal — e parecia "mostrar só as minhas".
 
 ### Reaparecimentos (`app/lib/reappearance.ts`)
 
+> Guia funcional (o que o usuário vê e como diagnosticar):
+> `docs/REAPARECIMENTOS.md`.
+
 A MESMA sonda reportada de novo **depois do voo, em outro lugar**: recuperada,
 levada pra casa de quem achou e religada, ou reportada por outra pessoa dias
 depois. Caso real: **X2932841**, lançada em 09/09/2026 e recuperada, reportada
@@ -606,6 +609,35 @@ forma própria e sempre ligado ao pouso de onde veio. Nada é descartado e nada
   episódios pelo mesmo gap. O voo é o bloco de maior altitude (era o antigo
   `mainFlightSegment`, que **descartava** o resto); os blocos posteriores agora
   voltam como `reappearances` em vez de se perderem.
+- **Registro já contaminado** (`normalizeRecord`): um registro gravado antes
+  desta regra guarda o reaparecimento em `lastPos` no lugar do pouso, e todo
+  consumidor lê o registro como está — esperar o enriquecimento reler a fonte
+  deixaria o histórico errado nesse meio-tempo. `normalizeRecord` conserta NA
+  LEITURA (chamado por `mergeSondeRecords` e ao carregar o cache do navegador
+  em `sondeRegistryClient`), ancorado na **posição do relato de recuperação**,
+  que nunca é contaminada por um reporte posterior; o instante do pouso nunca
+  passa de `MAX_FLIGHT_MS` (12 h) depois do 1º quadro, senão um relato
+  registrado semanas depois jogaria a sonda pro mês errado. Sem relato de
+  recuperação o registro passa intacto e só o enriquecimento resolve.
+- **Lançamento aproximado nasce da DATA DO REPORTE** (`anchorLaunchesToRecords`):
+  sem a Wyoming (desligada nas configurações, ou estação sem cobertura), cada
+  lançamento é sintetizado por `fetchRadiosondyLaunches`/`fetchSondeHubApproxLaunches`
+  a partir de quando a sonda foi reportada. Pra uma sonda recuperada e ainda
+  transmitindo em terra isso é dias depois do voo, e o app **inventava um
+  lançamento no dia errado**: a X2932841 voou em 09/09/2026 e aparecia como
+  lançamento de **26/09**, com posição no lugar do reaparecimento. Isso nasce
+  no servidor e se persiste no YearStore, então nenhuma correção só de
+  exibição resolve. `anchorLaunchesToRecords` reancora a identidade do
+  lançamento (data + hora sinótica) no 1º quadro que o registro conhece e move
+  a posição pro pouso — aplicado no servidor (`anchorApprox`, em
+  `fetchApproxLaunches` e `fetchComplementaryLaunches`) e no cliente
+  (`launchesWithSondes`, pros lançamentos já guardados no cache). **Só mexe em
+  lançamento aproximado** (`l.source` preenchido): o nativo da Wyoming tem
+  identidade própria e sobrescrevê-la quebraria caches, merges e
+  `radiosondyMatch`.
+- **`Launch.reappearances`** (`launchesWithSondes`): o selo do histórico vem do
+  PONTO (classificado na hora pelas fontes), não do registro — o R2 só aprende
+  quando o enriquecimento relê, e o selo não pode esperar por ele.
 - **No registro** (`SondeRecord.reappearances`): `mergeSondeRecords` decide qual
   das duas cópias de `lastPos` é o pouso (`splitLanding`) — vale nas **duas
   direções** de propósito, porque um registro gravado antes desta regra pode ter
@@ -654,6 +686,30 @@ forma própria e sempre ligado ao pouso de onde veio. Nada é descartado e nada
   o comportamento correto — o que garante isso é `pointFromRecord` usar o
   pouso, não o reporte mais recente.
 
+### Apagar um mês (`action=delete-month`)
+
+O botão "Deletar mês" do `/historico` **apaga de verdade**: remove os
+lançamentos daquele mês do YearStore no R2 (`deleteMonthFromYearStore`) e
+limpa o cache local. Não tem desfazer.
+
+Duas coisas são essenciais pra ele não "desapagar" sozinho, que era o bug
+antigo (ele só limpava o localStorage e chamava `syncMonths` logo em seguida,
+então o mês voltava na hora):
+- **Nada de ressincronizar depois de apagar** — `handleConfirmDeleteMonth` não
+  chama mais `syncMonths`.
+- **Mês passado é congelado** entrando em `store.monthsComplete`, que faz
+  `syncMonth` devolver o que está guardado sem rebuscar na Wyoming. Sem isso a
+  sincronização automática do `useYearData` (que busca todo mês ausente do
+  cache) trazia tudo de volta na carga seguinte.
+- **Mês corrente NÃO é congelado** de propósito: congelá-lo travaria a coleta
+  dos lançamentos que ainda vão acontecer. A resposta devolve `frozen: false`
+  e o histórico avisa que o mês segue sendo coletado.
+
+O que ainda aparece depois de apagar: as entradas por sonda derivadas das
+fontes ao vivo (`launchesWithSondes` sobre `sondePoints` —
+radiosondy.info/SondeHub/registro) quando o mês é expandido de novo. Elas não
+são dado guardado; são o que as fontes respondem naquele momento.
+
 ### Recuperações do SondeHub (`app/lib/sondehubRecovery.ts`)
 
 Posições vindas só de telemetria RF do SondeHub nascem `status: 'UNKNOWN'`.
@@ -690,6 +746,10 @@ lista por um parcial menor.
 - Não busque meses inteiros a cada requisição — sempre passe pelo padrão incremental "busca a partir do último dia armazenado" do `syncMonth`.
 - O cache em memória do servidor, o cache localStorage do cliente e o Blob store são três camadas independentes; uma correção numa não se propaga pras outras.
 - O feed ao vivo do radiosondy.info (`export_map.php?live_map=1`) retorna timestamps `report` com um `z` minúsculo no final (ex.: `"2026-06-23 12:57:32z"`) — acrescentar outro `Z` pro `Date` parsear produz uma data inválida silenciosamente. Sempre remova o `z`/`Z` existente antes de reacrescentar um (ver o padrão correto em `gmt3DateStr`/`formatGmt3`).
+- **Lançamento aproximado tem que ser ancorado no 1º quadro da sonda**, nunca
+  na data em que ela foi reportada — ver `anchorLaunchesToRecords`. Uma sonda
+  recuperada pode seguir transmitindo em terra por semanas, e o reporte mais
+  recente dela não diz nada sobre quando ela voou.
 - **Nunca deixe um reporte posterior ao voo sobrescrever o pouso** — nem em
   `lastPos`/`lastFrameUtc` do registro, nem na posição/data de um `SondePoint`,
   nem no destaque do `LaunchMap` (o feed do mês devolve o reporte mais recente

@@ -14,7 +14,7 @@
  * Cache: memória + localStorage (`sondas_registry_v1`), pra abrir os mapas
  * instantaneamente com o que já se sabia.
  */
-import { mergeSondeRecords, needsEnrichment, type SondeRecord } from './sondeRegistry'
+import { mergeSondeRecords, normalizeRecord, needsEnrichment, type SondeRecord } from './sondeRegistry'
 
 const STORAGE_KEY = 'sondas_registry_v1'
 const MAX_STORED = 2500
@@ -34,7 +34,11 @@ function loadStorage() {
     const raw = localStorage.getItem(STORAGE_KEY)
     const obj = raw ? JSON.parse(raw) as Record<string, SondeRecord> : {}
     for (const [serial, rec] of Object.entries(obj)) {
-      if (rec && typeof rec.serial === 'string') memory.set(serial, rec)
+      // normalizeRecord conserta cópias gravadas antes da regra de
+      // reaparecimentos (reporte posterior ao voo no lugar do pouso) — sem
+      // isto o cache velho do navegador seguiria mandando. Ver
+      // app/lib/reappearance.ts.
+      if (rec && typeof rec.serial === 'string') memory.set(serial, normalizeRecord(rec))
     }
   } catch { /* cache inválido: ignora */ }
 }
