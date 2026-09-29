@@ -20,6 +20,7 @@ import { applyRegistryToPoints, sondePointPopup, type SondePoint } from '@/app/l
 import type { SondeRecord } from '@/app/lib/sondeRegistry'
 import { launchSitePopupHtml, POPUP_OPTIONS, simplePopupHtml, clusterPopupHtml } from '@/app/lib/mapPopups'
 import { clusterByPixel, clusterBounds, isClusterDegenerate } from '@/app/lib/markerClustering'
+import { useLandedSondeClusteringEnabled } from '@/app/lib/mapDisplaySettings'
 import { useReceiverStations } from '@/app/lib/receiverStationsClient'
 import { drawReceiverStations, receptorsFromPoints } from '@/app/lib/receiverStationsLayer'
 import { drawReappearances } from '@/app/lib/reappearanceLayer'
@@ -98,6 +99,9 @@ export default function MissionMap({ station, points, records = NO_RECORDS, toda
   // pra reagrupar (clusterByPixel depende do zoom atual). Só zoom importa:
   // arrastar o mapa não muda a distância em pixels entre dois lat/lon fixos.
   const [zoomTick, setZoomTick] = useState(0)
+  // Configurações → Exibição: liga/desliga o agrupamento de sondas
+  // pousadas (não afeta reaparecimentos nem estações receptoras).
+  const clusterEnabled = useLandedSondeClusteringEnabled()
 
   // Inicialização única do Leaflet.
   useEffect(() => {
@@ -181,7 +185,7 @@ export default function MissionMap({ station, points, records = NO_RECORDS, toda
         ...reappearedToday.filter(p => !shown.has(p.serial) && isValidCoordinate(p.lat, p.lon))
           .map(p => ({ p, label: gmt3IconLabelWithMonth(p.date), lat: p.lat, lon: p.lon })),
       ]
-      for (const g of clusterByPixel(map, balloonPoints, BALLOON_CLUSTER_RADIUS_PX)) {
+      for (const g of clusterByPixel(map, balloonPoints, BALLOON_CLUSTER_RADIUS_PX, clusterEnabled)) {
         if (g.items.length === 1) {
           const { p, label } = g.items[0]
           L.marker([p.lat, p.lon], { icon: buildBalloonIcon(L, statusColor(p.status), BALLOON_SIZE, label) })
@@ -222,7 +226,7 @@ export default function MissionMap({ station, points, records = NO_RECORDS, toda
       drawReappearances(L, map, layer, visiblePoints)
       drawReappearances(L, map, layer, reappearedToday.filter(p => !shown.has(p.serial)))
     }
-  }, [station, visiblePoints, records, todayFlights, reappearedToday, period, mapReady, zoomTick])
+  }, [station, visiblePoints, records, todayFlights, reappearedToday, period, mapReady, zoomTick, clusterEnabled])
 
   // Trajetória do voo selecionado.
   useEffect(() => {

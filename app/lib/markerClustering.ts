@@ -40,10 +40,16 @@ export interface ClusterGroup<T extends Clusterable> {
  *
  * O(n²) pra montar as arestas — de sobra pro volume deste app (no máximo
  * ~300 pontos por mapa).
+ *
+ * `enabled=false` (Configurações → Exibição, sondas pousadas — ver
+ * mapDisplaySettings.ts) faz um "grupo" por ponto, sem nenhum cálculo de
+ * distância: mesma forma de devolver, mesmo código de desenho rio abaixo
+ * (o `items.length === 1` de sempre), só que nunca funde nada.
  */
 export function clusterByPixel<T extends Clusterable>(
-  map: any, points: T[], radiusPx: number,
+  map: any, points: T[], radiusPx: number, enabled = true,
 ): ClusterGroup<T>[] {
+  if (!enabled) return points.map(p => ({ anchor: p, items: [p] }))
   const n = points.length
   const px = points.map(p => map.latLngToContainerPoint([p.lat, p.lon]))
   const parent = Array.from({ length: n }, (_, i) => i)

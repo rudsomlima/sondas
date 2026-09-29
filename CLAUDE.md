@@ -792,6 +792,18 @@ implementação.
     concatenado — um hub com 10+ setas ficaria ilegível de qualquer forma.
   - Setas (`arrowIcon`) e talos (`L.polyline` sólida) são `interactive: false`
     — só o hub e o pino de cada data abrem popup; a seta é puramente visual.
+- **Liga/desliga em Configurações → Exibição dos mapas** (`app/lib/
+  mapDisplaySettings.ts`, `MapDisplayPanel.tsx`): só o agrupamento de sondas
+  POUSADAS (`clusterByPixel(map, points, RADIUS, clusterEnabled)` nos três
+  mapas), passando `enabled=false` quando desligado — a função devolve um
+  "grupo" por ponto sem nenhum cálculo de distância, reaproveitando o MESMO
+  código de desenho de sempre (`items.length === 1`), sem duplicar nada.
+  Reaparecimentos e estações receptoras NÃO são afetados por este toggle —
+  são problemas de sobreposição diferentes, com soluções próprias, e
+  desligá-los não foi pedido. Puro display local (localStorage
+  `sondas_map_display_v1`, evento pra reagir na hora com o mapa já aberto,
+  igual ao padrão de `appSettings.ts` mas SEM sincronizar com o servidor —
+  isto nunca muda o que é buscado, só como é desenhado).
 - **Marcador em destaque nunca é agrupado**: o balão do lançamento aberto
   (`LaunchMap`), a sonda ao vivo/selecionada (`MissionMap`) — é o próprio
   propósito daquela tela, ficam sempre individuais, sempre por cima. Só o

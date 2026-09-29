@@ -13,6 +13,7 @@ import { useReceiverStations } from '@/app/lib/receiverStationsClient'
 import { drawReceiverStations, receptorsFromPoints } from '@/app/lib/receiverStationsLayer'
 import { countReappearances, drawReappearances } from '@/app/lib/reappearanceLayer'
 import { clusterByPixel, clusterBounds, isClusterDegenerate } from '@/app/lib/markerClustering'
+import { useLandedSondeClusteringEnabled } from '@/app/lib/mapDisplaySettings'
 import { reappearanceCountLabel } from '@/app/lib/reappearance'
 import { STATUS_COLORS } from '@/app/lib/tokens'
 import { getSettings } from '@/app/lib/settings'
@@ -49,6 +50,9 @@ export default function YearMap({ year, station, launches, onClose, onPoints }: 
   // reagrupar os marcadores quando o nível de zoom muda (só zoom importa:
   // arrastar o mapa não muda distância em pixels entre dois lat/lon fixos).
   const [zoomTick, setZoomTick] = useState(0)
+  // Configurações → Exibição: liga/desliga o agrupamento de sondas
+  // pousadas (não afeta reaparecimentos nem estações receptoras).
+  const clusterEnabled = useLandedSondeClusteringEnabled()
   const receiverStations = useReceiverStations()
   // Tela cheia do mapa (botão no cabeçalho); o Leaflet precisa recalcular o
   // tamanho ao entrar/sair.
@@ -109,7 +113,7 @@ export default function YearMap({ year, station, launches, onClose, onPoints }: 
       }).addTo(layer).bindPopup(launchSitePopupHtml(stationInfo), POPUP_OPTIONS)
       // Marcadores próximos demais pra este zoom viram um badge com contagem
       // (ver markerClustering.ts) — some sozinho ao aproximar o zoom.
-      for (const g of clusterByPixel(map, points, BALLOON_CLUSTER_RADIUS_PX)) {
+      for (const g of clusterByPixel(map, points, BALLOON_CLUSTER_RADIUS_PX, clusterEnabled)) {
         if (g.items.length === 1) {
           const p = g.items[0]
           L.marker([p.lat, p.lon], {
@@ -136,7 +140,7 @@ export default function YearMap({ year, station, launches, onClose, onPoints }: 
       setTimeout(() => map?.invalidateSize(), 50)
     })()
     return () => { cancelled = true }
-  }, [points, stationInfo, receiverStations, zoomTick])
+  }, [points, stationInfo, receiverStations, zoomTick, clusterEnabled])
 
   useEffect(() => () => {
     mapRef.current?.remove()

@@ -22,6 +22,7 @@ import {
 import type { SondeRecord } from '@/app/lib/sondeRegistry'
 import { POPUP_OPTIONS, clusterPopupHtml } from '@/app/lib/mapPopups'
 import { clusterByPixel, clusterBounds, isClusterDegenerate } from '@/app/lib/markerClustering'
+import { useLandedSondeClusteringEnabled } from '@/app/lib/mapDisplaySettings'
 import { useReceiverStations } from '@/app/lib/receiverStationsClient'
 import { drawReceiverStations, receptorsFromPoints } from '@/app/lib/receiverStationsLayer'
 import { drawReappearances } from '@/app/lib/reappearanceLayer'
@@ -98,6 +99,9 @@ export default function LaunchMap({ launch, onClose, onResult, onPosition, conte
   // Seriais já desenhados pela camada principal (não repetir no contexto).
   const drawnSerialsRef = useRef<Set<string>>(new Set())
   const [drawTick, setDrawTick] = useState(0)
+  // Configurações → Exibição: liga/desliga o agrupamento de sondas
+  // pousadas (não afeta reaparecimentos nem estações receptoras).
+  const clusterEnabled = useLandedSondeClusteringEnabled()
   const contextPointsRef = useRef(contextPoints)
   contextPointsRef.current = contextPoints
   const onPositionRef = useRef(onPosition)
@@ -599,7 +603,7 @@ export default function LaunchMap({ launch, onClose, onResult, onPosition, conte
     const layer = contextLayerRef.current
     layer.clearLayers()
     const pending = contextPoints.filter(p => !drawnSerialsRef.current.has(p.serial))
-    for (const g of clusterByPixel(map, pending, BALLOON_CLUSTER_RADIUS_PX)) {
+    for (const g of clusterByPixel(map, pending, BALLOON_CLUSTER_RADIUS_PX, clusterEnabled)) {
       if (g.items.length === 1) {
         const p = g.items[0]
         const m = L.marker([p.lat, p.lon], { icon: buildBalloonIcon(L, statusColor(p.status), BALLOON_SIZE, gmt3IconLabel(p.date)) })
@@ -614,7 +618,7 @@ export default function LaunchMap({ launch, onClose, onResult, onPosition, conte
         }
       }
     }
-  }, [contextPoints, drawTick, bindSonde, bestPoint])
+  }, [contextPoints, drawTick, bindSonde, bestPoint, clusterEnabled])
 
   // Estações receptoras de todas as sondas do mapa (+ o meu receptor).
   useEffect(() => {

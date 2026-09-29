@@ -10,6 +10,7 @@ import LocalCachePanel from './components/LocalCachePanel'
 import R2Panel from './components/R2Panel'
 import RegistryStatusPanel from './components/RegistryStatusPanel'
 import DataSourcesPanel from './components/DataSourcesPanel'
+import MapDisplayPanel from './components/MapDisplayPanel'
 import { useWyomingEnabled } from '@/app/lib/appSettings'
 
 export default function ConfiguracoesPage() {
@@ -73,6 +74,9 @@ export default function ConfiguracoesPage() {
 
       {/* Fontes de dados (liga/desliga Wyoming — vale na hora, em todo o app) */}
       <DataSourcesPanel />
+
+      {/* Exibição dos mapas (liga/desliga agrupamento de sondas pousadas) */}
+      <MapDisplayPanel />
 
       {/* Preferências */}
       <div className="panel p-5 mb-6">
