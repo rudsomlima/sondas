@@ -14,7 +14,7 @@
  * Cache: memória + localStorage (`sondas_registry_v1`), pra abrir os mapas
  * instantaneamente com o que já se sabia.
  */
-import { mergeSondeRecords, normalizeRecord, needsEnrichment, type SondeRecord } from './sondeRegistry'
+import { mergeSondeRecords, normalizeRecord, needsEnrichment, sameRecord, type SondeRecord } from './sondeRegistry'
 
 const STORAGE_KEY = 'sondas_registry_v1'
 const MAX_STORED = 2500
@@ -62,7 +62,12 @@ function absorb(records: SondeRecord[]): boolean {
     if (!r?.serial) continue
     const prev = memory.get(r.serial)
     const merged = mergeSondeRecords(prev, r)
-    if (prev && JSON.stringify(prev) === JSON.stringify(merged)) continue
+    // reportSondes carimba updatedAt: Date.now() em toda chamada — comparar
+    // com ele incluído nunca bate, e cada notificação re-renderiza /painel,
+    // que recomputa `today`/o efeito de reportSondes, e manda de novo:
+    // um loop sem fim (visto em produção travando o menu). sameRecord ignora
+    // updatedAt, igual ao dedup do servidor (ver comentário em sameRecord).
+    if (prev && sameRecord(prev, merged)) continue
     memory.set(r.serial, merged)
     changed = true
   }

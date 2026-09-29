@@ -74,6 +74,17 @@ export function useYearSondePoints(
   launchesRef.current = launches
   const launchesKey = useMemo(() => launches.map(l => `${l.date}_${l.time_utc}`).join('|'), [launches])
 
+  // useYearData sincroniza a Wyoming mês a mês, então launchesKey muda várias
+  // vezes seguidas enquanto o ano carrega — sem o debounce, cada mudança
+  // reinicia do zero a busca inteira (radiosondy.info + SondeHub + arquivo
+  // S3), disparando uma cascata de refetches que trava a aba (visto em
+  // produção: "Maximum update depth exceeded" e o menu ficando sem resposta).
+  const [debouncedLaunchesKey, setDebouncedLaunchesKey] = useState(launchesKey)
+  useEffect(() => {
+    const id = setTimeout(() => setDebouncedLaunchesKey(launchesKey), 800)
+    return () => clearTimeout(id)
+  }, [launchesKey])
+
   const stationId = station?.id ?? null
 
   useEffect(() => {
@@ -163,7 +174,7 @@ export function useYearSondePoints(
     })
     return () => { requestRef.current++ }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, stationId, year, launchesKey, attempt])
+  }, [enabled, stationId, year, debouncedLaunchesKey, attempt])
 
   useEffect(() => {
     if (!enabled || refreshMinutes <= 0 || year !== nowGMT3().getUTCFullYear()) return
