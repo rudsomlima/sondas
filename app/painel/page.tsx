@@ -1,30 +1,20 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Station, DEFAULT_STATION, getSelectedStation, setSelectedStation } from '@/app/lib/stations'
-import { getCacheByYear, writeCache } from '@/app/lib/cache'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Station, setSelectedStations, stationShortName } from '@/app/lib/stations'
+import { useSelectedStations } from '@/app/lib/useSelectedStations'
 import { useGeolocation } from '@/app/lib/chase'
-import { mergeLaunchCollections, sameMission, withoutWyoming } from '@/app/lib/launchData'
-import { nowGMT3 } from '@/app/lib/types'
 import type { Launch } from '@/app/lib/types'
-import { useTodayData } from '../historico/hooks/useTodayData'
-import { useLiveFlights } from '../historico/hooks/useLiveFlights'
-import { useYearSondePoints } from '../historico/hooks/useYearSondePoints'
-import { useYearData } from '../historico/hooks/useYearData'
-import { cacheStationKey, isWyomingEnabled, useWyomingEnabled, wyomingQuery } from '@/app/lib/appSettings'
+import type { TodayFlight } from '@/app/lib/radiosondy'
+import type { Reappearance } from '@/app/lib/reappearance'
+import type { LiveSourceHealth } from '../historico/hooks/useLiveFlights'
 import { useSondeRegistry } from '../historico/hooks/useSondeRegistry'
-import { useRecoveredLaunches } from '../historico/hooks/useRecoveredLaunches'
-import { useSondeLaunches } from '../historico/hooks/useSondeLaunches'
-import { attachPositions, mergeWithRegistry, isPointInMonth, splitTodayFlights, todayFlightReappearance } from '@/app/lib/sondePoints'
+import { mergeSondePoints, todayFlightReappearance, type SondePoint } from '@/app/lib/sondePoints'
 import { launchSortMs } from '@/app/lib/sondeLaunches'
-import { reportSondes } from '@/app/lib/sondeRegistryClient'
-import type { SondeRecord } from '@/app/lib/sondeRegistry'
-import { parseUtcDateStr } from '@/app/lib/launchUtils'
 import { useReceiver } from './hooks/useReceiver'
 import { useReceiverAlerts } from './hooks/useReceiverAlerts'
-import { useLaunchLandingWatcher } from './hooks/useLaunchLandingWatcher'
 import { getSettings } from '@/app/lib/settings'
-import StationPicker from '../historico/components/StationPicker'
+import StationMultiPicker from '@/app/components/StationMultiPicker'
 import TopStatusBar from './components/TopStatusBar'
 import LivePanel from './components/LivePanel'
 import ReceiverPanel from './components/ReceiverPanel'
@@ -33,21 +23,39 @@ import TelemetryPanel from './components/TelemetryPanel'
 import ConfidencePanel from './components/ConfidencePanel'
 import ChasePanel from './components/ChasePanel'
 import DataCoveragePanel from './components/DataCoveragePanel'
+import StationFeed, { type StationFeedState } from './components/StationFeed'
 import type { SelectedTarget } from './selection'
 
+const NO_SERIALS: string[] = []
+const NO_YEARS: number[] = []
+
+// Saúde das fontes ao vivo somada entre estações: basta uma responder pra a
+// fonte estar "ok"; o snapshot do servidor só é "ok" se valeu pra todas.
+function combineHealth(list: LiveSourceHealth[]): LiveSourceHealth {
+  if (list.length === 0) return { cache: 'miss', radiosondy: 'not-configured', sondehub: 'unavailable' }
+  if (list.length === 1) return list[0]
+  return {
+    cache: list.find(h => h.cache !== 'ok')?.cache ?? 'ok',
+    radiosondy: list.some(h => h.radiosondy === 'ok') ? 'ok'
+      : list.some(h => h.radiosondy === 'unavailable') ? 'unavailable' : 'not-configured',
+    sondehub: list.some(h => h.sondehub === 'ok') ? 'ok' : 'unavailable',
+  }
+}
+
 export default function PainelPage() {
-  const [station, setStation] = useState<Station>(DEFAULT_STATION)
+  // Estações escolhidas em Configurações: o painel acompanha TODAS ao mesmo
+  // tempo — um <StationFeed> por estação faz as consultas e aqui só se soma.
+  const { stations, ready } = useSelectedStations()
+  const primary = stations[0]
+  const multi = stations.length > 1
+  const [feeds, setFeeds] = useState<Record<string, StationFeedState>>({})
+  const [refreshSignal, setRefreshSignal] = useState(0)
   const [showStationPicker, setShowStationPicker] = useState(false)
   const [selected, setSelected] = useState<SelectedTarget | null>(null)
-  const [monthLaunches, setMonthLaunches] = useState<Launch[]>([])
-  const [monthLoading, setMonthLoading] = useState(false)
-  const [monthError, setMonthError] = useState<string | null>(null)
   const [callsign, setCallsign] = useState('')
   const [receiverPos, setReceiverPos] = useState<{ lat: number; lon: number } | null>(null)
-  const monthRequestRef = useRef(0)
 
   useEffect(() => {
-    setStation(getSelectedStation())
     const settings = getSettings()
     setCallsign(settings.uploaderCallsign)
     if (settings.homeLat != null && settings.homeLon != null) {
@@ -55,173 +63,157 @@ export default function PainelPage() {
     }
   }, [])
 
-  const { todayData, todayLoading, todayError, lastFetchAt, refresh: refreshToday } = useTodayData(station)
-  const { todayFlights, liveFlightChecked, liveError, sourceHealth, refresh: refreshLive } = useLiveFlights(station, todayData?.today)
+  const onFeedUpdate = useCallback((state: StationFeedState) => {
+    setFeeds(prev => prev[state.station.id] === state ? prev : { ...prev, [state.station.id]: state })
+  }, [])
+  const onFeedRemove = useCallback((stationId: string) => {
+    setFeeds(prev => {
+      if (!(stationId in prev)) return prev
+      const next = { ...prev }
+      delete next[stationId]
+      return next
+    })
+  }, [])
+  // Na ordem das estações escolhidas (a principal primeiro).
+  const activeFeeds = useMemo(
+    () => stations.map(s => feeds[s.id]).filter((f): f is StationFeedState => !!f),
+    [stations, feeds],
+  )
+
   const receiver = useReceiver()
   const geo = useGeolocation()
-
   const mySerials = useMemo(() => new Set(receiver.mySondes.map(m => m.serial)), [receiver.mySondes])
+  // Registro de sondas (cache local, todas as estações) — só leitura aqui;
+  // quem busca/enriquece é cada StationFeed.
+  const records = useSondeRegistry(null, NO_YEARS, NO_SERIALS, false)
 
-  const clock = nowGMT3()
-  const year = clock.getUTCFullYear()
-  const month = clock.getUTCMonth() + 1
+  // Soma das estações. Uma sonda perto de duas estações aparece nas duas
+  // consultas: fica uma vez só (o reporte mais recente), atribuída à 1ª
+  // estação (na ordem escolhida) que a viu.
+  const merged = useMemo(() => {
+    const flights = new Map<string, TodayFlight>()
+    const flightStation = new Map<string, Station>()
+    const reappeared = new Map<string, SondePoint>()
+    const reappearedBySerial = new Map<string, Reappearance>()
+    const launchStation = new Map<Launch, Station>()
+    const serialStation = new Map<string, Station>()
+    const launches: Launch[] = []
+    for (const feed of activeFeeds) {
+      for (const f of feed.flights) {
+        const prev = flights.get(f.sondeNumber)
+        if (!prev || f.lastReportUtc > prev.lastReportUtc) flights.set(f.sondeNumber, f)
+        if (!flightStation.has(f.sondeNumber)) flightStation.set(f.sondeNumber, feed.station)
+      }
+      for (const p of feed.reappeared) if (!reappeared.has(p.serial)) reappeared.set(p.serial, p)
+      for (const [k, v] of feed.reappearedBySerial) if (!reappearedBySerial.has(k)) reappearedBySerial.set(k, v)
+      for (const l of feed.sondeLaunches) {
+        const serial = l.position?.sondeNumber
+        if (serial) {
+          if (serialStation.has(serial)) continue
+          serialStation.set(serial, feed.station)
+        }
+        launchStation.set(l, feed.station)
+        launches.push(l)
+      }
+    }
+    const errors = (pick: (f: StationFeedState) => string | null) => {
+      const list = activeFeeds.filter(f => pick(f))
+      if (list.length === 0) return null
+      return multi ? list.map(f => `${stationShortName(f.station)}: ${pick(f)}`).join(' · ') : pick(list[0])
+    }
+    const fetchTimes = activeFeeds.map(f => f.lastFetchAt?.getTime() ?? 0).filter(t => t > 0)
+    return {
+      flights: [...flights.values()],
+      flightStation, serialStation, launchStation, launches,
+      reappeared: [...reappeared.values()],
+      reappearedBySerial,
+      yearPoints: activeFeeds.length === 1 ? activeFeeds[0].yearPoints : mergeSondePoints(...activeFeeds.map(f => f.yearPoints)),
+      positionedMonth: activeFeeds.flatMap(f => f.positionedMonth),
+      liveFlightChecked: activeFeeds.length > 0 && activeFeeds.length === stations.length && activeFeeds.every(f => f.liveFlightChecked),
+      todayError: errors(f => f.todayError),
+      liveError: errors(f => f.liveError),
+      monthError: errors(f => f.monthError),
+      monthLoading: activeFeeds.some(f => f.monthLoading),
+      sourceHealth: combineHealth(activeFeeds.map(f => f.sourceHealth)),
+      lastFetchAt: fetchTimes.length ? new Date(Math.max(...fetchTimes)) : null,
+    }
+  }, [activeFeeds, stations.length, multi])
 
-  // Lançamentos do ano inteiro — MESMA fonte do /historico (useYearData,
-  // cache-primeiro) — pro mapa mostrar exatamente o conjunto do mapa anual.
-  const { data: yearData } = useYearData(year, station)
-  const yearLaunches = useMemo(() => mergeLaunchCollections(
-    yearData?.year === year && yearData.station === station.id ? yearData.launches : [], monthLaunches,
-  ), [yearData, year, station.id, monthLaunches])
-  const { points: yearSourcePoints, refresh: refreshPoints } = useYearSondePoints(station, year, yearLaunches, { refreshMinutes: 5 })
-
-  // Registro permanente de sondas (R2): completa o que as fontes não
-  // devolvem mais e traz receptores / último sinal / 1º quadro.
-  // Ordem = prioridade de enriquecimento: sondas de hoje, depois as mais recentes.
-  const registrySerials = useMemo(
-    () => [
-      ...todayFlights.map(f => f.sondeNumber),
-      ...[...yearSourcePoints].sort((a, b) => b.date.getTime() - a.date.getTime()).map(p => p.serial),
-    ],
-    [yearSourcePoints, todayFlights],
-  )
-  const records = useSondeRegistry(station.id, [year], registrySerials)
-  const yearPoints = useMemo(() => mergeWithRegistry(yearSourcePoints, records,
-    (r, p) => !!r.stations?.includes(station.id) && p.date.getUTCFullYear() === year),
-  [yearSourcePoints, records, station.id, year])
-  const monthPoints = useMemo(() => yearPoints.filter(p => isPointInMonth(p, year, month)), [yearPoints, year, month])
-
-  // Sonda velha reaparecendo hoje (achada e religada em outro lugar) NÃO é voo
-  // de hoje: sai das listas e do alerta de pouso, e volta como o pouso
-  // original + o reaparecimento ligado a ele. Ver app/lib/reappearance.ts.
-  const today = useMemo(() => splitTodayFlights(todayFlights, records), [todayFlights, records])
-  useLaunchLandingWatcher(today.flights, station)
   // Seriais que estão reaparecendo agora — inclusive no MEU receptor, que é
   // justamente onde uma sonda recuperada e religada em casa aparece.
   const reappearedSerials = useMemo(() => {
-    const set = new Set(today.bySerial.keys())
+    const set = new Set(merged.reappearedBySerial.keys())
     for (const m of receiver.mySondes) {
       if (todayFlightReappearance({ ...m, sondeNumber: m.serial, altitude: m.alt }, records)) set.add(m.serial)
     }
     return set
-  }, [today, receiver.mySondes, records])
+  }, [merged.reappearedBySerial, receiver.mySondes, records])
   useReceiverAlerts(receiver.mySondes, receiver.checked, setSelected, reappearedSerials)
-
-  // Sondas de hoje também vão pro registro (posição, último receptor). Sonda
-  // reaparecendo é gravada como REAPARECIMENTO: mandar a posição dela como
-  // `lastPos` sobrescreveria o pouso original no R2.
-  useEffect(() => {
-    if (todayFlights.length === 0) return
-    reportSondes(todayFlights.flatMap((f): ({ serial: string } & Partial<SondeRecord>)[] => {
-      const d = parseUtcDateStr(f.lastReportUtc)
-      if (isNaN(d.getTime())) return []
-      const at = d.toISOString().replace(/\.\d{3}Z$/, 'Z')
-      const reappeared = today.bySerial.get(f.sondeNumber)
-      if (reappeared) return [{ serial: f.sondeNumber, reappearances: [reappeared] }]
-      return [{
-        serial: f.sondeNumber,
-        lastPos: { lat: f.lat, lon: f.lon, alt: f.altitude, at },
-        lastFrameUtc: at,
-        lastReceiver: f.lastReceiver,
-        lastReceiverAt: f.lastReceiver ? at : undefined,
-        frequencyMHz: f.frequencyMHz,
-      }]
-    }), station.id)
-  }, [todayFlights, today, station.id])
-
-  // Lançamentos sem posição ganham o pouso casado por horário (qualquer fonte).
-  const attachedMonth = useMemo(() => attachPositions(monthLaunches, monthPoints).launches, [monthLaunches, monthPoints])
-  // Posições UNKNOWN (telemetria RF) ganham FOUND/LOST se alguém registrou a
-  // recuperação no SondeHub — em segundo plano, sem atrasar o mapa.
-  const positionedMonth = useRecoveredLaunches(attachedMonth)
-  // Uma entrada por sonda (inclusive as que não casaram com nenhum slot da
-  // Wyoming), com 1º quadro, receptores e último sinal do registro.
-  const sondeLaunches = useSondeLaunches(positionedMonth, monthPoints, records)
-
-  // Liga/desliga da Wyoming (Configurações): o mês é recarregado na hora.
-  const wyomingOn = useWyomingEnabled()
-  const loadMonth = useCallback(async () => {
-    const request = ++monthRequestRef.current
-    const now = nowGMT3()
-    const year = now.getUTCFullYear()
-    const month = now.getUTCMonth() + 1
-    const clean = (ls: Launch[]) => isWyomingEnabled() ? ls : withoutWyoming(ls)
-    const cacheKey = cacheStationKey(station.id)
-    const cached = getCacheByYear(year, cacheKey).find(c => c.month === month)
-    const cachedLaunches = clean(mergeLaunchCollections((cached?.launches ?? []) as Launch[]))
-    setMonthLaunches(cachedLaunches)
-    setMonthLoading(true)
-    setMonthError(null)
-    try {
-      const res = await fetch(`/api/sounding?action=month&year=${year}&month=${month}&station=${station.id}${wyomingQuery()}`, { cache: 'no-store' })
-      const json = await res.json()
-      if (!res.ok || json.error) throw new Error(json.error || `Erro ${res.status}`)
-      if (request !== monthRequestRef.current) return
-      const server = Array.isArray(json.launches) ? clean(json.launches as Launch[]) : []
-      const all = mergeLaunchCollections(cachedLaunches, server)
-      const launches = server.length === 0 && cachedLaunches.length > 0
-        ? cachedLaunches
-        : all.filter(l => server.some(s => sameMission(l, s)))
-      writeCache({ year, month, launches, timestamp: Date.now(), version: 1, station: cacheKey })
-      setMonthLaunches(launches)
-    } catch (e: any) {
-      if (request !== monthRequestRef.current) return
-      setMonthError(e?.message || 'Falha ao sincronizar o mês; exibindo cache local.')
-    } finally {
-      if (request === monthRequestRef.current) setMonthLoading(false)
-    }
-  }, [station.id, wyomingOn])
-
-  useEffect(() => {
-    loadMonth()
-    return () => { monthRequestRef.current++ }
-  }, [loadMonth])
-
-  useEffect(() => {
-    if (!todayData?.all_this_month?.length) return
-    setMonthLaunches(prev => mergeLaunchCollections(prev, todayData.all_this_month ?? []))
-  }, [todayData])
 
   // Keep a selected live target moving as fresh telemetry arrives.
   useEffect(() => {
     if (!selected || selected.launch) return
-    const fresh = today.flights.find(f => f.sondeNumber === selected.serial)
+    const fresh = merged.flights.find(f => f.sondeNumber === selected.serial)
     if (!fresh) return
     if (fresh.lat === selected.lat && fresh.lon === selected.lon && fresh.lastReportUtc === selected.lastReportUtc) return
     setSelected(prev => prev ? {
       ...prev, lat: fresh.lat, lon: fresh.lon, altitude: fresh.altitude,
       climbing: fresh.climbing, isLive: fresh.isLive, lastReportUtc: fresh.lastReportUtc, source: fresh.source,
     } : prev)
-  }, [today, selected])
+  }, [merged.flights, selected])
 
-  const changeStation = useCallback((s: Station) => {
-    setStation(s)
-    setSelectedStation(s)
-    setSelected(null)
-    setMonthLaunches([])
-    setShowStationPicker(false)
+  // Estação do alvo selecionado (trajetória do arquivo, confiança da Wyoming).
+  const selectedStation = (selected && (
+    (selected.launch && merged.launchStation.get(selected.launch)) ||
+    merged.flightStation.get(selected.serial) || merged.serialStation.get(selected.serial)
+  )) || primary
+
+  // Mudou a lista de estações: a seleção pode ser de uma estação que saiu.
+  const stationsKey = stations.map(s => s.id).join(',')
+  useEffect(() => { setSelected(null) }, [stationsKey])
+
+  const changeStations = useCallback((list: Station[]) => {
+    setSelectedStations(list)
   }, [])
 
-  const recentLaunches = useMemo(() => [...sondeLaunches]
+  const recentLaunches = useMemo(() => [...merged.launches]
     .sort((a, b) => launchSortMs(b) - launchSortMs(a))
-    .slice(0, 8), [sondeLaunches])
+    .slice(0, 8), [merged.launches])
 
-  const refreshAll = useCallback(() => {
-    refreshToday()
-    refreshLive()
-    loadMonth()
-    refreshPoints()
-  }, [refreshToday, refreshLive, loadMonth, refreshPoints])
+  // Rótulo de estação em cada item das listas — só com mais de uma estação.
+  const stationLabels = useMemo(() => {
+    if (!multi) return { flights: undefined, launches: undefined }
+    const flights = new Map<string, string>()
+    for (const [serial, st] of merged.flightStation) flights.set(serial, stationShortName(st))
+    const launches = new Map<Launch, string>()
+    for (const [l, st] of merged.launchStation) launches.set(l, stationShortName(st))
+    return { flights, launches }
+  }, [multi, merged.flightStation, merged.launchStation])
+
+  const refreshAll = useCallback(() => setRefreshSignal(n => n + 1), [])
 
   return (
     <div className="p-4 lg:h-[calc(100vh-0px)] flex flex-col">
+      {/* Um alimentador invisível por estação — só depois de ler a lista
+          real, pra não consultar a estação padrão à toa. */}
+      {ready && stations.map(s => (
+        <StationFeed key={s.id} station={s} refreshSignal={refreshSignal} onUpdate={onFeedUpdate} onRemove={onFeedRemove} />
+      ))}
+
       <TopStatusBar
-        station={station} todayData={todayData} todayLoading={todayLoading}
-        todayError={todayError} liveError={liveError} todayFlights={today.flights}
-        lastFetchAt={lastFetchAt} onRefresh={refreshAll}
+        entries={stations.map(s => {
+          const f = feeds[s.id]
+          return {
+            station: s, todayData: f?.todayData ?? null, todayLoading: f?.todayLoading ?? true,
+            todayError: f?.todayError ?? null, todayFlights: f?.flights ?? [],
+          }
+        })}
+        liveError={merged.liveError}
+        lastFetchAt={merged.lastFetchAt} onRefresh={refreshAll}
         onToggleStationPicker={() => setShowStationPicker(v => !v)}
       />
 
-      {showStationPicker && <div className="mb-4 -mt-2"><StationPicker station={station} onSelect={changeStation} /></div>}
+      {showStationPicker && <div className="mb-4 -mt-2"><StationMultiPicker selected={stations} onChange={changeStations} autoFocus /></div>}
 
       <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-4 min-h-0">
         <div className="lg:col-span-3 lg:overflow-y-auto min-h-0 order-2 lg:order-1 space-y-4">
@@ -234,28 +226,31 @@ export default function PainelPage() {
             selected={selected} onSelect={setSelected} reappearedSerials={reappearedSerials}
           />
           <LivePanel
-            todayFlights={today.flights} liveFlightChecked={liveFlightChecked}
-            reappearedToday={today.reappeared}
+            todayFlights={merged.flights} liveFlightChecked={merged.liveFlightChecked}
+            reappearedToday={merged.reappeared}
             recentLaunches={recentLaunches} selected={selected} onSelect={setSelected} mySerials={mySerials}
+            flightStationName={stationLabels.flights} launchStationName={stationLabels.launches}
           />
         </div>
 
         <div className="lg:col-span-6 h-[280px] sm:h-[340px] lg:h-auto order-1 lg:order-2">
           {/* Mesmo conjunto do mapa do histórico anual (useYearSondePoints +
-              registro do R2), com filtro Mês/Ano no próprio mapa. */}
+              registro do R2) de cada estação, com filtro Mês/Ano no próprio mapa. */}
           <MissionMap
-            station={station} points={yearPoints} records={records} todayFlights={today.flights}
-            reappearedToday={today.reappeared}
+            stations={stations} selectedStation={selectedStation}
+            points={merged.yearPoints} records={records} todayFlights={merged.flights}
+            reappearedToday={merged.reappeared}
             selected={selected} chasePos={geo.pos ? { lat: geo.pos.lat, lon: geo.pos.lon } : null}
             receiverPos={receiverPos} receiverName={callsign}
           />
         </div>
 
         <div className="lg:col-span-3 lg:overflow-y-auto min-h-0 space-y-4 order-3">
-          <DataCoveragePanel launches={positionedMonth} monthLoading={monthLoading} monthError={monthError}
-            todayError={todayError} liveError={liveError} sourceHealth={sourceHealth} onRefresh={refreshAll} />
+          <DataCoveragePanel launches={merged.positionedMonth} monthLoading={merged.monthLoading} monthError={merged.monthError}
+            todayError={merged.todayError} liveError={merged.liveError} sourceHealth={merged.sourceHealth} onRefresh={refreshAll}
+            stationCount={stations.length} />
           <TelemetryPanel selected={selected} />
-          <ConfidencePanel selected={selected} station={station} />
+          <ConfidencePanel selected={selected} station={selectedStation} />
           <ChasePanel selected={selected} geo={geo} />
         </div>
       </div>

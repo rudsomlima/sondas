@@ -4,7 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { History, RefreshCw, AlertCircle, Loader2, HardDrive, Radio, Trash2, ShieldCheck } from 'lucide-react'
 import { clearMonth, clearYear, getCacheByYear, writeCache } from '@/app/lib/cache'
-import { Station, DEFAULT_STATION, getSelectedStation, setSelectedStation } from '@/app/lib/stations'
+import { Station, setSelectedStations } from '@/app/lib/stations'
+import { useSelectedStations } from '@/app/lib/useSelectedStations'
 import type { Launch, LaunchPosition } from '@/app/lib/types'
 import { nowGMT3 } from '@/app/lib/types'
 import { isValidPosition, launchInstantMs, mergeLaunchCollections, sourceCounts } from '@/app/lib/launchData'
@@ -18,7 +19,8 @@ import { useYearData } from './hooks/useYearData'
 import { useSondePoints } from './hooks/useSondePoints'
 import { useTodayData } from './hooks/useTodayData'
 import { useLiveFlights } from './hooks/useLiveFlights'
-import StationPicker from './components/StationPicker'
+import StationMultiPicker from '@/app/components/StationMultiPicker'
+import StationTabs from '@/app/components/StationTabs'
 import LiveCard from './components/LiveCard'
 import SummaryCards from './components/SummaryCards'
 import MonthlyChart from './components/MonthlyChart'
@@ -29,7 +31,12 @@ const NO_LAUNCHES: Launch[] = []
 export default function HistoricoPage() {
   const currentYear = nowGMT3().getUTCFullYear()
   const [year, setYear] = useState(currentYear)
-  const [station, setStation] = useState<Station>(DEFAULT_STATION)
+  // Estações escolhidas em Configurações: o histórico anual é de uma estação
+  // por vez (gráfico mensal, apagar mês, reverificar), então cada uma vira
+  // uma aba. A aba aberta volta pra principal se sair da lista.
+  const { stations } = useSelectedStations()
+  const [activeStationId, setActiveStationId] = useState<string | null>(null)
+  const station = useMemo(() => stations.find(s => s.id === activeStationId) ?? stations[0], [stations, activeStationId])
   const [showStationPicker, setShowStationPicker] = useState(false)
   const [expandedMonth, setExpandedMonth] = useState<number | null>(null)
   const [selectedLaunch, setSelectedLaunch] = useState<Launch | null>(null)
@@ -42,10 +49,6 @@ export default function HistoricoPage() {
   const [recheckMsg, setRecheckMsg] = useState<string | null>(null)
   const userInteractedViewRef = useRef<string | null>(null)
   const autoSelectedLaunchRef = useRef<string | null>(null)
-
-  useEffect(() => {
-    setStation(getSelectedStation())
-  }, [])
 
   const { data, setData, error, statusMsg, syncing, failedMonths, lastUpdatedAt, fetchData, syncMonths } = useYearData(year, station)
   // Liga/desliga da Wyoming (Configurações) — esconde tudo que é dela.
@@ -64,6 +67,7 @@ export default function HistoricoPage() {
     setExpandedMonth(null)
     setSelectedLaunch(null)
     setShowYearMap(false)
+    setNoMatchLaunchesState(new Set())
   }, [viewKey])
 
   useEffect(() => {
@@ -92,12 +96,14 @@ export default function HistoricoPage() {
     setExpandedMonth(month)
   }, [viewKey])
 
+  // Trocar de aba só muda o que está sendo visto; a seleção/mapa abertos são
+  // limpos pelo efeito de viewKey.
   const changeStation = useCallback((s: Station) => {
-    setStation(s)
-    setSelectedStation(s)
-    setSelectedLaunch(null)
-    setNoMatchLaunchesState(new Set())
-    setShowStationPicker(false)
+    setActiveStationId(s.id)
+  }, [])
+  // Editar a lista aqui vale pro app inteiro (igual a Configurações).
+  const changeStations = useCallback((list: Station[]) => {
+    setSelectedStations(list)
   }, [])
 
   // Posições de todas as fontes do mês aberto (ou do mês corrente): preenchem
@@ -269,16 +275,19 @@ export default function HistoricoPage() {
               <History size={22} className="text-blue-400" />
               Histórico Anual
             </h1>
-            <p className="text-gray-400 text-sm mt-1">Radiossondagens da estação {station.name}</p>
+            <p className="text-gray-400 text-sm mt-1">
+              Radiossondagens da estação {station.name}
+              {stations.length > 1 && <span className="text-faint"> · {stations.length} estações escolhidas</span>}
+            </p>
           </div>
           <div className="flex items-center gap-2">
             <button
               onClick={() => setShowStationPicker(!showStationPicker)}
-              title="Trocar estação"
+              title="Escolher estações (vale para todo o app)"
               className="flex items-center gap-2 px-3 py-2 bg-surface border border-border rounded-md text-sm text-white hover:border-border-strong transition-all max-w-[180px]"
             >
               <Radio size={14} className="text-blue-400 flex-shrink-0" />
-              <span className="truncate">{station.name}</span>
+              <span className="truncate">{stations.length > 1 ? `Estações (${stations.length})` : station.name}</span>
             </button>
             <select
               value={year}
@@ -315,7 +324,8 @@ export default function HistoricoPage() {
           </div>
         </div>
 
-        {showStationPicker && <StationPicker station={station} onSelect={changeStation} />}
+        <StationTabs stations={stations} activeId={station.id} onChange={changeStation} className="mt-4" />
+        {showStationPicker && <StationMultiPicker selected={stations} onChange={changeStations} autoFocus />}
         {recheckMsg && (
           <p className="text-xs text-gray-400 mt-2">{recheckMsg}</p>
         )}

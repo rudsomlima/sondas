@@ -20,6 +20,15 @@ interface LivePanelProps {
   // posição, e o reporte de hoje vem anexado (ver splitTodayFlights). Ficam
   // numa lista à parte de propósito — não são voo de hoje.
   reappearedToday?: SondePoint[]
+  // Com mais de uma estação escolhida: nome curto da estação de cada sonda de
+  // hoje (por serial) e de cada lançamento recente. Ausente = uma estação só.
+  flightStationName?: Map<string, string>
+  launchStationName?: Map<Launch, string>
+}
+
+function StationChip({ name }: { name?: string }) {
+  if (!name) return null
+  return <span className="text-[9px] px-1.5 py-0 rounded border border-blue-500/30 text-blue-300 truncate max-w-[110px]" title={`Estação ${name}`}>{name}</span>
 }
 
 const NO_REAPPEARED: SondePoint[] = []
@@ -27,7 +36,7 @@ const NO_REAPPEARED: SondePoint[] = []
 // Painel esquerdo: sondas de hoje + últimos lançamentos com posição.
 export default function LivePanel({
   todayFlights, liveFlightChecked, recentLaunches, selected, onSelect, mySerials,
-  reappearedToday = NO_REAPPEARED,
+  reappearedToday = NO_REAPPEARED, flightStationName, launchStationName,
 }: LivePanelProps) {
   return (
     <div className="flex flex-col gap-4">
@@ -70,6 +79,7 @@ export default function LivePanel({
                       title={f.source === 'sondehub' || f.source === 'radiosondy-approx' ? 'Associação por proximidade; ainda não confirma a estação de lançamento' : 'Fonte vinculada à estação'}>
                       {f.source === 'sondehub-site' ? 'S/site' : f.source === 'radiosondy' ? 'R' : '~geo'}
                     </span>
+                    <StationChip name={flightStationName?.get(f.sondeNumber)} />
                     {mySerials?.has(f.sondeNumber) && (
                       <span className="badge badge-info text-[9px] px-1.5 py-0 pulse-soft">
                         <Antenna size={9} /> RX local
@@ -137,8 +147,11 @@ export default function LivePanel({
               // Horário do primeiro quadro recebido da sonda; '~' = ainda sem
               // esse dado, mostrando o slot sinótico nominal.
               const { time, exact } = launchDisplayTime(l)
+              // Com várias estações o mesmo horário sinótico aparece em mais de
+              // uma — o serial desempata.
               const isSelected = selected?.launch != null &&
-                selected.launch.date === l.date && selected.launch.time_local === l.time_local
+                selected.launch.date === l.date && selected.launch.time_local === l.time_local &&
+                (!pos || selected.serial === pos.sondeNumber)
               return (
                 <button
                   key={i}
@@ -156,6 +169,7 @@ export default function LivePanel({
                   <span className="mono text-dim" title={exact ? 'Primeiro dado recebido da sonda (radiosondy.info)' : 'Horário sinótico nominal — sonda ainda sem primeiro quadro conhecido'}>
                     {exact ? '' : '~'}{time}
                   </span>
+                  <StationChip name={launchStationName?.get(l)} />
                   {pos ? (
                     <span className="mono text-amber-400/80 truncate flex-1 text-right">{pos.sondeNumber}</span>
                   ) : (

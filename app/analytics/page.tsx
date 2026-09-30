@@ -2,7 +2,9 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { BarChart3, Radio } from 'lucide-react'
-import { Station, DEFAULT_STATION, getSelectedStation, setSelectedStation } from '@/app/lib/stations'
+import { Station, DEFAULT_STATION } from '@/app/lib/stations'
+import { useSelectedStations } from '@/app/lib/useSelectedStations'
+import StationTabs from '@/app/components/StationTabs'
 import { getCacheByYear } from '@/app/lib/cache'
 import { cacheStationKey, isWyomingEnabled, useWyomingEnabled, wyomingQuery } from '@/app/lib/appSettings'
 import { withoutWyoming } from '@/app/lib/launchData'
@@ -20,14 +22,15 @@ import StationCompare from './components/StationCompare'
 export default function AnalyticsPage() {
   const currentYear = new Date().getFullYear()
   const [year, setYear] = useState(currentYear)
-  const [station, setStation] = useState<Station>(DEFAULT_STATION)
+  // Uma estação por vez: a principal das escolhidas em Configurações, com
+  // abas pras demais. O seletor daqui olha qualquer outra estação SEM mexer
+  // na lista escolhida (que vale pro app inteiro).
+  const { stations, ready } = useSelectedStations()
+  const [pickedStation, setPickedStation] = useState<Station | null>(null)
+  const station = pickedStation ?? stations[0] ?? DEFAULT_STATION
   const [showStationPicker, setShowStationPicker] = useState(false)
   const [launches, setLaunches] = useState<Launch[]>([])
   const [loading, setLoading] = useState(false)
-
-  useEffect(() => {
-    setStation(getSelectedStation())
-  }, [])
 
   // Liga/desliga da Wyoming (Configurações): refaz tudo na hora.
   const wyomingOn = useWyomingEnabled()
@@ -35,6 +38,7 @@ export default function AnalyticsPage() {
   // Pinta do cache local; complementa com o servidor (positions/flightStats
   // vêm do YearStore, que o cron enriquece).
   useEffect(() => {
+    if (!ready) return
     const clean = (ls: Launch[]) => isWyomingEnabled() ? ls : withoutWyoming(ls)
     const cached = clean(getCacheByYear(year, cacheStationKey(station.id)).flatMap(c => c.launches as Launch[]))
     setLaunches(cached)
@@ -56,7 +60,7 @@ export default function AnalyticsPage() {
     }
     sync()
     return () => { cancelled = true }
-  }, [year, station.id, wyomingOn])
+  }, [year, station.id, wyomingOn, ready])
 
   // Registro de sondas (R2): altitude de estouro, duração, deriva e posição
   // de pouso de cada sonda — calculados no enriquecimento a partir da trilha
@@ -111,11 +115,16 @@ export default function AnalyticsPage() {
         </div>
       </div>
 
+      <StationTabs
+        stations={stations} activeId={station.id}
+        onChange={s => { setPickedStation(s); setShowStationPicker(false) }} className="mb-4 -mt-2"
+      />
+
       {showStationPicker && (
         <div className="mb-6 -mt-3">
           <StationPicker
             station={station}
-            onSelect={s => { setStation(s); setSelectedStation(s); setShowStationPicker(false) }}
+            onSelect={s => { setPickedStation(s); setShowStationPicker(false) }}
           />
         </div>
       )}

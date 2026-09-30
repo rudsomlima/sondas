@@ -1,29 +1,24 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import {
   History, Settings, Menu, X, LayoutDashboard, BarChart3,
   Wind, ChevronRight, Satellite, Antenna, Send
 } from 'lucide-react'
-import { getSelectedStation, DEFAULT_STATION, Station } from '@/app/lib/stations'
+import { stationShortName } from '@/app/lib/stations'
+import { useSelectedStations } from '@/app/lib/useSelectedStations'
 import { useWyomingEnabled } from '@/app/lib/appSettings'
 
 // Shell da aplicação: sidebar (colapsável no mobile) + topbar mobile.
 export default function Shell({ children }: { children: React.ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [station, setStation] = useState<Station>(DEFAULT_STATION)
+  // Estações escolhidas em Configurações — atualiza na hora quando mudam.
+  const { stations } = useSelectedStations()
+  const station = stations[0]
   const pathname = usePathname()
   const wyomingOn = useWyomingEnabled()
-
-  useEffect(() => {
-    setStation(getSelectedStation())
-    // Reflete troca de estação feita em outra página desta mesma aba.
-    const onFocus = () => setStation(getSelectedStation())
-    window.addEventListener('focus', onFocus)
-    return () => window.removeEventListener('focus', onFocus)
-  }, [pathname])
 
   const navItems = [
     { href: '/painel', icon: LayoutDashboard, label: 'Painel', desc: 'Mission control' },
@@ -31,10 +26,12 @@ export default function Shell({ children }: { children: React.ReactNode }) {
     { href: '/analytics', icon: BarChart3, label: 'Análises', desc: 'Métricas e mapas' },
     { href: '/meu-receptor', icon: Antenna, label: 'Meu Receptor', desc: 'Config. e energia do rdzsonde' },
     { href: '/telegram', icon: Send, label: 'Telegram', desc: 'Avisos de lançamento e pouso' },
-    { href: '/configuracoes', icon: Settings, label: 'Configurações', desc: 'Estação e dados' },
+    { href: '/configuracoes', icon: Settings, label: 'Configurações', desc: 'Estações e dados' },
   ]
 
-  const shortName = station.name.split(',')[0]
+  const shortName = stationShortName(station)
+  const extra = stations.length - 1
+  const allNames = stations.map(s => `${s.name} (${s.id})`).join(', ')
 
   return (
     <div className="min-h-screen flex bg-bg">
@@ -58,10 +55,14 @@ export default function Shell({ children }: { children: React.ReactNode }) {
           <div className="w-8 h-8 bg-blue-600 rounded-md flex items-center justify-center flex-shrink-0">
             <Satellite size={16} className="text-white" />
           </div>
-          <div className="min-w-0">
-            <div className="text-sm font-semibold text-white leading-tight truncate">{shortName}</div>
-            <div className="text-xs text-dim mono">STNM {station.id}</div>
-          </div>
+          <Link href="/configuracoes" className="min-w-0" title={`Estações escolhidas: ${allNames}`}>
+            <div className="text-sm font-semibold text-white leading-tight truncate">
+              {shortName}{extra > 0 && <span className="text-blue-300 font-normal"> +{extra}</span>}
+            </div>
+            <div className="text-xs text-dim mono truncate">
+              {extra > 0 ? `${stations.length} estações` : `STNM ${station.id}`}
+            </div>
+          </Link>
           <button
             onClick={() => setSidebarOpen(false)}
             className="ml-auto lg:hidden text-gray-400 hover:text-white"
@@ -117,7 +118,9 @@ export default function Shell({ children }: { children: React.ReactNode }) {
           </button>
           <div className="flex items-center gap-2 min-w-0">
             <Satellite size={16} className="text-blue-400 flex-shrink-0" />
-            <span className="text-sm font-semibold text-white truncate">{shortName}</span>
+            <span className="text-sm font-semibold text-white truncate">
+              {shortName}{extra > 0 && <span className="text-blue-300 font-normal"> +{extra}</span>}
+            </span>
           </div>
         </header>
 

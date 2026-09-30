@@ -31,7 +31,11 @@ const BALLOON_CLUSTER_RADIUS_PX = 26 // cobre o balão (15px) + rótulo de dia (
 
 
 interface MissionMapProps {
-  station: Station
+  // Estações escolhidas em Configurações (uma ou mais): cada uma ganha o
+  // marcador do local de lançamento e o mapa enquadra todas.
+  stations: Station[]
+  // Estação da sonda/lançamento selecionado — de onde vem a trajetória do arquivo.
+  selectedStation: Station
   // Todas as sondas do ano (mesma coleta do mapa anual — useYearSondePoints —
   // já completada com o registro do R2). O filtro Mês/Ano é do próprio mapa.
   points: SondePoint[]
@@ -75,7 +79,15 @@ function flightToPoint(f: TodayFlight): SondePoint {
   }
 }
 
-export default function MissionMap({ station, points, records = NO_RECORDS, todayFlights, reappearedToday = NO_REAPPEARED, selected, chasePos, receiverPos, receiverName }: MissionMapProps) {
+// Enquadra as estações: uma só → zoom 9 nela (como sempre foi); várias →
+// todas visíveis.
+function frameStations(map: any, stations: Station[]) {
+  if (stations.length === 0) return
+  if (stations.length === 1) { map.setView([stations[0].lat, stations[0].lon], 9); return }
+  map.fitBounds(stations.map(s => [s.lat, s.lon]), { padding: [40, 40], maxZoom: 9 })
+}
+
+export default function MissionMap({ stations, selectedStation, points, records = NO_RECORDS, todayFlights, reappearedToday = NO_REAPPEARED, selected, chasePos, receiverPos, receiverName }: MissionMapProps) {
   const [period, setPeriodState] = useState<MapPeriod>('year')
   useEffect(() => {
     try { const v = localStorage.getItem(PERIOD_KEY); if (v === 'year' || v === 'month') setPeriodState(v) } catch { }
@@ -86,6 +98,8 @@ export default function MissionMap({ station, points, records = NO_RECORDS, toda
   }
   const visiblePoints = useMemo(() => period === 'year' ? points : points.filter(inCurrentMonth), [points, period])
   const receiverStations = useReceiverStations()
+  const stationsRef = useRef(stations)
+  stationsRef.current = stations
   const mapDivRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<any>(null)
   const leafletRef = useRef<any>(null)
@@ -117,7 +131,7 @@ export default function MissionMap({ station, points, records = NO_RECORDS, toda
       trajectoryLayerRef.current = L.layerGroup().addTo(map)
       chaseLayerRef.current = L.layerGroup().addTo(map)
       receiverLayerRef.current = L.layerGroup().addTo(map)
-      map.setView([station.lat, station.lon], 9)
+      frameStations(map, stationsRef.current)
       map.on('zoomend', () => setZoomTick(t => t + 1))
       setMapReady(true)
       setTimeout(() => map.invalidateSize(), 50)
@@ -135,10 +149,11 @@ export default function MissionMap({ station, points, records = NO_RECORDS, toda
     }
   }, [])
 
-  // Recentra ao trocar de estação.
+  // Recentra ao mudar as estações escolhidas.
+  const stationsKey = stations.map(s => s.id).join(',')
   useEffect(() => {
-    mapRef.current?.setView([station.lat, station.lon], 9)
-  }, [station.id, station.lat, station.lon])
+    if (mapRef.current) frameStations(mapRef.current, stationsRef.current)
+  }, [stationsKey])
 
   // Marcadores: estação + pousos do mês + sondas de hoje.
   useEffect(() => {
@@ -162,10 +177,12 @@ export default function MissionMap({ station, points, records = NO_RECORDS, toda
       if (!L || !map || !layer) return
       layer.clearLayers()
 
-      // Estação (marcador fixo discreto)
-      L.circleMarker([station.lat, station.lon], {
-        radius: 6, color: '#3b82f6', fillColor: '#3b82f6', fillOpacity: 0.6, weight: 2,
-      }).addTo(layer).bindPopup(launchSitePopupHtml(station), POPUP_OPTIONS)
+      // Estações (marcador fixo discreto em cada local de lançamento)
+      for (const station of stations) {
+        L.circleMarker([station.lat, station.lon], {
+          radius: 6, color: '#3b82f6', fillColor: '#3b82f6', fillOpacity: 0.6, weight: 2,
+        }).addTo(layer).bindPopup(launchSitePopupHtml(station), POPUP_OPTIONS)
+      }
 
       // Todas as sondas do período — mesmo conjunto e mesmo popup do mapa anual
       // — mais as sondas velhas que reapareceram hoje (fora do período visível,
@@ -226,7 +243,7 @@ export default function MissionMap({ station, points, records = NO_RECORDS, toda
       drawReappearances(L, map, layer, visiblePoints)
       drawReappearances(L, map, layer, reappearedToday.filter(p => !shown.has(p.serial)))
     }
-  }, [station, visiblePoints, records, todayFlights, reappearedToday, period, mapReady, zoomTick, clusterEnabled])
+  }, [stations, visiblePoints, records, todayFlights, reappearedToday, period, mapReady, zoomTick, clusterEnabled])
 
   // Trajetória do voo selecionado.
   useEffect(() => {
@@ -252,7 +269,7 @@ export default function MissionMap({ station, points, records = NO_RECORDS, toda
 
         if ((!points || points.length < 2) && selected!.launch) {
           const l = selected!.launch
-          const archive = await fetchArchiveTrajectory(station.id, l.year, l.month, l.day)
+          const archive = await fetchArchiveTrajectory(selectedStation.id, l.year, l.month, l.day)
           if (cancelled) return
           if (archive && archive.points.length >= 2) points = archive.points
         }
@@ -277,7 +294,7 @@ export default function MissionMap({ station, points, records = NO_RECORDS, toda
     }
     loadTrajectory()
     return () => { cancelled = true }
-  }, [selected, station.id, mapReady])
+  }, [selected, selectedStation.id, mapReady])
 
   // Posição do caçador + linha até o alvo.
   useEffect(() => {

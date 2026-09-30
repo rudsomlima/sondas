@@ -14,11 +14,12 @@ interface Props {
   liveError: string | null
   sourceHealth: LiveSourceHealth
   onRefresh: () => void
+  stationCount?: number // >1 = números somados de várias estações
 }
 
 const stateClass = (ok: boolean) => ok ? 'text-emerald-400' : 'text-yellow-400'
 
-export default function DataCoveragePanel({ launches, monthLoading, monthError, todayError, liveError, sourceHealth, onRefresh }: Props) {
+export default function DataCoveragePanel({ launches, monthLoading, monthError, todayError, liveError, sourceHealth, onRefresh, stationCount = 1 }: Props) {
   const counts = sourceCounts(launches)
   const wyomingOn = useWyomingEnabled()
   const hasErrors = !!(monthError || todayError || liveError)
@@ -31,7 +32,7 @@ export default function DataCoveragePanel({ launches, monthLoading, monthError, 
         </button>
       </div>
       <div className="grid grid-cols-2 gap-2 text-[11px]">
-        <div className="rounded bg-bg border border-border p-2"><span className="text-faint block">Lançamentos / mês</span><span className="mono text-white text-sm">{launches.length}</span></div>
+        <div className="rounded bg-bg border border-border p-2"><span className="text-faint block">Lançamentos / mês{stationCount > 1 ? ` (${stationCount} est.)` : ''}</span><span className="mono text-white text-sm">{launches.length}</span></div>
         <div className="rounded bg-bg border border-border p-2"><span className="text-faint block">Com posição</span><span className="mono text-white text-sm">{counts.positioned}/{launches.length}</span></div>
       </div>
       <div className="mt-3 space-y-1.5 text-[11px]">

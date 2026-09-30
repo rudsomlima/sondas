@@ -104,25 +104,68 @@ export function searchStations(query: string): Station[] {
   return SOUTH_AMERICA_STATIONS.filter(s => s.id.includes(q) || normalize(s.name).includes(q))
 }
 
+// Estações escolhidas em Configurações — pode ser mais de uma. A 1ª da lista
+// é a PRINCIPAL: é a que vale onde só cabe uma (Análises, centro do mapa do
+// Telegram, cache local em Configurações). O /painel soma todas ao mesmo
+// tempo e o /historico mostra uma aba por estação.
+//
+// `sondas_stations` guarda a lista de ids; `sondas_station` (chave antiga, só
+// uma estação) continua sendo gravada com a principal e é lida como ponto de
+// partida quando a lista ainda não existe (quem já usava o app não perde a
+// escolha).
+const SELECTED_STATIONS_KEY = 'sondas_stations'
 const SELECTED_STATION_KEY = 'sondas_station'
+// Cada estação a mais multiplica as consultas do painel (ao vivo a cada 20 s,
+// ano, mês, registro) — o limite evita travar a aba e as fontes.
+export const MAX_SELECTED_STATIONS = 6
+// Evento interno (mesma aba) disparado quando a lista muda; outras abas
+// recebem o `storage` normal do navegador.
+export const SELECTED_STATIONS_EVENT = 'sondas-stations-change'
 
-// Compartilhado entre app/configuracoes (onde é escolhida) e app/historico
-// (onde é usada para consultar a API) via localStorage.
-export function getSelectedStation(): Station {
-  if (typeof window === 'undefined') return DEFAULT_STATION
-  try {
-    const raw = localStorage.getItem(SELECTED_STATION_KEY)
-    if (!raw) return DEFAULT_STATION
-    const parsed = JSON.parse(raw)
-    return findStation(parsed.id) ?? DEFAULT_STATION
-  } catch {
-    return DEFAULT_STATION
+function uniqueStations(ids: unknown[]): Station[] {
+  const out: Station[] = []
+  for (const id of ids) {
+    const st = typeof id === 'string' ? findStation(id) : undefined
+    if (st && !out.some(o => o.id === st.id)) out.push(st)
   }
+  return out.slice(0, MAX_SELECTED_STATIONS)
 }
 
-export function setSelectedStation(station: Station): void {
-  if (typeof window === 'undefined') return
+export function getSelectedStations(): Station[] {
+  if (typeof window === 'undefined') return [DEFAULT_STATION]
   try {
-    localStorage.setItem(SELECTED_STATION_KEY, JSON.stringify(station))
+    const raw = localStorage.getItem(SELECTED_STATIONS_KEY)
+    if (raw) {
+      const parsed = JSON.parse(raw)
+      const list = Array.isArray(parsed) ? uniqueStations(parsed) : []
+      if (list.length > 0) return list
+    }
+    const legacy = localStorage.getItem(SELECTED_STATION_KEY)
+    if (legacy) {
+      const st = findStation(JSON.parse(legacy)?.id)
+      if (st) return [st]
+    }
   } catch {}
+  return [DEFAULT_STATION]
+}
+
+export function setSelectedStations(stations: Station[]): void {
+  if (typeof window === 'undefined') return
+  const list = uniqueStations(stations.map(s => s.id))
+  if (list.length === 0) return // sempre fica ao menos uma
+  try {
+    localStorage.setItem(SELECTED_STATIONS_KEY, JSON.stringify(list.map(s => s.id)))
+    localStorage.setItem(SELECTED_STATION_KEY, JSON.stringify(list[0]))
+  } catch {}
+  window.dispatchEvent(new Event(SELECTED_STATIONS_EVENT))
+}
+
+// Estação principal (a 1ª da lista).
+export function getSelectedStation(): Station {
+  return getSelectedStations()[0] ?? DEFAULT_STATION
+}
+
+// Nome curto pra rótulos apertados ("Natal Aeroporto, RN" → "Natal Aeroporto").
+export function stationShortName(station: Station): string {
+  return station.name.split(',')[0]
 }

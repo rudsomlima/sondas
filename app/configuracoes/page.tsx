@@ -2,10 +2,12 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
-import { Settings, Save, RotateCcw, Info, CheckCircle2, Radio, Database, Antenna, ChevronRight } from 'lucide-react'
-import { Station, DEFAULT_STATION, getSelectedStation, setSelectedStation } from '@/app/lib/stations'
+import { Settings, Save, RotateCcw, Info, CheckCircle2, Radio, Star, Database, Antenna, ChevronRight } from 'lucide-react'
+import { Station, setSelectedStations } from '@/app/lib/stations'
+import { useSelectedStations } from '@/app/lib/useSelectedStations'
 import { AppSettings, DEFAULT_SETTINGS, getSettings, setSettings } from '@/app/lib/settings'
-import StationPicker from '../historico/components/StationPicker'
+import StationMultiPicker from '@/app/components/StationMultiPicker'
+import StationTabs from '@/app/components/StationTabs'
 import LocalCachePanel from './components/LocalCachePanel'
 import R2Panel from './components/R2Panel'
 import RegistryStatusPanel from './components/RegistryStatusPanel'
@@ -16,13 +18,16 @@ import { useWyomingEnabled } from '@/app/lib/appSettings'
 export default function ConfiguracoesPage() {
   const wyomingOn = useWyomingEnabled()
   const [config, setConfig] = useState<AppSettings>(DEFAULT_SETTINGS)
-  const [station, setStation] = useState<Station>(DEFAULT_STATION)
-  const [showStationPicker, setShowStationPicker] = useState(false)
+  // Estações escolhidas (a 1ª é a principal) — gravadas na hora, e o
+  // painel/histórico abertos em outras abas atualizam sozinhos.
+  const { stations } = useSelectedStations()
+  const station = stations[0]
+  const [registryStationId, setRegistryStationId] = useState<string | null>(null)
+  const registryStation = stations.find(s => s.id === registryStationId) ?? station
   const [saved, setSaved] = useState(false)
 
   useEffect(() => {
     setConfig(getSettings())
-    setStation(getSelectedStation())
   }, [])
 
   const handleSave = () => {
@@ -37,10 +42,8 @@ export default function ConfiguracoesPage() {
     setSaved(false)
   }
 
-  const changeStation = useCallback((s: Station) => {
-    setStation(s)
-    setSelectedStation(s)
-    setShowStationPicker(false)
+  const changeStations = useCallback((list: Station[]) => {
+    setSelectedStations(list)
   }, [])
 
   return (
@@ -50,26 +53,24 @@ export default function ConfiguracoesPage() {
           <Settings size={22} className="text-blue-400" />
           Configurações
         </h1>
-        <p className="text-gray-400 text-sm mt-1">Estação, preferências e armazenamento de dados</p>
+        <p className="text-gray-400 text-sm mt-1">Estações, preferências e armazenamento de dados</p>
       </div>
 
       {/* Estação padrão */}
       <div className="panel p-5 mb-6">
-        <h2 className="text-sm font-semibold text-white flex items-center gap-2 mb-4">
+        <h2 className="text-sm font-semibold text-white flex items-center gap-2 mb-1">
           <Radio size={14} className="text-blue-400" />
-          Estação
+          Estações
         </h2>
-        <button
-          onClick={() => setShowStationPicker(v => !v)}
-          className="flex items-center gap-2 px-3 py-2 bg-bg border border-border rounded-md text-sm text-white hover:border-border-strong transition-all"
-        >
-          <span>{station.name}</span>
-          <span className="mono text-dim">{station.id}</span>
-        </button>
-        {showStationPicker && <StationPicker station={station} onSelect={changeStation} />}
-        <p className="text-[11px] text-faint mt-2">
-          A estação escolhida vale para todas as páginas (painel, histórico, análises).
+        <p className="text-[11px] text-faint">
+          Marque uma ou mais estações. Vale na hora para todo o app:
         </p>
+        <ul className="text-[11px] text-faint mt-1 space-y-0.5 list-disc pl-4">
+          <li><span className="text-gray-300">Painel</span> — acompanha todas ao mesmo tempo (voos ao vivo, mapa e lançamentos recentes).</li>
+          <li><span className="text-gray-300">Histórico anual</span> — uma aba para cada estação.</li>
+          <li><span className="text-gray-300">Análises</span> e cache local — usam a principal (<Star size={9} className="inline text-yellow-400" fill="currentColor" />), com atalho para as demais.</li>
+        </ul>
+        <StationMultiPicker selected={stations} onChange={changeStations} />
       </div>
 
       {/* Fontes de dados (liga/desliga Wyoming — vale na hora, em todo o app) */}
@@ -139,7 +140,11 @@ export default function ConfiguracoesPage() {
 
       {/* Registro de sondas no R2 (bastidores) */}
       <div className="panel p-5 mb-6">
-        <RegistryStatusPanel stationId={station.id} />
+        <StationTabs
+          stations={stations} activeId={registryStation.id}
+          onChange={s => setRegistryStationId(s.id)} className="mb-3"
+        />
+        <RegistryStatusPanel key={registryStation.id} stationId={registryStation.id} />
       </div>
 
       {/* Dados & Armazenamento */}
@@ -155,6 +160,11 @@ export default function ConfiguracoesPage() {
 
         <div className="mb-6">
           <LocalCachePanel stationId={station.id} />
+          {stations.length > 1 && (
+            <p className="text-[11px] text-faint mt-2">
+              O download em lote usa a estação principal ({station.name}); a lista acima mostra o cache de todas.
+            </p>
+          )}
         </div>
 
         <div className="pt-5 border-t border-border">

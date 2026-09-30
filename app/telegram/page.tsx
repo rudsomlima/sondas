@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Send, Save, CheckCircle2, XCircle, Loader2, MapPin, Trash2, Rocket, PlaneLanding, Search, Radio, BatteryWarning, GripVertical, Plus, X, Clock, Mountain, Trophy, TrendingUp, Ruler, Link2, Star, Wifi, FileText, ChevronDown, RotateCcw, Building2 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { Station, DEFAULT_STATION, getSelectedStation, SOUTH_AMERICA_STATIONS } from '@/app/lib/stations'
+import { useSelectedStations } from '@/app/lib/useSelectedStations'
 import { findMatchingGeofence } from '@/app/lib/geofence'
 import { DEFAULT_WATCH_RADIUS_KM, type Geofence } from '@/app/lib/telegramTypes'
 import type { TelegramMessageTemplateKey, TelegramMessageTemplates } from '@/app/lib/telegramTypes'
@@ -48,6 +49,8 @@ const TEMPLATE_ENABLE_SETTING: Record<TelegramMessageTemplateKey, 'notifyLaunch'
 }
 
 export default function TelegramPage() {
+  // Estações escolhidas em Configurações (painel/histórico) — atalho pra monitorar as mesmas.
+  const { stations: appStations } = useSelectedStations()
   const [station, setStation] = useState<Station>(DEFAULT_STATION)
   const [settings, setSettingsState] = useState<TelegramSettingsView>(EMPTY_SETTINGS)
   const [tokenInput, setTokenInput] = useState('')
@@ -162,6 +165,7 @@ export default function TelegramPage() {
   function setRadius(id: string, km: number) {
     setSettingsState(s => ({ ...s, stationRadiusKm: { ...s.stationRadiusKm, [id]: km } }))
   }
+  const appStationsMissing = appStations.filter(st => !watched.has(st.id)).length
   const stationsInAreas = SOUTH_AMERICA_STATIONS.filter(st => findMatchingGeofence(st.lat, st.lon, areas))
   const visibleStations = SOUTH_AMERICA_STATIONS.filter(st =>
     !stationFilter.trim() || `${st.name} ${st.id}`.toLowerCase().includes(stationFilter.trim().toLowerCase()))
@@ -476,6 +480,17 @@ export default function TelegramPage() {
               title="Marca as estações que ficam dentro das áreas ativas desenhadas no mapa"
             >
               Marcar as dentro das áreas ({stationsInAreas.length})
+            </button>
+            <button
+              type="button"
+              disabled={appStationsMissing === 0}
+              onClick={() => setSettingsState(s => ({
+                ...s, watchedStationIds: [...new Set([...(s.watchedStationIds ?? []), ...appStations.map(x => x.id)])],
+              }))}
+              className="text-xs px-2 py-1 rounded border border-border-strong text-gray-300 hover:text-white disabled:opacity-40"
+              title={`Marca as estações escolhidas em Configurações (painel/histórico): ${appStations.map(x => x.name).join(', ')}`}
+            >
+              Marcar as do app ({appStations.length})
             </button>
           </div>
           <div className="max-h-56 overflow-y-auto space-y-1 pr-1">

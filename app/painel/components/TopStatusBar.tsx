@@ -2,21 +2,55 @@
 
 import { useEffect, useState } from 'react'
 import { Radio, Clock, RefreshCw } from 'lucide-react'
-import type { Station } from '@/app/lib/stations'
+import { stationShortName, type Station } from '@/app/lib/stations'
 import type { TodayFlight } from '@/app/lib/radiosondy'
 import { GMT3 } from '@/app/lib/types'
 import type { TodayData } from '@/app/lib/types'
 
-interface TopStatusBarProps {
+// Situação de hoje de UMA estação (o painel pode acompanhar várias).
+export interface StationStatusEntry {
   station: Station
   todayData: TodayData | null
   todayLoading: boolean
   todayError: string | null
-  liveError: string | null
   todayFlights: TodayFlight[]
+}
+
+interface TopStatusBarProps {
+  entries: StationStatusEntry[]
+  liveError: string | null
   lastFetchAt: Date | null
   onToggleStationPicker: () => void
   onRefresh: () => void
+}
+
+// Pílula de status operacional de uma estação.
+function StatusPill({ entry }: { entry: StationStatusEntry }) {
+  const { todayData, todayLoading, todayError, todayFlights } = entry
+  const isConfirmedFlight = (f: TodayFlight) => !!todayData?.launched_today || f.source === 'radiosondy' || f.source === 'sondehub-site'
+  const liveFlight = todayFlights.find(f => f.isLive && isConfirmedFlight(f))
+  const landedCount = todayFlights.filter(f => !f.isLive && isConfirmedFlight(f)).length
+  const hadFlightToday = todayData?.launched_today || todayFlights.some(f => f.source === 'radiosondy' || f.source === 'sondehub-site')
+  const hasUnconfirmedCandidate = !hadFlightToday && todayFlights.length > 0
+  const unavailable = !todayLoading && !hadFlightToday && !!todayError && todayFlights.length === 0
+
+  return todayLoading ? (
+    <span className="badge bg-gray-500/15 text-gray-400 border border-gray-500/20">verificando…</span>
+  ) : unavailable ? (
+    <span className="badge badge-warning mono">DADOS INDISPONÍVEIS</span>
+  ) : liveFlight ? (
+    <span className="badge bg-sky-500/15 text-sky-300 border border-sky-500/30 pulse-soft mono">
+      EM VOO · {Math.round(liveFlight.altitude).toLocaleString('pt-BR')} m
+    </span>
+  ) : landedCount > 0 ? (
+    <span className="badge badge-success mono">POUSADA{landedCount > 1 ? ` ×${landedCount}` : ''}</span>
+  ) : hadFlightToday ? (
+    <span className="badge badge-info mono">LANÇADA HOJE</span>
+  ) : hasUnconfirmedCandidate ? (
+    <span className="badge badge-warning mono">CANDIDATO PRÓXIMO</span>
+  ) : (
+    <span className="badge badge-danger mono">SEM LANÇAMENTO HOJE</span>
+  )
 }
 
 // Próximo ciclo sinótico principal (00Z ou 12Z) a partir de agora.
@@ -35,7 +69,7 @@ function fmtCountdown(ms: number): string {
 }
 
 export default function TopStatusBar({
-  station, todayData, todayLoading, todayError, liveError, todayFlights, lastFetchAt, onToggleStationPicker, onRefresh,
+  entries, liveError, lastFetchAt, onToggleStationPicker, onRefresh,
 }: TopStatusBarProps) {
   // Fixed initial value keeps server/client markup identical; real time starts
   // immediately after hydration.
@@ -54,41 +88,44 @@ export default function TopStatusBar({
   const gmt3Str = `${pad(gmt3.getUTCHours())}:${pad(gmt3.getUTCMinutes())}:${pad(gmt3.getUTCSeconds())}`
   const cycle = nextSynopticCycle(clock)
 
-  const isConfirmedFlight = (f: TodayFlight) => !!todayData?.launched_today || f.source === 'radiosondy' || f.source === 'sondehub-site'
-  const liveFlight = todayFlights.find(f => f.isLive && isConfirmedFlight(f))
-  const landedCount = todayFlights.filter(f => !f.isLive && isConfirmedFlight(f)).length
-  const hadFlightToday = todayData?.launched_today || todayFlights.some(f => f.source === 'radiosondy' || f.source === 'sondehub-site')
-  const hasUnconfirmedCandidate = !hadFlightToday && todayFlights.length > 0
-  const unavailable = !todayLoading && !hadFlightToday && !!todayError && todayFlights.length === 0
+  const todayLoading = entries.some(e => e.todayLoading)
+  const todayError = entries.some(e => e.todayError)
+  const multi = entries.length > 1
 
   return (
     <div className="panel px-4 py-2.5 mb-4 flex items-center gap-4 flex-wrap">
-      <button
-        onClick={onToggleStationPicker}
-        title="Trocar estação"
-        className="flex items-center gap-2 text-sm text-white hover:text-blue-300 transition-colors max-w-[220px]"
-      >
-        <Radio size={14} className="text-blue-400 flex-shrink-0" />
-        <span className="truncate font-medium">{station.name}</span>
-      </button>
-
-      {/* Pílula de status operacional */}
-      {todayLoading ? (
-        <span className="badge bg-gray-500/15 text-gray-400 border border-gray-500/20">verificando…</span>
-      ) : unavailable ? (
-        <span className="badge badge-warning mono">DADOS INDISPONÍVEIS</span>
-      ) : liveFlight ? (
-        <span className="badge bg-sky-500/15 text-sky-300 border border-sky-500/30 pulse-soft mono">
-          EM VOO · {Math.round(liveFlight.altitude).toLocaleString('pt-BR')} m
-        </span>
-      ) : landedCount > 0 ? (
-        <span className="badge badge-success mono">POUSADA{landedCount > 1 ? ` ×${landedCount}` : ''}</span>
-      ) : hadFlightToday ? (
-        <span className="badge badge-info mono">LANÇADA HOJE</span>
-      ) : hasUnconfirmedCandidate ? (
-        <span className="badge badge-warning mono">CANDIDATO PRÓXIMO</span>
+      {multi ? (
+        // Várias estações: o botão abre a escolha e cada uma mostra seu status.
+        <>
+          <button
+            onClick={onToggleStationPicker}
+            title="Escolher estações (vale para todo o app)"
+            className="flex items-center gap-2 text-sm text-white hover:text-blue-300 transition-colors"
+          >
+            <Radio size={14} className="text-blue-400 flex-shrink-0" />
+            <span className="font-medium">{entries.length} estações</span>
+          </button>
+          {entries.map(e => (
+            <span key={e.station.id} className="flex items-center gap-1.5 text-xs" title={`${e.station.name} · STNM ${e.station.id}`}>
+              <span className="text-gray-300 truncate max-w-[140px]">{stationShortName(e.station)}</span>
+              <StatusPill entry={e} />
+            </span>
+          ))}
+        </>
+      ) : entries[0] ? (
+        <>
+          <button
+            onClick={onToggleStationPicker}
+            title="Escolher estações (vale para todo o app)"
+            className="flex items-center gap-2 text-sm text-white hover:text-blue-300 transition-colors max-w-[220px]"
+          >
+            <Radio size={14} className="text-blue-400 flex-shrink-0" />
+            <span className="truncate font-medium">{entries[0].station.name}</span>
+          </button>
+          <StatusPill entry={entries[0]} />
+        </>
       ) : (
-        <span className="badge badge-danger mono">SEM LANÇAMENTO HOJE</span>
+        <span className="badge bg-gray-500/15 text-gray-400 border border-gray-500/20">verificando…</span>
       )}
 
       <span className="text-xs text-dim flex items-center gap-1.5" title="Tempo até o próximo ciclo sinótico">
