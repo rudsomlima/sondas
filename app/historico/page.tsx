@@ -3,40 +3,45 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { History, RefreshCw, AlertCircle, Loader2, HardDrive, Radio, Trash2, ShieldCheck } from 'lucide-react'
-import { clearMonth, clearYear, getCacheByYear, writeCache } from '@/app/lib/cache'
-import { Station, setSelectedStations } from '@/app/lib/stations'
+import { Station, setSelectedStations, stationShortName } from '@/app/lib/stations'
 import { useSelectedStations } from '@/app/lib/useSelectedStations'
-import type { Launch, LaunchPosition } from '@/app/lib/types'
+import type { Launch, LaunchPosition, YearData } from '@/app/lib/types'
 import { nowGMT3 } from '@/app/lib/types'
-import { isValidPosition, launchInstantMs, mergeLaunchCollections, sourceCounts } from '@/app/lib/launchData'
-import { launchKey, sameLaunch, MONTHS_FULL } from '@/app/lib/launchUtils'
-import { useRecoveredLaunches } from './hooks/useRecoveredLaunches'
-import { useSondeLaunches } from './hooks/useSondeLaunches'
+import type { TodayFlight } from '@/app/lib/radiosondy'
+import { launchInstantMs, sourceCounts } from '@/app/lib/launchData'
+import { launchKey, sameLaunch } from '@/app/lib/launchUtils'
 import { useSondeRegistry } from './hooks/useSondeRegistry'
-import { cacheStationKey, useWyomingEnabled, wyomingQuery } from '@/app/lib/appSettings'
-import { attachPositions, isPointInMonth, mergeSondePoints, mergeWithRegistry, pointsFromLaunches, splitTodayFlights, type SondePoint } from '@/app/lib/sondePoints'
-import { useYearData } from './hooks/useYearData'
-import { useSondePoints } from './hooks/useSondePoints'
-import { useTodayData } from './hooks/useTodayData'
-import { useLiveFlights } from './hooks/useLiveFlights'
+import { combineSourceHealth } from './hooks/useLiveFlights'
+import { useWyomingEnabled } from '@/app/lib/appSettings'
+import type { SondePoint } from '@/app/lib/sondePoints'
 import StationMultiPicker from '@/app/components/StationMultiPicker'
-import StationTabs from '@/app/components/StationTabs'
+import StationTabs, { ALL_STATIONS } from '@/app/components/StationTabs'
+import HistoryStationFeed, { type HistoryStationState } from './components/HistoryStationFeed'
 import LiveCard from './components/LiveCard'
 import SummaryCards from './components/SummaryCards'
 import MonthlyChart from './components/MonthlyChart'
 import MonthAccordion from './components/MonthAccordion'
 
-const NO_LAUNCHES: Launch[] = []
+const NO_YEARS: number[] = []
+const NO_SERIALS: string[] = []
+const NO_POINTS: SondePoint[] = []
 
 export default function HistoricoPage() {
   const currentYear = nowGMT3().getUTCFullYear()
   const [year, setYear] = useState(currentYear)
-  // Estações escolhidas em Configurações: o histórico anual é de uma estação
-  // por vez (gráfico mensal, apagar mês, reverificar), então cada uma vira
-  // uma aba. A aba aberta volta pra principal se sair da lista.
-  const { stations } = useSelectedStations()
-  const [activeStationId, setActiveStationId] = useState<string | null>(null)
-  const station = useMemo(() => stations.find(s => s.id === activeStationId) ?? stations[0], [stations, activeStationId])
+  // Estações escolhidas em Configurações. Com mais de uma, a aba "Todas"
+  // (padrão) soma todas; cada estação também tem a sua aba. Um
+  // <HistoryStationFeed> por estação faz as consultas — aqui só se junta.
+  const { stations, ready } = useSelectedStations()
+  const [activeView, setActiveView] = useState<string>(ALL_STATIONS)
+  const viewStations = useMemo(() => {
+    const one = stations.filter(s => s.id === activeView)
+    return one.length > 0 ? one : stations
+  }, [stations, activeView])
+  const viewId = viewStations.length === 1 && stations.length > 1 ? viewStations[0].id : ALL_STATIONS
+  const single = viewStations.length === 1
+  const primary = viewStations[0]
+  const [feeds, setFeeds] = useState<Record<string, HistoryStationState>>({})
   const [showStationPicker, setShowStationPicker] = useState(false)
   const [expandedMonth, setExpandedMonth] = useState<number | null>(null)
   const [selectedLaunch, setSelectedLaunch] = useState<Launch | null>(null)
@@ -50,12 +55,85 @@ export default function HistoricoPage() {
   const userInteractedViewRef = useRef<string | null>(null)
   const autoSelectedLaunchRef = useRef<string | null>(null)
 
-  const { data, setData, error, statusMsg, syncing, failedMonths, lastUpdatedAt, fetchData, syncMonths } = useYearData(year, station)
   // Liga/desliga da Wyoming (Configurações) — esconde tudo que é dela.
   const wyomingOn = useWyomingEnabled()
-  const { todayData, todayLoading, todayError, lastFetchAt } = useTodayData(station)
-  const { todayFlights, liveFlightChecked, liveError, sourceHealth } = useLiveFlights(station, todayData?.today)
-  const viewKey = `${station.id}:${year}`
+  // Registro de sondas (cache local, todas as estações) — só leitura aqui;
+  // quem busca/enriquece é cada feed.
+  const records = useSondeRegistry(null, NO_YEARS, NO_SERIALS, false)
+
+  const onFeedUpdate = useCallback((state: HistoryStationState) => {
+    setFeeds(prev => prev[state.station.id] === state ? prev : { ...prev, [state.station.id]: state })
+  }, [])
+  const onFeedRemove = useCallback((stationId: string) => {
+    setFeeds(prev => {
+      if (!(stationId in prev)) return prev
+      const next = { ...prev }
+      delete next[stationId]
+      return next
+    })
+  }, [])
+  // Feeds da visualização atual, na ordem escolhida, só os do ano aberto.
+  const viewFeeds = useMemo(
+    () => viewStations.map(s => feeds[s.id]).filter((f): f is HistoryStationState => !!f && f.year === year),
+    [viewStations, feeds, year],
+  )
+  const stationById = useMemo(() => new Map(stations.map(s => [s.id, s])), [stations])
+  const stationOf = useCallback((l: Launch) => (l.stationId && stationById.get(l.stationId)) || primary, [stationById, primary])
+
+  const viewKey = `${viewStations.map(s => s.id).join(',')}:${year}`
+
+  // Soma das estações da visualização (com uma só, é ela mesma).
+  const merged = useMemo(() => {
+    const flights = new Map<string, TodayFlight>()
+    const flightStationName = new Map<string, string>()
+    const reappeared = new Map<string, SondePoint>()
+    for (const f of viewFeeds) {
+      for (const fl of f.flights) {
+        const prev = flights.get(fl.sondeNumber)
+        if (!prev || fl.lastReportUtc > prev.lastReportUtc) flights.set(fl.sondeNumber, fl)
+        if (!flightStationName.has(fl.sondeNumber)) flightStationName.set(fl.sondeNumber, stationShortName(f.station))
+      }
+      for (const p of f.reappeared) if (!reappeared.has(p.serial)) reappeared.set(p.serial, p)
+    }
+    const todays = viewFeeds.map(f => f.todayData).filter((t): t is NonNullable<typeof t> => !!t)
+    const todayData = todays.length === 0 ? null : todays.length === 1 ? todays[0] : {
+      ...todays[0],
+      station: todays.map(t => t.station).join(','),
+      launched_today: todays.some(t => t.launched_today),
+      count: todays.reduce((n, t) => n + (t.count ?? 0), 0),
+      launches: todays.flatMap(t => t.launches ?? []),
+    }
+    const joinMsgs = (pick: (f: HistoryStationState) => string | null) => {
+      const list = viewFeeds.filter(f => pick(f))
+      if (list.length === 0) return null
+      return single ? pick(list[0]) : list.map(f => `${stationShortName(f.station)}: ${pick(f)}`).join(' · ')
+    }
+    const times = (xs: (number | null | undefined)[]) => xs.filter((x): x is number => !!x)
+    const updated = times(viewFeeds.map(f => f.lastUpdatedAt))
+    const fetched = times(viewFeeds.map(f => f.lastFetchAt?.getTime()))
+    const failedMonths = new Set<number>()
+    for (const f of viewFeeds) for (const m of f.failedMonths) failedMonths.add(m)
+    return {
+      anyReady: viewFeeds.some(f => f.ready),
+      yearLaunches: viewFeeds.flatMap(f => f.yearLaunches),
+      displayLaunches: viewFeeds.flatMap(f => f.displayLaunches),
+      flights: [...flights.values()],
+      flightStationName,
+      reappeared: [...reappeared.values()],
+      todayData,
+      todayLoading: viewFeeds.length < viewStations.length || viewFeeds.some(f => f.todayLoading),
+      todayError: joinMsgs(f => f.todayError),
+      liveError: joinMsgs(f => f.liveError),
+      error: joinMsgs(f => f.error),
+      statusMsg: joinMsgs(f => f.statusMsg),
+      syncing: viewFeeds.some(f => f.syncing),
+      failedMonths,
+      lastUpdatedAt: updated.length ? Math.max(...updated) : null,
+      lastFetchAt: fetched.length ? new Date(Math.max(...fetched)) : null,
+      liveFlightChecked: viewFeeds.length === viewStations.length && viewFeeds.every(f => f.liveFlightChecked),
+      sourceHealth: combineSourceHealth(viewFeeds.map(f => f.sourceHealth)),
+    }
+  }, [viewFeeds, viewStations.length, single])
 
   // Ao trocar de estação/ano, libera uma nova seleção automática. Enquanto o
   // backfill anual chega mês a mês, acompanha o lançamento mais recente já
@@ -67,14 +145,16 @@ export default function HistoricoPage() {
     setExpandedMonth(null)
     setSelectedLaunch(null)
     setShowYearMap(false)
+    setDeleteMonthConfirm(null)
+    setDeleteYearConfirm(false)
     setNoMatchLaunchesState(new Set())
   }, [viewKey])
 
   useEffect(() => {
-    if (!data || data.year !== year || data.station !== station.id || data.launches.length === 0) return
+    if (merged.yearLaunches.length === 0) return
     if (userInteractedViewRef.current === viewKey) return
 
-    const latest = data.launches.reduce((best, launch) =>
+    const latest = merged.yearLaunches.reduce((best, launch) =>
       launchInstantMs(launch) > launchInstantMs(best) ? launch : best
     )
     const latestKey = launchKey(latest)
@@ -84,7 +164,7 @@ export default function HistoricoPage() {
     setExpandedMonth(latest.month)
     setShowYearMap(false)
     setSelectedLaunch(latest)
-  }, [data, station.id, viewKey, year])
+  }, [merged.yearLaunches, viewKey])
 
   const setSelectedLaunchByUser = useCallback((launch: Launch | null) => {
     userInteractedViewRef.current = viewKey
@@ -98,176 +178,97 @@ export default function HistoricoPage() {
 
   // Trocar de aba só muda o que está sendo visto; a seleção/mapa abertos são
   // limpos pelo efeito de viewKey.
-  const changeStation = useCallback((s: Station) => {
-    setActiveStationId(s.id)
-  }, [])
+  const changeStation = useCallback((s: Station) => setActiveView(s.id), [])
   // Editar a lista aqui vale pro app inteiro (igual a Configurações).
   const changeStations = useCallback((list: Station[]) => {
     setSelectedStations(list)
   }, [])
 
-  // Posições de todas as fontes do mês aberto (ou do mês corrente): preenchem
-  // lançamentos sem posição e ficam como contexto no mapa do lançamento.
-  const clock = nowGMT3()
-  const pointsMonth = expandedMonth ?? (year === clock.getUTCFullYear() ? clock.getUTCMonth() + 1 : null)
-  const { points: rawSondePoints } = useSondePoints(station, year, pointsMonth)
-  // Status de recuperação do SondeHub nas posições UNKNOWN (só exibição; a
-  // rede é consultada só pro mês aberto/corrente, o cache vale pro ano todo).
-  const recoveredLaunches = useRecoveredLaunches(data?.launches ?? NO_LAUNCHES, pointsMonth)
-  // Registro permanente de sondas (R2): o ano inteiro da estação vem de uma
-  // vez (completa todos os meses); as fontes pesadas só são consultadas pras
-  // sondas do mês aberto.
-  const registrySerials = useMemo(() => [
-    ...rawSondePoints.map(p => p.serial),
-    ...recoveredLaunches.filter(l => l.month === pointsMonth && l.position).map(l => l.position!.sondeNumber),
-  ], [rawSondePoints, recoveredLaunches, pointsMonth])
-  const records = useSondeRegistry(station.id, [year], registrySerials)
-  const sondePoints = useMemo(() => pointsMonth == null ? rawSondePoints : mergeWithRegistry(rawSondePoints, records,
-    (r, p) => !!r.stations?.includes(station.id) && isPointInMonth(p, year, pointsMonth)),
-  [rawSondePoints, records, station.id, year, pointsMonth])
-  // Uma entrada por sonda + 1º quadro, receptores e último sinal (só exibição:
-  // o YearStore/cache do ano continuam sendo a verdade da Wyoming).
-  const displayLaunches = useSondeLaunches(recoveredLaunches, sondePoints, records)
-  // Sonda velha reportada de novo hoje não é voo de hoje: sai do card "Ao
-  // vivo" como voo e volta como reaparecimento, ligada ao pouso original.
-  // Ver app/lib/reappearance.ts.
-  const today = useMemo(() => splitTodayFlights(todayFlights, records), [todayFlights, records])
-  const dataRef = useRef(data)
-  dataRef.current = data
-
-  const applyPositions = useCallback((resolved: Launch[]) => {
-    const withPosition = resolved.filter(l => isValidPosition(l.position))
-    if (withPosition.length === 0) return
-    // Só atualiza meses já presentes no cache local: criar uma entrada nova
-    // faria o useYearData pular a busca desse mês no servidor.
-    for (const m of new Set(withPosition.map(l => l.month))) {
-      const entry = getCacheByYear(year, cacheStationKey(station.id)).find(c => c.month === m)
-      if (!entry) continue
-      writeCache({ ...entry, launches: mergeLaunchCollections(entry.launches as Launch[], withPosition.filter(l => l.month === m)) })
-    }
-    const byKey = new Map(withPosition.map(l => [`${l.date}_${l.time_utc}`, l.position!]))
-    setData(prev => {
-      if (!prev || prev.year !== year || prev.station !== station.id) return prev
-      let changed = false
-      const launches = prev.launches.map(l => {
-        const position = byKey.get(`${l.date}_${l.time_utc}`)
-        if (!position || isValidPosition(l.position)) return l
-        changed = true
-        return { ...l, position }
-      })
-      return changed ? { ...prev, launches } : prev
-    })
-  }, [year, station.id, setData])
-
-  useEffect(() => {
-    if (!data || data.year !== year || data.station !== station.id || sondePoints.length === 0) return
-    const { changed } = attachPositions(data.launches, sondePoints)
-    if (changed.length > 0) applyPositions(changed)
-  }, [data, sondePoints, year, station.id, applyPositions])
-
-  const handleYearPoints = useCallback((points: SondePoint[]) => {
-    const current = dataRef.current
-    if (!current || current.year !== year || current.station !== station.id) return
-    applyPositions(attachPositions(current.launches, points).changed)
-  }, [year, station.id, applyPositions])
+  const feedOf = useCallback((stationId: string | undefined) => feeds[stationId ?? primary.id], [feeds, primary])
 
   const handleLaunchPosition = useCallback((launch: Launch, position: LaunchPosition) => {
-    applyPositions([{ ...launch, position }])
-  }, [applyPositions])
+    feedOf(launch.stationId)?.actions.launchPosition(launch, position)
+  }, [feedOf])
 
-  const monthContextPoints = useMemo(() => {
-    if (!data || expandedMonth == null) return sondePoints
-    return mergeSondePoints(pointsFromLaunches(displayLaunches.filter(l => l.month === expandedMonth)), sondePoints)
-  }, [data, displayLaunches, expandedMonth, sondePoints])
+  const handleYearPoints = useCallback((stationId: string, points: SondePoint[]) => {
+    feeds[stationId]?.actions.yearPoints(points)
+  }, [feeds])
 
   const setNoMatchLaunches = useCallback((updater: (prev: Set<string>) => Set<string>) => {
     setNoMatchLaunchesState(updater)
   }, [])
 
-  // Apaga o mês DE VERDADE: no R2 (YearStore) e no cache deste navegador.
-  // Não ressincroniza depois — era isso que fazia o mês voltar na hora, e o
-  // botão parecer que não apagava nada. Sem desfazer: só volta se o mês for
-  // sincronizado de novo (botão Atualizar / sync automático).
+  // Apagar mês/ano só existe com UMA estação na tela (aba da estação, ou uma
+  // estação só escolhida) — ver canDelete no MonthAccordion.
   const handleConfirmDeleteMonth = useCallback(async () => {
-    if (deleteMonthConfirm === null) return
+    if (deleteMonthConfirm === null || !single) return
     const targetMonth = deleteMonthConfirm
     setDeleteMonthConfirm(null)
     setDeleteMonthMsg(null)
-    clearMonth(year, targetMonth, cacheStationKey(station.id))
-    setData(prev => prev ? {
-      ...prev,
-      launches: prev.launches.filter(l => l.month !== targetMonth),
-      count: prev.launches.filter(l => l.month !== targetMonth).length,
-    } : null)
-    try {
-      const res = await fetch(
-        `/api/sounding?action=delete-month&year=${year}&month=${targetMonth}&station=${station.id}`,
-        { cache: 'no-store' },
-      )
-      const json = await res.json()
-      if (!res.ok || json.error) throw new Error(json.error || `Erro ${res.status}`)
-      const nome = MONTHS_FULL[targetMonth - 1]
-      const quanto = json.removed > 0
-        ? `${json.removed} lançamento(s) apagado(s) do servidor`
-        : 'nada havia gravado no servidor; só o cache local foi limpo'
-      // Mês corrente não congela: a coleta segue e o que as fontes reportarem
-      // volta na próxima sincronização. Melhor dizer do que o usuário
-      // descobrir sozinho recarregando a página.
-      setDeleteMonthMsg(json.frozen === false && json.removed >= 0 && targetMonth === clock.getUTCMonth() + 1 && year === clock.getUTCFullYear()
-        ? `${nome}: ${quanto}. Como é o mês corrente, ele continua sendo coletado — o que as fontes reportarem volta na próxima sincronização.`
-        : `${nome}: ${quanto}.`)
-    } catch (e: any) {
-      setDeleteMonthMsg(`Apagado só neste navegador — o servidor recusou: ${e.message}`)
-    }
-  }, [deleteMonthConfirm, year, station.id, setData])
+    const msg = await feeds[primary.id]?.actions.deleteMonth(targetMonth)
+    if (msg) setDeleteMonthMsg(msg)
+  }, [deleteMonthConfirm, single, feeds, primary])
 
   const handleRecheckWyoming = useCallback(async () => {
     setRechecking(true)
     setRecheckMsg(null)
     try {
-      const res = await fetch(`/api/sounding?action=recheck&year=${year}&station=${station.id}${wyomingQuery()}`)
-      const json = await res.json()
-      if (json.error) throw new Error(json.error)
-      if (json.downgraded > 0) {
-        // Alguns launches passaram de "confirmado" para "erro" — o cache
-        // local (localStorage) ficaria com o dado antigo até o próximo
-        // clique manual em "Atualizar", então recarrega direto da API.
-        clearYear(year, cacheStationKey(station.id))
-        await fetchData(year)
-        setRecheckMsg(`${json.downgraded} de ${json.checked} lançamento(s) atualizado(s): a Wyoming não confirma mais os dados.`)
-      } else {
-        setRecheckMsg(`Nenhuma mudança — ${json.checked} lançamento(s) reverificado(s), todos ainda confirmados pela Wyoming.`)
-      }
-    } catch (e: any) {
-      setRecheckMsg(e.message || 'Erro ao reverificar')
+      const msgs = await Promise.all(viewFeeds.map(async f => {
+        const msg = await f.actions.recheck()
+        return single ? msg : `${stationShortName(f.station)}: ${msg}`
+      }))
+      setRecheckMsg(msgs.join(' · '))
     } finally {
       setRechecking(false)
     }
-  }, [year, station.id, fetchData])
+  }, [viewFeeds, single])
 
   const handleConfirmDeleteYear = useCallback(() => {
-    clearYear(year, cacheStationKey(station.id))
+    if (!single) return
+    feeds[primary.id]?.actions.deleteYear()
     setDeleteYearConfirm(false)
-    fetchData(year)
-  }, [year, station.id, fetchData])
+  }, [single, feeds, primary])
+
+  const refreshAll = useCallback(() => {
+    for (const f of viewFeeds) f.actions.refresh()
+  }, [viewFeeds])
 
   const years = Array.from({ length: currentYear - 2019 }, (_, i) => currentYear - i)
+  const displayLaunches = merged.displayLaunches
 
   // Agrupa por mês
   const byMonth: Record<number, Launch[]> = {}
-  if (data) {
-    for (const l of displayLaunches) {
-      (byMonth[l.month] ??= []).push(l)
-    }
+  for (const l of displayLaunches) {
+    (byMonth[l.month] ??= []).push(l)
   }
   // O lançamento selecionado é uma cópia de quando foi clicado: troca pela
   // versão atual (ex.: ganhou status de recuperação depois) pro mapa refletir.
   const liveSelectedLaunch = selectedLaunch
     ? displayLaunches.find(l => sameLaunch(l, selectedLaunch)) ?? selectedLaunch
     : null
+  // Contexto do mapa do lançamento = pontos do mês da estação dele.
+  const monthPoints = feedOf(liveSelectedLaunch?.stationId)?.monthContextPoints ?? NO_POINTS
+  const summaryData: YearData = {
+    year, station: viewStations.map(s => s.id).join(','), count: displayLaunches.length, launches: displayLaunches, errors: [],
+  }
+  const multiView = viewStations.length > 1
+  const stationName = useCallback((id: string | undefined) => {
+    const st = id ? stationById.get(id) : undefined
+    return st ? stationShortName(st) : undefined
+  }, [stationById])
 
   return (
     <div className="p-6 max-w-5xl mx-auto">
+      {/* Um alimentador invisível por estação escolhida (todas, pra trocar de
+          aba sem esperar) — só depois de ler a lista real. */}
+      {ready && stations.map(s => (
+        <HistoryStationFeed
+          key={s.id} station={s} year={year}
+          expandedMonth={viewStations.some(v => v.id === s.id) ? expandedMonth : null}
+          onUpdate={onFeedUpdate} onRemove={onFeedRemove}
+        />
+      ))}
+
       <div className="mb-8">
         <div className="flex items-center justify-between flex-wrap gap-3">
           <div>
@@ -276,8 +277,10 @@ export default function HistoricoPage() {
               Histórico Anual
             </h1>
             <p className="text-gray-400 text-sm mt-1">
-              Radiossondagens da estação {station.name}
-              {stations.length > 1 && <span className="text-faint"> · {stations.length} estações escolhidas</span>}
+              {multiView
+                ? <>Radiossondagens das estações {viewStations.map(s => stationShortName(s)).join(', ')}</>
+                : <>Radiossondagens da estação {primary.name}</>}
+              {!multiView && stations.length > 1 && <span className="text-faint"> · {stations.length} estações escolhidas</span>}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -287,7 +290,7 @@ export default function HistoricoPage() {
               className="flex items-center gap-2 px-3 py-2 bg-surface border border-border rounded-md text-sm text-white hover:border-border-strong transition-all max-w-[180px]"
             >
               <Radio size={14} className="text-blue-400 flex-shrink-0" />
-              <span className="truncate">{stations.length > 1 ? `Estações (${stations.length})` : station.name}</span>
+              <span className="truncate">{stations.length > 1 ? `Estações (${stations.length})` : primary.name}</span>
             </button>
             <select
               value={year}
@@ -299,12 +302,12 @@ export default function HistoricoPage() {
               ))}
             </select>
             <button
-              onClick={() => fetchData(year)}
-              disabled={syncing}
+              onClick={refreshAll}
+              disabled={merged.syncing}
               className="flex items-center gap-2 px-3 py-2.5 bg-surface border border-border rounded-md text-sm text-gray-400 hover:text-white hover:border-border-strong transition-all"
               title="Atualizar"
             >
-              <RefreshCw size={14} className={syncing ? 'animate-spin' : ''} />
+              <RefreshCw size={14} className={merged.syncing ? 'animate-spin' : ''} />
             </button>
             <Link
               href="/configuracoes#dados"
@@ -317,14 +320,17 @@ export default function HistoricoPage() {
               onClick={handleRecheckWyoming}
               disabled={rechecking}
               className="flex items-center gap-2 px-3 py-2.5 bg-surface border border-border rounded-md text-sm text-gray-400 hover:text-white hover:border-border-strong transition-all disabled:opacity-50"
-              title="A Wyoming às vezes muda de ideia depois de confirmar uma sondagem (fica indisponível). Reverifica os lançamentos já marcados como confirmados neste ano."
+              title={`A Wyoming às vezes muda de ideia depois de confirmar uma sondagem (fica indisponível). Reverifica os lançamentos já marcados como confirmados neste ano${multiView ? ' — em todas as estações mostradas' : ''}.`}
             >
               {rechecking ? <Loader2 size={14} className="animate-spin" /> : <ShieldCheck size={14} />}
             </button>}
           </div>
         </div>
 
-        <StationTabs stations={stations} activeId={station.id} onChange={changeStation} className="mt-4" />
+        <StationTabs
+          stations={stations} activeId={viewId} onChange={changeStation}
+          onSelectAll={() => setActiveView(ALL_STATIONS)} className="mt-4"
+        />
         {showStationPicker && <StationMultiPicker selected={stations} onChange={changeStations} autoFocus />}
         {recheckMsg && (
           <p className="text-xs text-gray-400 mt-2">{recheckMsg}</p>
@@ -338,68 +344,89 @@ export default function HistoricoPage() {
       </div>
 
       <LiveCard
-        todayData={todayData}
-        todayLoading={todayLoading}
-        todayError={todayError}
-        liveError={liveError}
-        todayFlights={today.flights}
-        reappearedToday={today.reappeared}
-        liveFlightChecked={liveFlightChecked}
-        lastFetchAt={lastFetchAt}
+        todayData={merged.todayData}
+        todayLoading={merged.todayLoading}
+        todayError={merged.todayError}
+        liveError={merged.liveError}
+        todayFlights={merged.flights}
+        reappearedToday={merged.reappeared}
+        liveFlightChecked={merged.liveFlightChecked}
+        lastFetchAt={merged.lastFetchAt}
         selectedLaunch={selectedLaunch}
         onExpandMonth={setExpandedMonthByUser}
         onSelectLaunch={l => { setShowYearMap(false); setSelectedLaunchByUser(l) }}
+        stationName={multiView ? stationName : undefined}
+        flightStationName={multiView ? merged.flightStationName : undefined}
       />
 
-      {(todayError || liveError) && (
+      {(merged.todayError || merged.liveError) && (
         <div className="panel p-3 mb-6 border-yellow-500/20 bg-yellow-500/5 flex items-start gap-2.5">
           <AlertCircle size={15} className="text-yellow-400 flex-shrink-0 mt-0.5" />
           <div className="text-xs">
             <p className="text-yellow-300">Consulta ao vivo parcial; dados anteriores foram preservados.</p>
-            <p className="text-dim mt-1">{todayError || liveError}</p>
+            <p className="text-dim mt-1">{merged.todayError || merged.liveError}</p>
           </div>
         </div>
       )}
 
-      {error && (
+      {merged.error && (
         <div className="panel p-4 mb-6 border-red-500/20 bg-red-500/5 flex items-start gap-3">
           <AlertCircle size={18} className="text-red-400 flex-shrink-0 mt-0.5" />
           <div>
             <p className="text-sm text-red-400 font-medium">Erro ao carregar dados</p>
-            <p className="text-xs text-gray-400 mt-1">{error}</p>
+            <p className="text-xs text-gray-400 mt-1">{merged.error}</p>
           </div>
         </div>
       )}
 
-      {statusMsg && (
+      {merged.statusMsg && (
         <div className="panel p-3 mb-6 border-blue-500/20 bg-blue-500/5 flex items-center gap-2.5">
           <Loader2 size={14} className="text-blue-400 animate-spin flex-shrink-0" />
-          <p className="text-xs text-blue-300">{statusMsg}</p>
+          <p className="text-xs text-blue-300">{merged.statusMsg}</p>
         </div>
       )}
 
-      {data ? (
+      {merged.anyReady ? (
         <>
           {/* Resumo com os lançamentos já completados pelo registro de sondas
               (fontes que confirmam, uma entrada por sonda). */}
-          <SummaryCards data={{ ...data, launches: displayLaunches, count: displayLaunches.length }} />
+          <SummaryCards data={summaryData} />
           <div className="panel px-4 py-3 mb-6 flex items-center gap-x-5 gap-y-2 flex-wrap text-[11px]">
-            <span className="text-dim">Cobertura</span>
+            <span className="text-dim">Cobertura{multiView ? ` · ${viewStations.length} estações` : ''}</span>
             {wyomingOn
               ? <span className="text-src-wyoming mono">W {sourceCounts(displayLaunches).wyoming}</span>
               : <span className="text-faint" title="Consulta à Wyoming desativada em Configurações">Wyoming desativada</span>}
             <span className="text-src-radiosondy mono">R {sourceCounts(displayLaunches).radiosondy}</span>
             <span className="text-src-sondehub mono">S {sourceCounts(displayLaunches).sondehub}</span>
             <span className="text-gray-300 mono">posições {sourceCounts(displayLaunches).positioned}/{displayLaunches.length}</span>
-            {failedMonths.size > 0 && <span className="text-yellow-400">{failedMonths.size} mês(es) aguardando nova tentativa</span>}
+            {merged.failedMonths.size > 0 && <span className="text-yellow-400">{merged.failedMonths.size} mês(es) aguardando nova tentativa</span>}
             <span className="ml-auto text-faint">
-              {lastUpdatedAt ? `cache atualizado ${new Date(lastUpdatedAt).toLocaleString('pt-BR')}` : 'sem cache local'} · ao vivo {sourceHealth.cache === 'ok' ? 'via snapshot' : 'via fontes diretas'}
+              {merged.lastUpdatedAt ? `cache atualizado ${new Date(merged.lastUpdatedAt).toLocaleString('pt-BR')}` : 'sem cache local'} · ao vivo {merged.sourceHealth.cache === 'ok' ? 'via snapshot' : 'via fontes diretas'}
             </span>
           </div>
+          {multiView && (
+            <div className="panel px-4 py-3 mb-6 flex items-center gap-x-4 gap-y-2 flex-wrap text-[11px]">
+              <span className="text-dim">Por estação</span>
+              {viewFeeds.map(f => (
+                <button
+                  key={f.station.id}
+                  onClick={() => changeStation(f.station)}
+                  className="flex items-center gap-1.5 text-gray-300 hover:text-white"
+                  title={`Abrir só ${f.station.name}`}
+                >
+                  {stationShortName(f.station)}
+                  <span className="mono text-blue-300">{f.displayLaunches.length}</span>
+                  {f.syncing && <Loader2 size={10} className="animate-spin text-blue-400" />}
+                </button>
+              ))}
+            </div>
+          )}
           <MonthlyChart year={year} byMonth={byMonth} />
           <MonthAccordion
             year={year}
-            station={station}
+            stations={viewStations}
+            stationOf={stationOf}
+            canDelete={single}
             byMonth={byMonth}
             expandedMonth={expandedMonth}
             setExpandedMonth={setExpandedMonthByUser}
@@ -412,13 +439,17 @@ export default function HistoricoPage() {
             deleteMonthConfirm={deleteMonthConfirm}
             onRequestDeleteMonth={setDeleteMonthConfirm}
             onConfirmDeleteMonth={handleConfirmDeleteMonth}
-            monthPoints={monthContextPoints}
+            monthPoints={monthPoints}
             records={records}
             onLaunchPosition={handleLaunchPosition}
             onYearPoints={handleYearPoints}
           />
 
-          {data.count > 0 && (
+          {!single ? (
+            <p className="text-[11px] text-faint">
+              Para apagar um mês ou o ano do cache, abra a aba da estação — na visão &quot;Todas&quot; isso apagaria de todas ao mesmo tempo.
+            </p>
+          ) : merged.yearLaunches.length > 0 && (
             deleteYearConfirm ? (
               <div className="panel p-4 border-yellow-500/20 bg-yellow-500/5 flex items-center gap-3 flex-wrap">
                 <p className="text-sm text-yellow-400 font-medium">Remover {year} do cache local?</p>

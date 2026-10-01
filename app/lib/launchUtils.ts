@@ -59,12 +59,21 @@ export function launchDisplayTime(l: Launch): { time: string; exact: boolean } {
 }
 
 // Mesmo lançamento clicado de novo: fecha o mapa em vez de reabrir
+// (com várias estações no histórico, o mesmo horário sinótico existe em
+// cada uma — `stationId` desempata).
 export function sameLaunch(a: Launch | null, b: Launch): boolean {
-  return !!a && a.date === b.date && a.time_local === b.time_local
+  return !!a && a.date === b.date && a.time_local === b.time_local && a.stationId === b.stationId
 }
 
 export function launchKey(l: Launch): string {
-  return `${l.date}_${l.time_local}`
+  return l.stationId ? `${l.date}_${l.time_local}@${l.stationId}` : `${l.date}_${l.time_local}`
+}
+
+// Tira a marca de estação (só exibição) antes de gravar em cache/servidor.
+export function withoutStationTag(l: Launch): Launch {
+  if (l.stationId === undefined) return l
+  const { stationId: _omit, ...rest } = l
+  return rest
 }
 
 // Normaliza "YYYY-MM-DD HH:mm:ss[z]" (formato do radiosondy.info e do firmware

@@ -7,7 +7,7 @@ import SourceBadges from '@/app/components/ui/SourceBadges'
 import { computeConfidence } from '@/app/lib/confidence'
 import { MONTHS, MONTHS_FULL, isDaytime, sameLaunch, launchKey, launchDisplayTime } from '@/app/lib/launchUtils'
 import { isValidPosition } from '@/app/lib/launchData'
-import type { Station } from '@/app/lib/stations'
+import { stationShortName, type Station } from '@/app/lib/stations'
 import type { Launch, LaunchPosition } from '@/app/lib/types'
 import type { SondePoint } from '@/app/lib/sondePoints'
 import type { SondeRecord } from '@/app/lib/sondeRegistry'
@@ -18,7 +18,13 @@ import { STATUS_COLORS } from '@/app/lib/tokens'
 
 interface MonthAccordionProps {
   year: number
-  station: Station
+  // Estações mostradas (uma, ou todas na aba "Todas"). Cada lançamento diz a
+  // sua em `stationId`; stationOf resolve (padrão: a 1ª).
+  stations: Station[]
+  stationOf: (l: Launch) => Station
+  // Apagar mês só com UMA estação na tela — na soma, um clique apagaria o mês
+  // de todas no servidor.
+  canDelete?: boolean
   byMonth: Record<number, Launch[]>
   expandedMonth: number | null
   setExpandedMonth: (m: number | null) => void
@@ -34,13 +40,13 @@ interface MonthAccordionProps {
   monthPoints?: SondePoint[] // sondas de todas as fontes do mês aberto
   records?: Map<string, SondeRecord> // registro de sondas (R2) — dados mais completos por sonda
   onLaunchPosition?: (launch: Launch, position: LaunchPosition) => void
-  onYearPoints?: (points: SondePoint[]) => void
+  onYearPoints?: (stationId: string, points: SondePoint[]) => void
 }
 
 // Acordeão mês → dia → horários, com badges de fonte (W/R/S), LaunchMap
 // embutido e mapa do ano.
 export default function MonthAccordion({
-  year, station, byMonth,
+  year, stations, stationOf, canDelete = true, byMonth,
   expandedMonth, setExpandedMonth,
   selectedLaunch, setSelectedLaunch,
   noMatchLaunches, setNoMatchLaunches,
@@ -49,6 +55,8 @@ export default function MonthAccordion({
   monthPoints, records, onLaunchPosition, onYearPoints,
 }: MonthAccordionProps) {
   const wyomingOn = useWyomingEnabled()
+  const multi = stations.length > 1
+  const allLaunches = Object.values(byMonth).flat()
   return (
     <div className="panel overflow-hidden mb-6">
       <div className="px-5 py-4 border-b border-border flex items-center justify-between gap-3">
@@ -71,13 +79,19 @@ export default function MonthAccordion({
 
       {showYearMap && (
         <div className="px-5 pt-4 bg-bg">
-          <YearMap
-            year={year}
-            station={station.id}
-            launches={Object.values(byMonth).flat()}
-            onPoints={onYearPoints}
-            onClose={() => setShowYearMap(false)}
-          />
+          {/* Um mapa por estação (cada um com as fontes e o registro dela). */}
+          {stations.map(s => (
+            <div key={s.id}>
+              {multi && <p className="text-xs text-gray-300 mt-3 -mb-1 font-medium">{s.name}</p>}
+              <YearMap
+                year={year}
+                station={s.id}
+                launches={multi ? allLaunches.filter(l => (l.stationId ?? stations[0].id) === s.id) : allLaunches}
+                onPoints={onYearPoints ? points => onYearPoints(s.id, points) : undefined}
+                onClose={() => setShowYearMap(false)}
+              />
+            </div>
+          ))}
         </div>
       )}
 
@@ -118,7 +132,7 @@ export default function MonthAccordion({
                     className={`text-gray-400 transition-transform ${isOpen ? 'rotate-180' : ''}`}
                   />
                 </button>
-                {launches.length > 0 && (
+                {launches.length > 0 && canDelete && (
                   deleteMonthConfirm === m ? (
                     <div className="flex items-center gap-1.5 flex-shrink-0">
                       <span className="text-xs text-yellow-400" title="Apaga os lançamentos deste mês no servidor (R2) e no cache deste navegador. Não tem desfazer.">
@@ -174,6 +188,7 @@ export default function MonthAccordion({
                               .map(l => ({ l, display: launchDisplayTime(l) }))
                               .sort((a, b) => a.display.time.localeCompare(b.display.time))
                               .map(({ l, display }, i) => {
+                                const station = stationOf(l)
                                 const noMatch = l.radiosondyMatch === 'no' || noMatchLaunches.has(launchKey(l))
                                 const sourceLabel = l.source === 'sondehub' ? 'sondehub.org' : 'radiosondy.info'
                                 const title = display.exact
@@ -216,6 +231,11 @@ export default function MonthAccordion({
                                     {!display.exact && '~'}{display.time}
                                     <SourceBadges confidence={computeConfidence(l, station.wyomingSupported !== false, wyomingOn)} />
                                   </button>
+                                  {multi && (
+                                    <span className="text-[9px] px-1 rounded border border-blue-500/30 text-blue-300 truncate max-w-[90px]" title={`Estação ${station.name}`}>
+                                      {stationShortName(station)}
+                                    </span>
+                                  )}
                                   {reappearances?.length ? (
                                     <span
                                       style={{ color: STATUS_COLORS.reappeared }}
@@ -237,7 +257,7 @@ export default function MonthAccordion({
                   {selectedLaunch && selectedLaunch.month === m && (
                     <LaunchMap
                       launch={selectedLaunch}
-                      station={station.id}
+                      station={stationOf(selectedLaunch).id}
                       contextPoints={monthPoints}
                       records={records}
                       onPosition={onLaunchPosition}

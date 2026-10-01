@@ -13,6 +13,20 @@ export interface LiveSourceHealth {
   sondehub: 'ok' | 'unavailable'
 }
 
+// Saúde das fontes somada entre várias estações (painel e histórico com mais
+// de uma): basta uma responder pra a fonte estar "ok"; o snapshot do servidor
+// só é "ok" se valeu pra todas.
+export function combineSourceHealth(list: LiveSourceHealth[]): LiveSourceHealth {
+  if (list.length === 0) return { cache: 'miss', radiosondy: 'not-configured', sondehub: 'unavailable' }
+  if (list.length === 1) return list[0]
+  return {
+    cache: list.find(h => h.cache !== 'ok')?.cache ?? 'ok',
+    radiosondy: list.some(h => h.radiosondy === 'ok') ? 'ok'
+      : list.some(h => h.radiosondy === 'unavailable') ? 'unavailable' : 'not-configured',
+    sondehub: list.some(h => h.sondehub === 'ok') ? 'ok' : 'unavailable',
+  }
+}
+
 async function fetchFromCache(stationId: string): Promise<{ flights: TodayFlight[] | null; state: LiveSourceHealth['cache'] }> {
   try {
     const res = await fetch(`/api/live-flights?station=${encodeURIComponent(stationId)}`, { cache: 'no-store' })

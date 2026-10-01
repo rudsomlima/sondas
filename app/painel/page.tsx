@@ -7,7 +7,7 @@ import { useGeolocation } from '@/app/lib/chase'
 import type { Launch } from '@/app/lib/types'
 import type { TodayFlight } from '@/app/lib/radiosondy'
 import type { Reappearance } from '@/app/lib/reappearance'
-import type { LiveSourceHealth } from '../historico/hooks/useLiveFlights'
+import { combineSourceHealth } from '../historico/hooks/useLiveFlights'
 import { useSondeRegistry } from '../historico/hooks/useSondeRegistry'
 import { mergeSondePoints, todayFlightReappearance, type SondePoint } from '@/app/lib/sondePoints'
 import { launchSortMs } from '@/app/lib/sondeLaunches'
@@ -28,19 +28,6 @@ import type { SelectedTarget } from './selection'
 
 const NO_SERIALS: string[] = []
 const NO_YEARS: number[] = []
-
-// Saúde das fontes ao vivo somada entre estações: basta uma responder pra a
-// fonte estar "ok"; o snapshot do servidor só é "ok" se valeu pra todas.
-function combineHealth(list: LiveSourceHealth[]): LiveSourceHealth {
-  if (list.length === 0) return { cache: 'miss', radiosondy: 'not-configured', sondehub: 'unavailable' }
-  if (list.length === 1) return list[0]
-  return {
-    cache: list.find(h => h.cache !== 'ok')?.cache ?? 'ok',
-    radiosondy: list.some(h => h.radiosondy === 'ok') ? 'ok'
-      : list.some(h => h.radiosondy === 'unavailable') ? 'unavailable' : 'not-configured',
-    sondehub: list.some(h => h.sondehub === 'ok') ? 'ok' : 'unavailable',
-  }
-}
 
 export default function PainelPage() {
   // Estações escolhidas em Configurações: o painel acompanha TODAS ao mesmo
@@ -134,7 +121,7 @@ export default function PainelPage() {
       liveError: errors(f => f.liveError),
       monthError: errors(f => f.monthError),
       monthLoading: activeFeeds.some(f => f.monthLoading),
-      sourceHealth: combineHealth(activeFeeds.map(f => f.sourceHealth)),
+      sourceHealth: combineSourceHealth(activeFeeds.map(f => f.sourceHealth)),
       lastFetchAt: fetchTimes.length ? new Date(Math.max(...fetchTimes)) : null,
     }
   }, [activeFeeds, stations.length, multi])

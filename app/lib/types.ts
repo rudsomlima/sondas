@@ -96,6 +96,11 @@ export interface Launch {
   // exibição: o pouso deste lançamento continua em `position`, intocado.
   // Ver app/lib/reappearance.ts.
   reappearances?: Reappearance[]
+  // Só EXIBIÇÃO: estação de onde o lançamento veio, carimbada no navegador
+  // quando o /historico mostra várias estações juntas (ver
+  // HistoryStationFeed). Nunca vai pro cache local, YearStore ou servidor —
+  // quem grava tira antes (withoutStationTag).
+  stationId?: string
 }
 
 export interface YearStore {

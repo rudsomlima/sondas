@@ -22,13 +22,22 @@ interface LiveCardProps {
   selectedLaunch: Launch | null
   onExpandMonth: (month: number) => void
   onSelectLaunch: (l: Launch | null) => void
+  // Várias estações juntas (aba "Todas"): nome curto da estação de cada
+  // lançamento (pelo stationId) e de cada sonda de hoje (pelo serial).
+  stationName?: (stationId: string | undefined) => string | undefined
+  flightStationName?: Map<string, string>
+}
+
+function StationChip({ name }: { name?: string }) {
+  if (!name) return null
+  return <span className="text-[9px] px-1 rounded border border-blue-500/30 text-blue-300 truncate max-w-[110px]" title={`Estação ${name}`}>{name}</span>
 }
 
 // Card "Ao vivo": estado de hoje combinando Wyoming (horário oficial) com
 // radiosondy.info/sondehub.org (voo quase em tempo real).
 export default function LiveCard({
   todayData, todayLoading, todayError, liveError, todayFlights, liveFlightChecked, lastFetchAt,
-  selectedLaunch, onExpandMonth, onSelectLaunch, reappearedToday = [],
+  selectedLaunch, onExpandMonth, onSelectLaunch, reappearedToday = [], stationName, flightStationName,
 }: LiveCardProps) {
   // Sondehub casa por proximidade geográfica (raio), então sozinho pode
   // pegar um voo de outra estação passando perto — só conta como "teve voo"
@@ -72,7 +81,7 @@ export default function LiveCard({
       ) : (
         <>
           <div className="text-3xl font-bold text-white mono">{count}</div>
-          {hasUnconfirmedCandidate && <div className="text-xs text-yellow-300 mt-1">{todayFlights.length} telemetria(s) próxima(s), ainda sem vínculo confirmado com esta estação</div>}
+          {hasUnconfirmedCandidate && <div className="text-xs text-yellow-300 mt-1">{todayFlights.length} telemetria(s) próxima(s), ainda sem vínculo confirmado com {stationName ? 'as estações' : 'esta estação'}</div>}
           {todayData?.launched_today ? (
             <div className="flex flex-wrap gap-x-2 gap-y-1 mt-1">
               {todayData.launches.map((l, i) => {
@@ -94,6 +103,7 @@ export default function LiveCard({
                 >
                   {isDaytime(display.time) ? <Sun size={10} /> : <Moon size={10} />}
                   {display.exact ? '' : '~'}{display.time}
+                  <StationChip name={stationName?.(l.stationId)} />
                 </button>
                 )
               })}
@@ -123,6 +133,7 @@ export default function LiveCard({
                         {Math.round(f.altitude).toLocaleString('pt-BR')} m
                       </span>
                       <span className="text-xs text-amber-400 mono font-medium">{f.sondeNumber}</span>
+                      <StationChip name={flightStationName?.get(f.sondeNumber)} />
                       <span className="text-[9px] text-faint mono">{f.source === 'sondehub-site' ? 'SondeHub/site' : f.source}</span>
                       <a
                         href={sondeHubUrl(f.sondeNumber, f.lat, f.lon)}
