@@ -1,10 +1,7 @@
 /**
- * Snapshot server-side de "voos ao vivo" por estação — roda dentro de
- * app/api/poll (chamado por um cron externo a cada poucos minutos) e grava
- * em R2 (ver readLiveFlights/writeLiveFlights em blobStore.ts), pra
- * /historico não precisar bater direto no SondeHub/radiosondy.info nem
- * reprocessar o feed global toda vez que alguém abre a página (ver
- * useLiveFlights.ts, que agora lê esse cache primeiro).
+ * Calcula voos ao vivo por estação dentro de /api/poll. Os feeds globais são
+ * consultados uma vez por execução e organizados em memória para os alertas;
+ * snapshots transitórios não são persistidos no R2.
  *
  * Os dois feeds globais (radiosondy "Now Flying!" e a telemetria de 12h do
  * SondeHub) são buscados UMA VEZ por execução e fatiados em memória por
@@ -19,7 +16,7 @@ import {
 import { fetchSondeHubLastFrames, filterSondeHubFlights, type SondeHubLastFrame } from './sondehub'
 import { haversineKm } from './geo'
 import { gmt3DateStr } from './launchUtils'
-import { writeLiveFlights, readTelegramSettings } from './blobStore'
+import { readTelegramSettings } from './blobStore'
 import { notifyFlightEvent } from './telegramEvents'
 import { findRecords } from './sondeRegistryServer'
 import { splitTodayFlights } from './sondePoints'
@@ -106,7 +103,6 @@ export async function refreshLiveFlightsCache(): Promise<LiveFlightsCacheSummary
       }
 
       const flights = [...bySondeNumber.values()]
-      await writeLiveFlights(station.id, { updatedAt: Date.now(), flights })
       // Avisos de lançamento/pouso no Telegram sem depender do /painel aberto
       // (estações escolhidas em /telegram; o dedup em R2 evita repetir com o
       // detector do navegador). Só eventos recentes: na 1ª execução não

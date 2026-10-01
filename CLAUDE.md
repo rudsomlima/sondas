@@ -72,6 +72,7 @@ Desligada, em TODO o app:
    Internamente faz scraping de `https://weather.uwyo.edu/cgi-bin/sounding?region=samer&TYPE=TEXT:LIST...&STNM={station}` (HTML) e parseia com regex linhas `Observations at HHZ DD Mon YYYY` em registros `Launch` (data/hora convertidas pra GMT-3). As respostas da Wyoming são instáveis (400/403/500 intermitentes sem relação com a requisição em si), então as buscas tentam de novo até 3x com backoff e timeout de 15s.
 
 2. **`app/lib/blobStore.ts`** — persiste um arquivo JSON por estação+ano no Cloudflare R2 (API compatível com S3 via `@aws-sdk/client-s3`). A estação padrão (82599) mantém o caminho legado `sondas/history-{year}.json`; qualquer outra estação usa `sondas/history-{station}-{year}.json`. Vira no-op completo se `R2_ACCOUNT_ID`/`R2_ACCESS_KEY_ID`/`R2_SECRET_ACCESS_KEY` não estiverem definidos (ex.: dev local sem `.env.local`), então a API continua funcionando localmente, só sem persistência entre requisições. Exige `R2_BUCKET_NAME` (padrão `"sondas"`).
+   O painel de tráfego e estimativa de cobrança usa `CLOUDFLARE_API_TOKEN` com permissão `Account Analytics: Read` junto ao `R2_ACCOUNT_ID`; o token fica no servidor e consulta o GraphQL Analytics API.
 
 3. **Cache em memória** dentro de `route.ts` (Map `memoryCache`, por instância do servidor, chaveado por estação+ano+mês): mês atual cacheado por 1 hora, meses passados cacheados permanentemente pela vida da instância. Fica na frente do Blob store e da busca à Wyoming.
 
@@ -496,7 +497,8 @@ completo que qualquer fonte sozinha, e é **ele que completa todos os mapas**.
   minutos pelo cron-job.org) roda `backfillRegistry(4)` em paralelo com o
   cache de voos ao vivo — semeia o registro com as posições de lançamento do
   YearStore que ele ainda não tem e enriquece as 4 sondas mais recentes que
-  ainda valem consulta.
+  ainda valem consulta. O cache de voos serve aos alertas durante a execução,
+  mas não é persistido no R2; o navegador consulta as fontes ao vivo diretamente.
 - **Navegador** (`sondeRegistryClient.ts`): cache em memória + localStorage
   (`sondas_registry_v1`); `useSondeRegistry(station, years, serials)` carrega
   o ano do R2 e pede enriquecimento (ordem de `serials` = prioridade: sondas

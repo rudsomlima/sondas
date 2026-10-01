@@ -27,6 +27,21 @@ interface R2AnyFile {
   lastModified: string
 }
 
+interface R2Metrics {
+  configured: boolean
+  missing?: string[]
+  error?: string
+  period?: { start: string; end: string }
+  operations?: { classA: number; classB: number; unclassified: number }
+  bandwidth?: { uploadBytes: number; downloadBytes: number }
+  storage?: { bytes: number; objects: number }
+  estimate?: { classA: number; classB: number; total: number }
+  buckets?: Array<{
+    name: string; classA: number; classB: number; unclassified: number
+    uploadBytes: number; downloadBytes: number; storageBytes: number; objects: number
+  }>
+}
+
 type DeleteTarget =
   | { type: 'history-year';    station: string; year: number }
   | { type: 'history-station'; station: string }
@@ -40,6 +55,24 @@ function fileBasename(key: string): string {
 
 function fmtDate(iso: string): string {
   return iso ? new Date(iso).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : '—'
+}
+
+function fmtUsd(value: number): string {
+  return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'USD' }).format(value)
+}
+
+function fmtNumber(value: number): string {
+  return new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 0 }).format(value)
+}
+
+function MetricCard({ label, value, hint }: { label: string; value: string; hint: string }) {
+  return (
+    <div className="rounded border border-border bg-surface px-2.5 py-2 min-w-0">
+      <p className="text-[10px] text-gray-500 truncate">{label}</p>
+      <p className="text-sm font-semibold text-white mono truncate mt-0.5">{value}</p>
+      <p className="text-[9px] text-gray-600 truncate mt-0.5">{hint}</p>
+    </div>
+  )
 }
 
 const FILE_DESCRIPTIONS: Record<string, string> = {
@@ -62,6 +95,9 @@ export default function R2Panel() {
   const [deleteTarget,   setDeleteTarget]   = useState<DeleteTarget | null>(null)
   const [deleting,       setDeleting]       = useState(false)
   const [expandedSt,     setExpandedSt]     = useState<Set<string>>(new Set())
+  const [metrics,        setMetrics]        = useState<R2Metrics | null>(null)
+  const [metricsError,   setMetricsError]   = useState<string | null>(null)
+  const [metricsLoading, setMetricsLoading] = useState(false)
 
   // Nomes amigáveis dos receptores (de knownReceivers no settings)
   const [receiverNames, setReceiverNames] = useState<Record<string, string>>({})
@@ -76,12 +112,28 @@ export default function R2Panel() {
     setReceiverNames(names)
   }, [])
 
+  const fetchMetrics = useCallback(async () => {
+    setMetricsLoading(true)
+    try {
+      const res = await fetch('/api/r2-metrics', { cache: 'no-store' })
+      const json = await res.json()
+      setMetrics(json)
+      setMetricsError(res.ok ? null : json.error ?? 'Falha ao carregar métricas do Cloudflare.')
+    } catch {
+      setMetricsError('Falha de conexão ao carregar o uso do R2.')
+    } finally {
+      setMetricsLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { void fetchMetrics() }, [fetchMetrics])
+
   const fetchFiles = useCallback(async () => {
     setLoading(true)
     try {
-      const res = await fetch('/api/r2-admin')
-      if (res.ok) {
-        const json = await res.json()
+      const filesRes = await fetch('/api/r2-admin')
+      const json = await filesRes.json()
+      if (filesRes.ok) {
         setConfigured(json.configured !== false)
         setFiles(json.files ?? [])
         setReceiverFiles(json.receiverFiles ?? [])
@@ -89,10 +141,13 @@ export default function R2Panel() {
         setTotalBytes(json.totalBytes ?? 0)
         setLoaded(true)
       }
+      await fetchMetrics()
+    } catch {
+      setMetricsError('Falha de conexão ao carregar os arquivos do R2.')
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [fetchMetrics])
 
   const handleDelete = useCallback(async () => {
     if (!deleteTarget) return
@@ -156,6 +211,68 @@ export default function R2Panel() {
       {loaded && configured && totalFiles === 0 && (
         <p className="text-xs text-gray-500 mt-2">Nenhum arquivo encontrado no bucket R2.</p>
       )}
+
+      <section className="mt-4 rounded border border-border bg-bg p-3">
+        <div className="flex flex-wrap items-start justify-between gap-2 mb-3">
+          <div>
+            <h4 className="text-xs font-semibold text-gray-200">Tráfego e cobrança do R2</h4>
+            <p className="text-[10px] text-gray-500 mt-0.5">Uso da conta Cloudflare no ciclo atual, atualizado ao carregar.</p>
+          </div>
+          {metrics?.period && (
+            <span className="text-[10px] text-gray-500">
+              {new Date(metrics.period.start).toLocaleDateString('pt-BR', { timeZone: 'UTC' })} até agora (UTC)
+            </span>
+          )}
+        </div>
+
+        {metricsError && <p className="text-xs text-red-300">{metricsError}</p>}
+        {metricsLoading && !metrics && <p className="text-xs text-gray-500">Consultando métricas do Cloudflare…</p>}
+        {metrics && !metrics.configured && (
+          <div className="text-xs text-gray-400 space-y-1">
+            <p>Para consultar os dados reais, configure no servidor <code>CLOUDFLARE_API_TOKEN</code> com permissão somente de leitura <b>Account Analytics: Read</b>.</p>
+            <p>O token fica apenas no servidor. O ID da conta já vem de <code>R2_ACCOUNT_ID</code>.</p>
+            <a className="text-blue-400 hover:underline" href="https://developers.cloudflare.com/analytics/graphql-api/getting-started/authentication/api-token-auth/" target="_blank" rel="noreferrer">Como criar o token de Analytics</a>
+          </div>
+        )}
+        {metrics?.configured && !metricsError && metrics.operations && metrics.bandwidth && metrics.storage && metrics.estimate && (
+          <>
+            <div className="grid grid-cols-2 lg:grid-cols-5 gap-2">
+              <MetricCard label="Classe A" value={fmtNumber(metrics.operations.classA)} hint="franquia 1 milhão" />
+              <MetricCard label="Classe B" value={fmtNumber(metrics.operations.classB)} hint="franquia 10 milhões" />
+              <MetricCard label="Enviado / recebido" value={`${formatBytes(metrics.bandwidth.uploadBytes)} / ${formatBytes(metrics.bandwidth.downloadBytes)}`} hint="transferência no ciclo" />
+              <MetricCard label="Armazenamento atual" value={formatBytes(metrics.storage.bytes)} hint={`${fmtNumber(metrics.storage.objects)} objetos`} />
+              <MetricCard label="Estimativa de operações" value={fmtUsd(metrics.estimate.total)} hint={`A ${fmtUsd(metrics.estimate.classA)} · B ${fmtUsd(metrics.estimate.classB)}`} />
+            </div>
+            <p className="text-[10px] text-gray-500 mt-2">
+              Estimativa das operações Standard após as franquias grátis, arredondada por milhão; armazenamento e acesso infrequente não estão incluídos. Confira a <a className="text-blue-400 hover:underline" href="https://developers.cloudflare.com/r2/pricing/" target="_blank" rel="noreferrer">tarifa oficial</a>; a fatura pode variar.
+              {metrics.operations.unclassified > 0 && ` ${fmtNumber(metrics.operations.unclassified)} operações sem classificação foram excluídas da estimativa.`}
+            </p>
+            {!!metrics.buckets?.length && (
+              <div className="mt-3 border-t border-border pt-2">
+                <p className="text-[10px] text-gray-500 uppercase tracking-wide mb-1">Por bucket</p>
+                <div className="space-y-1">
+                  <div className="grid grid-cols-[minmax(0,1fr)_auto_auto_auto] gap-x-3 text-[9px] text-gray-600 uppercase">
+                    <span>Bucket</span><span>Classe A</span><span>Classe B</span><span>Armazenado</span>
+                  </div>
+                  {metrics.buckets.map(bucket => (
+                    <div key={bucket.name} className="border-t border-border/50 py-1">
+                      <div className="grid grid-cols-[minmax(0,1fr)_auto_auto_auto] gap-x-3 text-[10px] text-gray-400">
+                        <span className="truncate text-gray-300">{bucket.name}</span>
+                        <span>{fmtNumber(bucket.classA)}</span>
+                        <span>{fmtNumber(bucket.classB)}</span>
+                        <span>{formatBytes(bucket.storageBytes)}</span>
+                      </div>
+                      <p className="text-[9px] text-gray-600 mt-0.5">
+                        Enviado {formatBytes(bucket.uploadBytes)} · recebido {formatBytes(bucket.downloadBytes)}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </>
+        )}
+      </section>
 
       {totalFiles > 0 && (
         <>
