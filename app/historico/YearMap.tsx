@@ -4,10 +4,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import 'leaflet/dist/leaflet.css'
 import { AlertCircle, Loader2, RefreshCw, X, Maximize2, Minimize2 } from 'lucide-react'
 import { statusColor, buildBalloonIcon, buildClusterIcon, gmt3IconLabelWithMonth, LEGEND_ITEMS } from '@/app/lib/radiosondy'
-import { findStation } from '@/app/lib/stations'
+import { stationCode, type Station } from '@/app/lib/stations'
 import { createBaseMap } from '@/app/lib/leafletBase'
 import type { Launch } from '@/app/lib/types'
-import { mergeWithRegistry, sondePointPopup, type SondePoint } from '@/app/lib/sondePoints'
+import { mergeSondePoints, mergeWithRegistry, sondePointPopup, type SondePoint } from '@/app/lib/sondePoints'
 import { launchSitePopupHtml, POPUP_OPTIONS, clusterPopupHtml } from '@/app/lib/mapPopups'
 import { useReceiverStations } from '@/app/lib/receiverStationsClient'
 import { drawReceiverStations, receptorsFromPoints } from '@/app/lib/receiverStationsLayer'
@@ -26,19 +26,52 @@ const BALLOON_CLUSTER_RADIUS_PX = 26 // cobre o balão (15px) + rótulo de dia/m
 
 interface YearMapProps {
   year: number
-  station: string
+  // Uma ou mais estações (histórico na aba "Todas") — todas no MESMO mapa.
+  stations: Station[]
+  // Lançamentos do ano; com várias estações, cada um diz a sua em `stationId`.
   launches: Launch[]
   onClose: () => void
-  // Todas as posições reunidas, para a página preencher lançamentos sem posição.
-  onPoints?: (points: SondePoint[]) => void
+  // Posições reunidas de cada estação, para a página preencher lançamentos sem posição.
+  onPoints?: (stationId: string, points: SondePoint[]) => void
+}
+
+interface StationPointsState {
+  points: SondePoint[]
+  status: string | null
+  error: string | null
+  sources: string[]
+  refresh: () => void
+}
+
+const NO_LAUNCHES: Launch[] = []
+
+/**
+ * Coleta de UMA estação pro mapa (useYearSondePoints + registro do R2). O
+ * mapa monta uma por estação e junta — hooks de estação nunca em laço.
+ */
+function StationPointsSource({ station, year, launches, onState }: {
+  station: Station; year: number; launches: Launch[]
+  onState: (stationId: string, state: StationPointsState | null) => void
+}) {
+  const { points: sourcePoints, status, error, sources, refresh } = useYearSondePoints(station, year, launches)
+  // Mais recentes primeiro: é a ordem em que o registro é completado nas fontes.
+  const serials = useMemo(() => [...sourcePoints].sort((a, b) => b.date.getTime() - a.date.getTime()).map(p => p.serial), [sourcePoints])
+  const records = useSondeRegistry(station.id, [year], serials)
+  const points = useMemo(() => mergeWithRegistry(sourcePoints, records,
+    (r, p) => !!r.stations?.includes(station.id) && p.date.getUTCFullYear() === year),
+  [sourcePoints, records, station.id, year])
+  useEffect(() => { onState(station.id, { points, status, error, sources, refresh }) }, [station.id, points, status, error, sources, refresh, onState])
+  useEffect(() => () => onState(station.id, null), [station.id, onState])
+  return null
 }
 
 /**
  * Mapa consolidado do ano: todas as fontes (useYearSondePoints) + o registro
  * permanente de sondas no R2 (useSondeRegistry), que completa o que as fontes
- * não devolvem mais e traz receptores/último sinal pro popup.
+ * não devolvem mais e traz receptores/último sinal pro popup. Com várias
+ * estações, todas aparecem juntas (local de lançamento de cada uma).
  */
-export default function YearMap({ year, station, launches, onClose, onPoints }: YearMapProps) {
+export default function YearMap({ year, stations, launches, onClose, onPoints }: YearMapProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const mapDivRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<any>(null)
@@ -58,21 +91,48 @@ export default function YearMap({ year, station, launches, onClose, onPoints }: 
   // tamanho ao entrar/sair.
   const invalidateMap = useCallback(() => mapRef.current?.invalidateSize(), [])
   const fs = useFullscreen(containerRef, invalidateMap)
-  const stationInfo = findStation(station) ?? null
+  const multi = stations.length > 1
+  // Lançamentos de cada estação (uma só = todos).
+  const launchesByStation = useMemo(() => {
+    const map = new Map<string, Launch[]>()
+    for (const st of stations) map.set(st.id, multi ? launches.filter(l => (l.stationId ?? stations[0].id) === st.id) : launches)
+    return map
+  }, [stations, launches, multi])
 
-  const { points: sourcePoints, status, error, sources, refresh } = useYearSondePoints(stationInfo, year, launches)
-  // Mais recentes primeiro: é a ordem em que o registro é completado nas fontes.
-  const serials = useMemo(() => [...sourcePoints].sort((a, b) => b.date.getTime() - a.date.getTime()).map(p => p.serial), [sourcePoints])
-  const records = useSondeRegistry(stationInfo?.id ?? null, [year], serials)
-  const points = useMemo(() => mergeWithRegistry(sourcePoints, records,
-    (r, p) => !!stationInfo && !!r.stations?.includes(stationInfo.id) && p.date.getUTCFullYear() === year),
-  [sourcePoints, records, stationInfo, year])
+  const [perStation, setPerStation] = useState<Record<string, StationPointsState>>({})
+  const onStationState = useCallback((stationId: string, state: StationPointsState | null) => {
+    setPerStation(prev => {
+      if (state === null) {
+        if (!(stationId in prev)) return prev
+        const next = { ...prev }
+        delete next[stationId]
+        return next
+      }
+      return { ...prev, [stationId]: state }
+    })
+  }, [])
+  const states = stations.map(s => perStation[s.id]).filter((x): x is StationPointsState => !!x)
+  const points = useMemo(() => {
+    const list = stations.map(s => perStation[s.id]?.points).filter((x): x is SondePoint[] => !!x)
+    return list.length === 1 ? list[0] : mergeSondePoints(...list)
+  }, [stations, perStation])
+  const status = states.length < stations.length ? 'Buscando posições…' : states.find(s => s.status)?.status ?? null
+  const error = states.filter(s => s.error).map(s => s.error).join(' · ') || null
+  const sources = [...new Set(states.flatMap(s => s.sources))]
+  const refresh = () => { for (const s of states) s.refresh() }
+  const stationInfo = stations[0] ?? null
 
+  // Cada estação devolve suas posições assim que termina de buscar.
   const onPointsRef = useRef(onPoints)
   onPointsRef.current = onPoints
+  const sentRef = useRef(new Map<string, SondePoint[]>())
   useEffect(() => {
-    if (!status && points.length > 0) onPointsRef.current?.(points)
-  }, [status, points])
+    for (const [id, st] of Object.entries(perStation)) {
+      if (st.status || st.points.length === 0 || sentRef.current.get(id) === st.points) continue
+      sentRef.current.set(id, st.points)
+      onPointsRef.current?.(id, st.points)
+    }
+  }, [perStation])
 
   useEffect(() => { containerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }) }, [])
 
@@ -106,11 +166,15 @@ export default function YearMap({ year, station, launches, onClose, onPoints }: 
       // first". Só a primeira vez muda a vista; depois disso ela já existe.
       if (!fittedRef.current) {
         if (points.length > 0) { map.fitBounds(rawBounds, { padding: [30, 30], maxZoom: 11 }); fittedRef.current = true }
+        else if (stations.length > 1) map.fitBounds(stations.map(s => [s.lat, s.lon]), { padding: [30, 30], maxZoom: 8 })
         else map.setView([stationInfo.lat, stationInfo.lon], 8)
       }
-      L.circleMarker([stationInfo.lat, stationInfo.lon], {
-        radius: 6, color: '#3b82f6', fillColor: '#3b82f6', fillOpacity: 0.65, weight: 2,
-      }).addTo(layer).bindPopup(launchSitePopupHtml(stationInfo), POPUP_OPTIONS)
+      // Local de lançamento de cada estação mostrada.
+      for (const st of stations) {
+        L.circleMarker([st.lat, st.lon], {
+          radius: 6, color: '#3b82f6', fillColor: '#3b82f6', fillOpacity: 0.65, weight: 2,
+        }).addTo(layer).bindPopup(launchSitePopupHtml(st), POPUP_OPTIONS)
+      }
       // Marcadores próximos demais pra este zoom viram um badge com contagem
       // (ver markerClustering.ts) — some sozinho ao aproximar o zoom.
       for (const g of clusterByPixel(map, points, BALLOON_CLUSTER_RADIUS_PX, clusterEnabled)) {
@@ -140,7 +204,7 @@ export default function YearMap({ year, station, launches, onClose, onPoints }: 
       setTimeout(() => map?.invalidateSize(), 50)
     })()
     return () => { cancelled = true }
-  }, [points, stationInfo, receiverStations, zoomTick, clusterEnabled])
+  }, [points, stationInfo, stations, receiverStations, zoomTick, clusterEnabled])
 
   useEffect(() => () => {
     mapRef.current?.remove()
@@ -158,8 +222,14 @@ export default function YearMap({ year, station, launches, onClose, onPoints }: 
       ref={containerRef}
       className={`border border-border overflow-hidden bg-bg ${fs.isFullscreen ? 'flex flex-col' : 'mt-3 rounded'} ${fs.pseudo ? 'fixed inset-0 z-[2000]' : ''}`}
     >
+      {stations.map(st => (
+        <StationPointsSource key={st.id} station={st} year={year} launches={launchesByStation.get(st.id) ?? NO_LAUNCHES} onState={onStationState} />
+      ))}
       <div className="px-3 py-2 bg-surface border-b border-border flex items-center gap-3 flex-wrap">
-        <span className="text-xs text-gray-300">Mapa consolidado de {year}</span>
+        <span className="text-xs text-gray-300">
+          Mapa consolidado de {year}
+          {multi && <span className="mono text-blue-300" title={stations.map(s => s.name).join(', ')}> · {stations.map(stationCode).join(' + ')}</span>}
+        </span>
         {points.length > 0 && <span className="text-[11px] text-emerald-400 mono">{points.length} posições</span>}
         {reappearances > 0 && (
           <span className="text-[11px] mono" style={{ color: STATUS_COLORS.reappeared }}

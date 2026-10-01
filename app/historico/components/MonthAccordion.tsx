@@ -7,7 +7,7 @@ import SourceBadges from '@/app/components/ui/SourceBadges'
 import { computeConfidence } from '@/app/lib/confidence'
 import { MONTHS, MONTHS_FULL, isDaytime, sameLaunch, launchKey, launchDisplayTime } from '@/app/lib/launchUtils'
 import { isValidPosition } from '@/app/lib/launchData'
-import { stationShortName, type Station } from '@/app/lib/stations'
+import { stationCode, type Station } from '@/app/lib/stations'
 import type { Launch, LaunchPosition } from '@/app/lib/types'
 import type { SondePoint } from '@/app/lib/sondePoints'
 import type { SondeRecord } from '@/app/lib/sondeRegistry'
@@ -37,7 +37,8 @@ interface MonthAccordionProps {
   deleteMonthConfirm: number | null
   onRequestDeleteMonth: (m: number | null) => void
   onConfirmDeleteMonth: () => void
-  monthPoints?: SondePoint[] // sondas de todas as fontes do mês aberto
+  monthPoints?: SondePoint[] // sondas de todas as fontes do mês aberto (estação do lançamento)
+  otherMonthPoints?: SondePoint[] // idem, das OUTRAS estações mostradas (só desenho)
   records?: Map<string, SondeRecord> // registro de sondas (R2) — dados mais completos por sonda
   onLaunchPosition?: (launch: Launch, position: LaunchPosition) => void
   onYearPoints?: (stationId: string, points: SondePoint[]) => void
@@ -52,7 +53,7 @@ export default function MonthAccordion({
   noMatchLaunches, setNoMatchLaunches,
   showYearMap, setShowYearMap,
   deleteMonthConfirm, onRequestDeleteMonth, onConfirmDeleteMonth,
-  monthPoints, records, onLaunchPosition, onYearPoints,
+  monthPoints, otherMonthPoints, records, onLaunchPosition, onYearPoints,
 }: MonthAccordionProps) {
   const wyomingOn = useWyomingEnabled()
   const multi = stations.length > 1
@@ -79,19 +80,14 @@ export default function MonthAccordion({
 
       {showYearMap && (
         <div className="px-5 pt-4 bg-bg">
-          {/* Um mapa por estação (cada um com as fontes e o registro dela). */}
-          {stations.map(s => (
-            <div key={s.id}>
-              {multi && <p className="text-xs text-gray-300 mt-3 -mb-1 font-medium">{s.name}</p>}
-              <YearMap
-                year={year}
-                station={s.id}
-                launches={multi ? allLaunches.filter(l => (l.stationId ?? stations[0].id) === s.id) : allLaunches}
-                onPoints={onYearPoints ? points => onYearPoints(s.id, points) : undefined}
-                onClose={() => setShowYearMap(false)}
-              />
-            </div>
-          ))}
+          {/* Um mapa só com todas as estações mostradas. */}
+          <YearMap
+            year={year}
+            stations={stations}
+            launches={allLaunches}
+            onPoints={onYearPoints}
+            onClose={() => setShowYearMap(false)}
+          />
         </div>
       )}
 
@@ -232,8 +228,8 @@ export default function MonthAccordion({
                                     <SourceBadges confidence={computeConfidence(l, station.wyomingSupported !== false, wyomingOn)} />
                                   </button>
                                   {multi && (
-                                    <span className="text-[9px] px-1 rounded border border-blue-500/30 text-blue-300 truncate max-w-[90px]" title={`Estação ${station.name}`}>
-                                      {stationShortName(station)}
+                                    <span className="text-[9px] mono px-1 rounded border border-blue-500/30 text-blue-300" title={`Estação ${station.name} (STNM ${station.id})`}>
+                                      {stationCode(station)}
                                     </span>
                                   )}
                                   {reappearances?.length ? (
@@ -259,6 +255,7 @@ export default function MonthAccordion({
                       launch={selectedLaunch}
                       station={stationOf(selectedLaunch).id}
                       contextPoints={monthPoints}
+                      otherPoints={otherMonthPoints}
                       records={records}
                       onPosition={onLaunchPosition}
                       onClose={() => setSelectedLaunch(null)}

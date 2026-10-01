@@ -22,7 +22,7 @@ interface LiveCardProps {
   selectedLaunch: Launch | null
   onExpandMonth: (month: number) => void
   onSelectLaunch: (l: Launch | null) => void
-  // Várias estações juntas (aba "Todas"): nome curto da estação de cada
+  // Várias estações juntas (aba "Todas"): código IATA da estação de cada
   // lançamento (pelo stationId) e de cada sonda de hoje (pelo serial).
   stationName?: (stationId: string | undefined) => string | undefined
   flightStationName?: Map<string, string>
@@ -30,7 +30,7 @@ interface LiveCardProps {
 
 function StationChip({ name }: { name?: string }) {
   if (!name) return null
-  return <span className="text-[9px] px-1 rounded border border-blue-500/30 text-blue-300 truncate max-w-[110px]" title={`Estação ${name}`}>{name}</span>
+  return <span className="text-[9px] mono px-1 rounded border border-blue-500/30 text-blue-300" title={`Estação ${name}`}>{name}</span>
 }
 
 // Card "Ao vivo": estado de hoje combinando Wyoming (horário oficial) com

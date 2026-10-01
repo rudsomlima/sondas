@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { History, RefreshCw, AlertCircle, Loader2, HardDrive, Radio, Trash2, ShieldCheck } from 'lucide-react'
-import { Station, setSelectedStations, stationShortName } from '@/app/lib/stations'
+import { Station, setSelectedStations, stationCode, stationShortName } from '@/app/lib/stations'
 import { useSelectedStations } from '@/app/lib/useSelectedStations'
 import type { Launch, LaunchPosition, YearData } from '@/app/lib/types'
 import { nowGMT3 } from '@/app/lib/types'
@@ -13,7 +13,7 @@ import { launchKey, sameLaunch } from '@/app/lib/launchUtils'
 import { useSondeRegistry } from './hooks/useSondeRegistry'
 import { combineSourceHealth } from './hooks/useLiveFlights'
 import { useWyomingEnabled } from '@/app/lib/appSettings'
-import type { SondePoint } from '@/app/lib/sondePoints'
+import { mergeSondePoints, type SondePoint } from '@/app/lib/sondePoints'
 import StationMultiPicker from '@/app/components/StationMultiPicker'
 import StationTabs, { ALL_STATIONS } from '@/app/components/StationTabs'
 import HistoryStationFeed, { type HistoryStationState } from './components/HistoryStationFeed'
@@ -91,7 +91,7 @@ export default function HistoricoPage() {
       for (const fl of f.flights) {
         const prev = flights.get(fl.sondeNumber)
         if (!prev || fl.lastReportUtc > prev.lastReportUtc) flights.set(fl.sondeNumber, fl)
-        if (!flightStationName.has(fl.sondeNumber)) flightStationName.set(fl.sondeNumber, stationShortName(f.station))
+        if (!flightStationName.has(fl.sondeNumber)) flightStationName.set(fl.sondeNumber, stationCode(f.station))
       }
       for (const p of f.reappeared) if (!reappeared.has(p.serial)) reappeared.set(p.serial, p)
     }
@@ -248,13 +248,20 @@ export default function HistoricoPage() {
     : null
   // Contexto do mapa do lançamento = pontos do mês da estação dele.
   const monthPoints = feedOf(liveSelectedLaunch?.stationId)?.monthContextPoints ?? NO_POINTS
+  // Aba "Todas": as sondas do mês das OUTRAS estações também aparecem no mapa
+  // do lançamento (só desenho — o casamento do pouso segue só na dele).
+  const selectedStationId = liveSelectedLaunch?.stationId ?? primary.id
+  const otherMonthPoints = useMemo(() => {
+    const lists = viewFeeds.filter(f => f.station.id !== selectedStationId).map(f => f.monthContextPoints)
+    return lists.length === 0 ? NO_POINTS : mergeSondePoints(...lists)
+  }, [viewFeeds, selectedStationId])
   const summaryData: YearData = {
     year, station: viewStations.map(s => s.id).join(','), count: displayLaunches.length, launches: displayLaunches, errors: [],
   }
   const multiView = viewStations.length > 1
   const stationName = useCallback((id: string | undefined) => {
     const st = id ? stationById.get(id) : undefined
-    return st ? stationShortName(st) : undefined
+    return st ? stationCode(st) : undefined
   }, [stationById])
 
   return (
@@ -440,6 +447,7 @@ export default function HistoricoPage() {
             onRequestDeleteMonth={setDeleteMonthConfirm}
             onConfirmDeleteMonth={handleConfirmDeleteMonth}
             monthPoints={monthPoints}
+            otherMonthPoints={otherMonthPoints}
             records={records}
             onLaunchPosition={handleLaunchPosition}
             onYearPoints={handleYearPoints}

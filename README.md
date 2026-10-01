@@ -9,9 +9,12 @@ Dados extraídos em tempo real do servidor da [University of Wyoming](https://we
 - Avisos no Telegram para chat privado ou grupo, com seis modelos editáveis,
   prévia, teste por modelo e mapa no lançamento/pouso. Veja
   [docs/TELEGRAM.md](docs/TELEGRAM.md) para configurar e entender o envio.
+- 🛰️ **Várias estações ao mesmo tempo** — escolha até 6 em Configurações; o
+  painel e o histórico (aba "Todas") somam todas, com o código IATA de cada
+  estação. Veja [docs/ESTACOES.md](docs/ESTACOES.md).
 - ✅ **Status do dia** — verifica se houve lançamento de balão sonda no dia corrente
 - 📅 **Histórico anual** — lançamentos agrupados por mês com gráfico de barras
-- ⚙️ **Configurações** — ajuste de estação, região e período de extração
+- ⚙️ **Configurações** — estações escolhidas (com a principal), fontes de dados e armazenamento
 - 💾 **Cache persistente** — dados armazenados localmente (localStorage) e em memória do servidor
 - 🗑️ **Exclusão por mês/ano** — remova dados do histórico como desejar
 
@@ -53,6 +56,8 @@ npm run dev
 Acesse em: http://localhost:3000
 
 ## Estação padrão
+
+Usada enquanto nenhuma estação foi escolhida em Configurações.
 
 | Campo   | Valor  |
 |---------|--------|

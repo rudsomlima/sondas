@@ -52,6 +52,11 @@ interface LaunchMapProps {
   // com receptores, último sinal, 1º quadro e recuperação.
   records?: Map<string, SondeRecord>
   station?: string
+  // Sondas do mesmo mês das OUTRAS estações mostradas (histórico na aba
+  // "Todas"). Só desenho: nunca entram no casamento do pouso deste
+  // lançamento (isso é só com contextPoints, da estação dele) — senão o
+  // lançamento poderia ser casado com a sonda de outra estação.
+  otherPoints?: SondePoint[]
 }
 
 const NO_POINTS: SondePoint[] = []
@@ -90,7 +95,7 @@ function ReceptionInfo({ receivers, frames, lastReceiver, lastReceiverAt }: {
   )
 }
 
-export default function LaunchMap({ launch, onClose, onResult, onPosition, contextPoints = NO_POINTS, records = NO_RECORDS, station = DEFAULT_STATION.id }: LaunchMapProps) {
+export default function LaunchMap({ launch, onClose, onResult, onPosition, contextPoints = NO_POINTS, records = NO_RECORDS, station = DEFAULT_STATION.id, otherPoints = NO_POINTS }: LaunchMapProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const mapDivRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<any>(null)
@@ -104,6 +109,11 @@ export default function LaunchMap({ launch, onClose, onResult, onPosition, conte
   const clusterEnabled = useLandedSondeClusteringEnabled()
   const contextPointsRef = useRef(contextPoints)
   contextPointsRef.current = contextPoints
+  // O que se DESENHA como contexto: a estação do lançamento + as outras.
+  const shownContext = useMemo(
+    () => otherPoints.length === 0 ? contextPoints : mergeSondePoints(contextPoints, otherPoints),
+    [contextPoints, otherPoints],
+  )
   const onPositionRef = useRef(onPosition)
   onPositionRef.current = onPosition
   // Leaflet L guardado após o primeiro import — reutilizado sem await nos switches.
@@ -602,7 +612,7 @@ export default function LaunchMap({ launch, onClose, onResult, onPosition, conte
     if (!contextLayerRef.current) contextLayerRef.current = L.layerGroup().addTo(map)
     const layer = contextLayerRef.current
     layer.clearLayers()
-    const pending = contextPoints.filter(p => !drawnSerialsRef.current.has(p.serial))
+    const pending = shownContext.filter(p => !drawnSerialsRef.current.has(p.serial))
     for (const g of clusterByPixel(map, pending, BALLOON_CLUSTER_RADIUS_PX, clusterEnabled)) {
       if (g.items.length === 1) {
         const p = g.items[0]
@@ -618,7 +628,7 @@ export default function LaunchMap({ launch, onClose, onResult, onPosition, conte
         }
       }
     }
-  }, [contextPoints, drawTick, bindSonde, bestPoint, clusterEnabled])
+  }, [shownContext, drawTick, bindSonde, bestPoint, clusterEnabled])
 
   // Estações receptoras de todas as sondas do mapa (+ o meu receptor).
   useEffect(() => {
@@ -626,13 +636,13 @@ export default function LaunchMap({ launch, onClose, onResult, onPosition, conte
     const map = mapRef.current
     if (!L || !map) return
     if (!stationsLayerRef.current) stationsLayerRef.current = L.layerGroup().addTo(map)
-    const all = [...mainPointsRef.current.values(), ...contextPoints].map(bestPoint)
+    const all = [...mainPointsRef.current.values(), ...shownContext].map(bestPoint)
     const settings = getSettings()
     drawReceiverStations(L, map, stationsLayerRef.current, receiverStations, receptorsFromPoints(all), {
       callsign: settings.uploaderCallsign,
       pos: settings.homeLat != null && settings.homeLon != null ? { lat: settings.homeLat, lon: settings.homeLon } : null,
     })
-  }, [contextPoints, records, receiverStations, drawTick, bestPoint])
+  }, [shownContext, records, receiverStations, drawTick, bestPoint])
 
   // Reaparecimentos de qualquer sonda do mapa: a MESMA sonda reportada de novo
   // depois do voo, em outro lugar. Alfinete violeta ligado ao pouso original
@@ -645,9 +655,9 @@ export default function LaunchMap({ launch, onClose, onResult, onPosition, conte
     if (!reappearLayerRef.current) reappearLayerRef.current = L.layerGroup().addTo(map)
     const layer = reappearLayerRef.current
     layer.clearLayers()
-    const all = [...mainPointsRef.current.values(), ...contextPoints].map(bestPoint)
+    const all = [...mainPointsRef.current.values(), ...shownContext].map(bestPoint)
     setReappearCount(drawReappearances(L, map, layer, all, { onClick: setFocused }))
-  }, [contextPoints, records, drawTick, bestPoint])
+  }, [shownContext, records, drawTick, bestPoint])
 
   // Sonda clicada: mantém o cabeçalho atualizado quando o registro completa.
   useEffect(() => {
@@ -710,6 +720,11 @@ export default function LaunchMap({ launch, onClose, onResult, onPosition, conte
         {isSondeHubPos && (
           <span className="text-xs text-violet-400 flex items-center gap-1">
             <AlertTriangle size={12} /> via sondehub.org
+          </span>
+        )}
+        {otherPoints.length > 0 && (
+          <span className="text-xs text-blue-300" title="Sondas do mesmo mês das outras estações escolhidas — só no mapa, não entram no casamento deste lançamento. Afaste o zoom pra ver as mais distantes.">
+            + {otherPoints.length} sonda{otherPoints.length !== 1 ? 's' : ''} de outras estações
           </span>
         )}
         {reappearCount > 0 && (
