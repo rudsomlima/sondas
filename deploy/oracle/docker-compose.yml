@@ -1,0 +1,25 @@
+# App Sondas na VM Oracle (junto do solplanet). Ver docs/ORACLE.md.
+# Divide a rede e o Caddy do solplanet; o nome do serviço NÃO pode ser "app"
+# (o solplanet já usa esse apelido de rede para chegar no app dele).
+name: sondas
+services:
+  sondas:
+    build: .
+    image: sondas-app:local
+    restart: unless-stopped
+    init: true
+    env_file: [.env]          # nunca versionar: ver .env.example
+    environment:
+      TZ: America/Fortaleza
+      NODE_OPTIONS: --max-old-space-size=300
+    expose: ["3002"]
+    ports: ["127.0.0.1:3002:3002"]   # só localhost: usado pelo cron diário
+    mem_limit: 450m
+    cpus: 1.0
+    networks: [solplanet_default]
+    logging:
+      driver: json-file
+      options: { max-size: 10m, max-file: "3" }
+networks:
+  solplanet_default:
+    external: true

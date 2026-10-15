@@ -1,0 +1,24 @@
+# Blocos a ACRESCENTAR no Caddyfile do solplanet (~/solplanet/deploy/oracle/Caddyfile).
+# Depois recrie o container do Caddy (ver docs/ORACLE.md, "Recarregar o Caddy").
+
+# Firmware do receptor: HTTP puro (sem TLS), por IP, sem redirecionar.
+http://136.248.78.217 {
+  request_body {
+    max_size 8MB
+  }
+  reverse_proxy sondas:3002
+}
+
+# Painel no navegador, com HTTPS automático (Let's Encrypt).
+sondas-pu7iol.duckdns.org {
+  encode zstd gzip
+  request_body {
+    max_size 8MB
+  }
+  header {
+    Strict-Transport-Security "max-age=31536000"
+    X-Content-Type-Options "nosniff"
+    -Server
+  }
+  reverse_proxy sondas:3002
+}

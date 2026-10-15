@@ -14,6 +14,14 @@ npm run lint     # next lint
 
 Não há suíte de testes configurada. Nenhuma variável de ambiente é obrigatória pra dev local (a persistência em R2 degrada pra no-op sem credenciais — ver abaixo).
 
+## Hospedagem (Oracle, desde 2026-10-15)
+
+O app roda numa VM Oracle (`https://sondas-pu7iol.duckdns.org`), não mais na
+Vercel; o firmware do receptor fala `http://136.248.78.217` direto (sem relay).
+Publicar: `./deploy/oracle/deploy.sh`. O `/api/poll` diário roda pelo cron da
+VM (o `vercel.json` não tem mais `crons`). Guia completo, armadilhas e
+diagnóstico: `docs/ORACLE.md`.
+
 ## Arquitetura
 
 App Next.js 15 (App Router) + TypeScript que monitora lançamentos de radiossondas (balões meteorológicos) em estações da América do Sul, com padrão em Natal/INMET 82599. Extrai horários de lançamento do arquivo de sondagens da University of Wyoming e cruza com o radiosondy.info pra plotar posições de recuperação no mapa.
