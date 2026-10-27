@@ -17,6 +17,14 @@ O destino pode ser uma conversa privada ou um grupo. A detecção usa
 `getUpdates` do Telegram (`POST /api/telegram-detect-chat`); se não encontrar
 uma conversa, envie uma nova mensagem no chat/grupo e tente outra vez.
 
+## Alertas do sistema (conversa privada)
+
+O campo **Conversa privada para alertas do sistema** (`adminChatId`) é separado
+do grupo. Abra o bot em conversa privada, envie `/start` e use **Detectar**
+(só aceita chat privado). Avisos como "o poll parou" ou "voltou" saem só para
+essa conversa, nunca para o grupo, e vêm do `deploy/oracle/watchdog.sh` da VM
+(ver `docs/ORACLE.md`). Campo vazio = alertas do sistema desligados.
+
 ## Editar os modelos
 
 São seis modelos editáveis, com os padrões definidos em

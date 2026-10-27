@@ -13,6 +13,7 @@ export async function GET() {
     const s = await readTelegramSettings()
     return NextResponse.json({
       chatId: s?.chatId ?? '',
+      adminChatId: s?.adminChatId ?? '',
       enabled: s?.enabled ?? false,
       notifyLaunch: s?.notifyLaunch !== false,
       notifyLanding: s?.notifyLanding !== false,
@@ -46,11 +47,14 @@ async function processPost(req: NextRequest) {
     : (current?.botToken ?? '')
   const chatId = typeof body?.chatId === 'string' ? body.chatId.trim() : (current?.chatId ?? '')
 
-  const numOr = (v: unknown, fallback: number) => typeof v === 'number' && isFinite(v) ? v : fallback
+  const adminChatId = typeof body?.adminChatId === 'string' ? body.adminChatId.trim() : (current?.adminChatId ?? '')
+
+  const numOr =(v: unknown, fallback: number) => typeof v === 'number' && isFinite(v) ? v : fallback
 
   const settings = {
     botToken,
     chatId,
+    adminChatId,
     enabled: !!body?.enabled,
     notifyLaunch: body?.notifyLaunch !== false,
     notifyLanding: body?.notifyLanding !== false,

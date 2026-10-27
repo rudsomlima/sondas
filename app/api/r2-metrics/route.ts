@@ -49,6 +49,8 @@ type BandwidthRow = { sum?: { bytesUpload?: number | null; bytesDownload?: numbe
 function n(value: number | null | undefined): number { return Number.isFinite(value) ? Number(value) : 0 }
 
 export async function GET() {
+  // Com os dados em disco (DATA_DIR) não há conta Cloudflare pra consultar.
+  if (process.env.DATA_DIR) return NextResponse.json({ configured: false, local: true })
   const accountTag = process.env.R2_ACCOUNT_ID
   const token = process.env.CLOUDFLARE_API_TOKEN
   if (!accountTag || !token) {

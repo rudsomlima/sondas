@@ -12,8 +12,10 @@ services:
     environment:
       TZ: America/Fortaleza
       NODE_OPTIONS: --max-old-space-size=300
+    volumes:
+      - ./data:/data               # dados do app em disco (DATA_DIR=/data no .env)
     expose: ["3002"]
-    ports: ["127.0.0.1:3002:3002"]   # só localhost: usado pelo cron diário
+    ports: ["127.0.0.1:3002:3002"]   # só localhost: usado pelos crons da VM
     mem_limit: 450m
     cpus: 1.0
     networks: [solplanet_default]

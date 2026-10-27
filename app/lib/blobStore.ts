@@ -12,6 +12,7 @@
  * Sem essas variáveis (ex.: dev local sem .env.local), as funções são no-op.
  */
 import { S3Client, GetObjectCommand, PutObjectCommand, ListObjectsV2Command, DeleteObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3'
+import { LocalStoreClient } from './localStore'
 import type { YearStore, PollStatus, KnownReceiverEntry } from './types'
 import type { TodayFlight } from './radiosondy'
 import type { SondeRegistryYear } from './sondeRegistry'
@@ -19,7 +20,10 @@ import type { ReceiverStationsFile } from './receiverStations'
 
 export type { YearStore }
 
+// Com DATA_DIR definido, tudo vai pra disco (app/lib/localStore.ts) e o R2 nem
+// é consultado; sem ele vale o R2, e sem credenciais as funções são no-op.
 function getClient(): S3Client | null {
+  if (process.env.DATA_DIR) return new LocalStoreClient(process.env.DATA_DIR) as unknown as S3Client
   const accountId = process.env.R2_ACCOUNT_ID
   const accessKeyId = process.env.R2_ACCESS_KEY_ID
   const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY

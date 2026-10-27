@@ -58,6 +58,35 @@ export interface StationReception {
   software?: string
 }
 
+export interface AzimuthSector {
+  label: string        // N, NE, L, SE, S, SO, O, NO
+  centerDeg: number
+  minutesMine: number  // minutos em que a sonda estava nesta direção e a estação ouviu
+  minutesTotal: number // minutos em que a sonda estava nesta direção
+  maxDistKm: number    // maior distância com quadro da estação nesta direção
+}
+
+export interface RssiDistanceBin {
+  loKm: number
+  hiKm: number | null  // null = sem limite superior
+  frames: number
+  medianDistKm: number
+  medianRssi: number
+  // RSSI esperado no espaço livre (queda de 20·log10 da distância), ancorado na
+  // primeira faixa com quadros suficientes. É RELATIVO: o ganho absoluto da
+  // antena não é conhecido, então só o desvio entre faixas diz algo.
+  expectedRssi: number | null
+}
+
+/** Resultado "por estação" calculado junto com o relatório (estação = a que o relatório analisa). */
+export interface StationExtras {
+  maxDistKm: number | null
+  lastHeardAltKm: number | null   // altitude do último quadro da estação: onde a sonda "sumiu" pra ela
+  lastHeardDistKm: number | null
+  azimuth: AzimuthSector[]
+  rssiByDistance: RssiDistanceBin[]
+}
+
 export type ReceptionVerdict =
   | 'zenith-null'   // ouve embaixo, perde em cima → nulo de zênite (ground plane)
   | 'horizon-loss'  // ouve em cima, perde longe/baixo → obstrução/altura
@@ -82,6 +111,8 @@ export interface ReceptionReport {
   ceilingDeg: number | null
   floorDeg: number | null
   verdict: ReceptionVerdict
+  // Ausente em relatórios guardados por versões antigas do app.
+  extras?: StationExtras
 }
 
 // Faixas de elevação do relatório. As de cima (45-90°) são a região do nulo de
@@ -121,6 +152,64 @@ function haversineM(lat1: number, lon1: number, lat2: number, lon2: number): num
   return 2 * EARTH_R_M * Math.asin(Math.sqrt(a))
 }
 
+function bearingDeg(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const rad = (d: number) => d * Math.PI / 180
+  const dLon = rad(lon2 - lon1)
+  const y = Math.sin(dLon) * Math.cos(rad(lat2))
+  const x = Math.cos(rad(lat1)) * Math.sin(rad(lat2)) - Math.sin(rad(lat1)) * Math.cos(rad(lat2)) * Math.cos(dLon)
+  return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360
+}
+
+const SECTOR_LABELS = ['N', 'NE', 'L', 'SE', 'S', 'SO', 'O', 'NO']
+const RSSI_BINS_KM: [number, number | null][] = [[0, 25], [25, 50], [50, 100], [100, 150], [150, 200], [200, 300], [300, null]]
+const MIN_RSSI_BIN_FRAMES = 5
+
+function sectorOf(azDeg: number): number {
+  return Math.floor(((azDeg + 22.5) % 360) / 45)
+}
+
+function computeExtras(
+  buckets: MinuteBucket[], mineFrames: RawSondeFrame[], rxLat: number, rxLon: number,
+): StationExtras {
+  const azimuth: AzimuthSector[] = SECTOR_LABELS.map((label, i) => ({
+    label, centerDeg: i * 45, minutesMine: 0, minutesTotal: 0, maxDistKm: 0,
+  }))
+  for (const b of buckets) {
+    const sec = azimuth[sectorOf(b.azDeg)]
+    sec.minutesTotal++
+    if (b.mine) sec.minutesMine++
+  }
+  const withDist = mineFrames.map(f => ({
+    f, distKm: haversineM(rxLat, rxLon, f.lat, f.lon) / 1000, az: bearingDeg(rxLat, rxLon, f.lat, f.lon),
+    ms: new Date(f.datetime).getTime(),
+  })).filter(x => Number.isFinite(x.ms))
+  for (const x of withDist) {
+    const sec = azimuth[sectorOf(x.az)]
+    if (x.distKm > sec.maxDistKm) sec.maxDistKm = x.distKm
+  }
+  const last = withDist.reduce<typeof withDist[number] | null>((acc, x) => !acc || x.ms > acc.ms ? x : acc, null)
+
+  const bins: RssiDistanceBin[] = []
+  for (const [loKm, hiKm] of RSSI_BINS_KM) {
+    const inBin = withDist.filter(x => x.distKm >= loKm && (hiKm == null || x.distKm < hiKm) && typeof x.f.rssi === 'number')
+    if (inBin.length < MIN_RSSI_BIN_FRAMES) continue
+    bins.push({ loKm, hiKm, frames: inBin.length, medianDistKm: median(inBin.map(x => x.distKm))!, medianRssi: median(inBin.map(x => x.f.rssi as number))!, expectedRssi: null })
+  }
+  if (bins.length > 0) {
+    const dist = (b: RssiDistanceBin) => Math.max(b.medianDistKm, 1)
+    const anchor = bins[0]
+    for (const b of bins) b.expectedRssi = anchor.medianRssi + 20 * Math.log10(dist(anchor) / dist(b))
+  }
+
+  return {
+    maxDistKm: withDist.length > 0 ? Math.max(...withDist.map(x => x.distKm)) : null,
+    lastHeardAltKm: last ? (last.f.alt ?? 0) / 1000 : null,
+    lastHeardDistKm: last ? last.distKm : null,
+    azimuth,
+    rssiByDistance: bins,
+  }
+}
+
 function sameCallsign(a: string, b: string): boolean {
   // O SondeHub aceita sufixos (PU7KZI-SDR-Studio) — o receptor do usuário é o
   // callsign exato, não os sufixos de outros softwares dele.
@@ -128,6 +217,7 @@ function sameCallsign(a: string, b: string): boolean {
 }
 
 interface MinuteBucket {
+  azDeg: number
   mine: boolean
   elevDeg: number
   distM: number
@@ -165,11 +255,13 @@ export function analyzeReception(
     // minuto como "ouvido por mim" se qualquer quadro dele for meu.
     if (bucket) {
       bucket.mine = bucket.mine || mine
+      bucket.azDeg = bearingDeg(rxLat, rxLon, f.lat, f.lon)
       bucket.elevDeg = elevationDeg(distM, (f.alt ?? 0) - rxAltM)
       bucket.distM = distM
       bucket.altM = f.alt ?? 0
     } else {
       minutes.set(bucketKey, {
+        azDeg: bearingDeg(rxLat, rxLon, f.lat, f.lon),
         mine,
         elevDeg: elevationDeg(distM, (f.alt ?? 0) - rxAltM),
         distM,
@@ -229,6 +321,7 @@ export function analyzeReception(
     mine, others,
     lowCoverage, highCoverage,
     ...diagnose(mine, bands),
+    extras: computeExtras(buckets, valid.filter(f => sameCallsign(f.uploaderCallsign || '?', myCallsign)), rxLat, rxLon),
   }
 }
 

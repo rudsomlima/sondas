@@ -6,6 +6,7 @@ import { formatDistance } from '@/app/lib/geo'
 import { LOW_HIGH_SPLIT_DEG, VERDICT_TEXT, type ReceptionReport, type StationReception } from '@/app/lib/receptionAnalysis'
 import { useReceptionQuality } from '../hooks/useReceptionQuality'
 import { PanelTitle } from './Collapsible'
+import { RangeHistory, StationExtrasView, StationRanking } from './ReceptionExtras'
 
 interface ReceptionQualityPanelProps {
   callsign: string
@@ -35,11 +36,17 @@ function barColor(fraction: number): string {
   return 'bg-red-500'
 }
 
-function StationRow({ s, mine }: { s: StationReception; mine?: boolean }) {
+function StationRow({ s, mine, active, onView }: { s: StationReception; mine?: boolean; active?: boolean; onView?: () => void }) {
   return (
-    <tr className={mine ? 'text-white' : 'text-gray-400'}>
+    <tr className={active ? 'text-white bg-violet-500/10' : mine ? 'text-white' : 'text-gray-400'}>
       <td className="py-1.5 pr-3 mono whitespace-nowrap">
-        {s.callsign}{mine && <span className="ml-1.5 badge badge-info text-[9px] px-1.5 py-0">você</span>}
+        {onView ? (
+          <button onClick={onView} className="hover:text-white underline decoration-dotted underline-offset-2 text-left"
+            title="Ver a cobertura desta estação neste voo">
+            {s.callsign}
+          </button>
+        ) : s.callsign}
+        {mine && <span className="ml-1.5 badge badge-info text-[9px] px-1.5 py-0">você</span>}
       </td>
       <td className="py-1.5 pr-3 mono text-right">{s.frames.toLocaleString('pt-BR')}</td>
       <td className="py-1.5 pr-3 mono text-right">{s.medianRssi != null ? `${s.medianRssi.toFixed(1)} dBm` : '—'}</td>
@@ -62,7 +69,19 @@ function coverageSplit(report: ReceptionReport, deg: number): { below: number | 
   }
 }
 
-function Report({ report }: { report: ReceptionReport }) {
+interface ViewProps {
+  viewCallsign: string | null
+  viewReport: ReceptionReport | null
+  viewLoading: boolean
+  viewError: string | null
+  onView: (callsign: string | null) => void
+}
+
+function Report({ report, view }: { report: ReceptionReport; view: ViewProps }) {
+  const { viewCallsign, viewReport, viewLoading, viewError, onView } = view
+  const viewBands = new Map((viewReport?.bands ?? []).map(b => [`${b.loDeg}-${b.hiDeg}`, b]))
+  const subject = viewReport ?? report
+  const subjectName = viewReport ? viewCallsign ?? 'estação' : 'você'
   const verdict = VERDICT_TEXT[report.verdict]
   const good = report.verdict === 'good'
   const splitDeg = report.ceilingDeg ?? report.floorDeg ?? LOW_HIGH_SPLIT_DEG
@@ -90,15 +109,38 @@ function Report({ report }: { report: ReceptionReport }) {
         )}
       </div>
 
-      <p className="label-xs mb-2">Cobertura por ângulo de elevação</p>
+      {viewCallsign && (
+        <div className="rounded border border-violet-500/40 bg-violet-500/5 p-2.5 mb-3 flex items-center justify-between gap-3 flex-wrap">
+          <p className="text-xs text-violet-200">
+            {viewLoading ? 'Calculando a cobertura de ' : 'Comparando com '}
+            <span className="mono text-white">{viewCallsign}</span>
+            {viewError && <span className="text-yellow-400"> — {viewError}</span>}
+          </p>
+          <button onClick={() => onView(null)} className="text-xs text-gray-300 hover:text-white underline">voltar só para mim</button>
+        </div>
+      )}
+
+      <p className="label-xs mb-2">
+        Cobertura por ângulo de elevação
+        {viewReport && <span className="text-faint normal-case"> — azul: você · violeta: {viewCallsign} (cada um com a sua posição)</span>}
+      </p>
       <div className="space-y-2 mb-4">
         {report.bands.map(b => {
           const fraction = b.minutesTotal > 0 ? b.minutesMine / b.minutesTotal : 0
+          const other = viewBands.get(`${b.loDeg}-${b.hiDeg}`)
+          const otherFraction = other && other.minutesTotal > 0 ? other.minutesMine / other.minutesTotal : null
           return (
             <div key={`${b.loDeg}-${b.hiDeg}`} className="flex items-center gap-2">
               <span className="mono text-xs text-gray-400 w-16 shrink-0">{b.loDeg}–{b.hiDeg}°</span>
-              <div className="flex-1 h-4 bg-surface-2 rounded overflow-hidden min-w-0">
-                <div className={`h-full ${barColor(fraction)}`} style={{ width: `${Math.max(fraction * 100, fraction > 0 ? 2 : 0)}%` }} />
+              <div className="flex-1 min-w-0 space-y-0.5">
+                <div className="h-4 bg-surface-2 rounded overflow-hidden">
+                  <div className={`h-full ${barColor(fraction)}`} style={{ width: `${Math.max(fraction * 100, fraction > 0 ? 2 : 0)}%` }} />
+                </div>
+                {viewReport && (
+                  <div className="h-2 bg-surface-2 rounded overflow-hidden" title={otherFraction != null ? `${viewCallsign}: ${pct(otherFraction)}` : `${viewCallsign}: a sonda não esteve nesta faixa para ele`}>
+                    <div className="h-full bg-violet-500" style={{ width: `${Math.max((otherFraction ?? 0) * 100, otherFraction ? 2 : 0)}%` }} />
+                  </div>
+                )}
               </div>
               <span className="mono text-xs text-white w-11 text-right shrink-0">{pct(fraction)}</span>
               <span
@@ -125,10 +167,18 @@ function Report({ report }: { report: ReceptionReport }) {
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
-            {report.mine && <StationRow s={report.mine} mine />}
-            {report.others.map(s => <StationRow key={s.callsign} s={s} />)}
+            {report.mine && <StationRow s={report.mine} mine active={!viewCallsign} onView={viewCallsign ? () => onView(null) : undefined} />}
+            {report.others.map(s => (
+              <StationRow key={s.callsign} s={s} active={viewCallsign === s.callsign} onView={() => onView(viewCallsign === s.callsign ? null : s.callsign)} />
+            ))}
           </tbody>
         </table>
+      </div>
+
+      <div className="mt-5">
+        {subject.extras
+          ? <StationExtrasView extras={subject.extras} who={subjectName} />
+          : <p className="text-[11px] text-faint mb-4">Clique em &quot;Recalcular&quot; para ver o alcance por direção e o RSSI por distância deste voo.</p>}
       </div>
 
       {antennas.length > 1 && (
@@ -249,7 +299,14 @@ export default function ReceptionQualityPanel({ callsign, rxLat, rxLon, rxAltM }
             </p>
           )}
           {q.error && <p className="text-xs text-red-400">{q.error}</p>}
-          {q.report && !q.loading && <Report report={q.report} />}
+          {q.report && !q.loading && (
+            <Report
+              report={q.report}
+              view={{ viewCallsign: q.viewCallsign, viewReport: q.viewReport, viewLoading: q.viewLoading, viewError: q.viewError, onView: q.viewStation }}
+            />
+          )}
+          <RangeHistory history={q.history} />
+          <StationRanking ranking={q.ranking} />
         </>
       )}
     </div>

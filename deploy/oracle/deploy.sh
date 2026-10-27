@@ -6,6 +6,6 @@ HOST=${HOST:-ubuntu@136.248.78.217}
 KEY=${KEY:-$HOME/.ssh/solplanet_oci}
 npx next build
 tar --exclude=.next/cache -czf /tmp/sondas-app.tgz .next public package.json package-lock.json next.config.js
-scp -i "$KEY" /tmp/sondas-app.tgz deploy/oracle/Dockerfile deploy/oracle/docker-compose.yml deploy/oracle/poll-cron.sh "$HOST":~/sondas-app/
-ssh -i "$KEY" "$HOST" 'cd ~/sondas-app && tar xzf sondas-app.tgz && rm sondas-app.tgz && chmod 700 poll-cron.sh \
+scp -i "$KEY" /tmp/sondas-app.tgz deploy/oracle/Dockerfile deploy/oracle/docker-compose.yml deploy/oracle/poll-cron.sh deploy/oracle/watchdog.sh deploy/oracle/backup.sh deploy/oracle/migrate-r2-to-disk.js "$HOST":~/sondas-app/
+ssh -i "$KEY" "$HOST" 'cd ~/sondas-app && tar xzf sondas-app.tgz && rm sondas-app.tgz && chmod 700 poll-cron.sh watchdog.sh backup.sh \
   && sudo nice -n 15 docker compose build && sudo docker compose up -d --force-recreate'

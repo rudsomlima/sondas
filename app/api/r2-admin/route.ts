@@ -16,7 +16,7 @@ const RECEIVER_RE = /receivers\/([^/]+)\/(power|batt)-history\.json$/
 const DEFAULT_STATION = '82599'
 
 export async function GET() {
-  const configured = !!(process.env.R2_ACCOUNT_ID && process.env.R2_ACCESS_KEY_ID && process.env.R2_SECRET_ACCESS_KEY)
+  const configured = !!process.env.DATA_DIR || !!(process.env.R2_ACCOUNT_ID && process.env.R2_ACCESS_KEY_ID && process.env.R2_SECRET_ACCESS_KEY)
   if (!configured) {
     return NextResponse.json({ ok: true, configured: false, totalBytes: 0, files: [], receiverFiles: [], otherFiles: [] })
   }

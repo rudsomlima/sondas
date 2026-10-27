@@ -77,16 +77,31 @@ Compila no PC (`next build`), envia `.next`, `public` e o `package*.json`, e na
 VM instala as dependências (inclui o `sharp`, que depende do sistema) e recria o
 container. Compilar na própria VM leva de 20 a 40 min e estoura a memória.
 
-## Cron diário
+## Cron do poll (a cada 2 min) e vigia
 
-`/api/poll` roda às 06:30 UTC pelo cron do usuário `ubuntu` na VM (era o cron da
-Vercel). Script: `deploy/oracle/poll-cron.sh`; log em `~/sondas-app/poll.log`
-(`200` = ok).
+`/api/poll` roda **a cada 2 minutos** pelo cron do usuário `ubuntu` na VM. É ele
+que detecta lançamento/pouso e manda os avisos do Telegram (só vale sonda com
+sinal < 20 min no lançamento e < 3 h no pouso); com o cron diário de antes, o
+lançamento da W0530174 (23/10/2026) passou sem aviso. Script:
+`deploy/oracle/poll-cron.sh`; log com data/hora em `~/sondas-app/poll.log`
+(`200` = ok, `000` = app fora do ar), cortado em ~1 MB.
 
 ```
 CRON_TZ=UTC
-30 6 * * * /home/ubuntu/sondas-app/poll-cron.sh
+*/2 * * * * /home/ubuntu/sondas-app/poll-cron.sh
+*/5 * * * * /home/ubuntu/sondas-app/watchdog.sh
 ```
+
+`deploy/oracle/watchdog.sh` também avisa de falha do armazenamento (5 ou mais
+linhas `[R2] ... falhou` nos logs em 10 min) e de disco acima de 90%, cada um com
+aviso de volta ao normal; os eventos ficam em `~/sondas-app/watchdog.log` e os
+estados em `watchdog.*.state`. Ele avisa no Telegram **privado** (`adminChatId`, em
+`/telegram`; nunca o grupo) quando o último poll tem mais de 10 min ou o app não
+responde, e avisa de novo quando volta. Roda fora do app de propósito e guarda
+uma cópia local do token/chat em `~/sondas-app/watchdog.conf` (chmod 600),
+renovada via `GET /api/system-alert` (exige `CRON_SECRET`). O aviso só sai
+depois de configurar a conversa privada. O `deploy.sh` envia os dois scripts; sem deploy, copie para
+`~/sondas-app/`.
 
 ## Recarregar o Caddy
 
@@ -154,3 +169,47 @@ Idade do último relatório de um receptor:
 - Apagar o prefixo de teste `zz-teste-claude` (lista de receptores conhecidos).
 - Rotacionar os tokens do R2 e de métricas, pois foram colados em conversa.
 - Atualizar `mqtt.siteurl` de qualquer outro receptor que ainda use o relay.
+
+## Dados em disco (sem R2) e backup
+
+Com `DATA_DIR=/data` no `.env` o app grava tudo no volume `~/sondas-app/data`
+(montado em `/data` pelo `docker-compose.yml`) e nem consulta o R2: o
+`blobStore.ts` troca o cliente S3 por `app/lib/localStore.ts`, que imita
+Get/Put/List/Delete/Head, ETag e `If-Match`/`If-None-Match` (gravação
+concorrente segura, escrita atômica). As chaves são as mesmas (`sondas/...`).
+Sem `DATA_DIR` volta a valer o R2. Em Configurações, o painel do R2 mostra a lista
+de arquivos do disco e avisa que não há cobrança/métricas.
+
+**Migração (feita uma vez, o bucket não é apagado):**
+`docker exec -i -e DATA_DIR=/data sondas-sondas-1 node - < migrate-r2-to-disk.js`
+copia todos os objetos e confere o tamanho de cada um; depois `DATA_DIR=/data`
+no `.env` e `sudo docker compose up -d --force-recreate`. Rode a cópia de novo
+logo antes de trocar, para não perder o que o receptor gravou no meio. Para
+voltar ao R2, basta tirar o `DATA_DIR` (os dados gravados em disco depois da
+troca não voltam sozinhos).
+
+**Backup:** `deploy/oracle/backup.sh` (cron `15 5 * * *`) gera
+`~/backups/daily/sondas-AAAAMMDD.tar.gz` (14 diários) e copia os de domingo para
+`~/backups/weekly/` (12 semanais), conferindo que o arquivo abre antes de apagar
+os antigos. Restaurar: parar o container, `tar xzf` o arquivo escolhido dentro de
+`~/sondas-app/` (recria `data/`) e subir de novo. Atenção: esses backups ficam no
+MESMO disco da VM, então o script também envia a mesma cópia ao **Object Storage
+da Oracle** (bucket privado `sondas-backups`, região sa-saopaulo-1, namespace
+`griy03nebhyb`), `daily/` (14) e `weekly/` (12), com a mesma retenção. Autenticação
+por *instance principal* (nenhuma chave na VM): grupo dinâmico `sondas-vm` (regra
+`instance.id = <OCID da solplanet-micro>`, domínio Default) + política
+`sondas-vm-backup-policy` (`manage objects` e `read buckets` só nesse bucket).
+A ferramenta é o `oci` CLI em `~/oci-venv` (precisou do pacote `python3-venv`) e o
+bucket vem de `~/sondas-app/backup.conf` (`BUCKET=sondas-backups`; sem o arquivo,
+só o backup local). Qualquer falha avisa no Telegram privado. Restaurar do bucket:
+`oci os object get --auth instance_principal -ns griy03nebhyb -bn sondas-backups
+--name daily/sondas-AAAAMMDD.tar.gz --file x.tgz` e depois `tar xzf`. Testado em
+2026-10-25: envio, download e conteúdo (79 arquivos).
+
+## Medidas (2026-10-25, depois de trocar o R2 por disco)
+
+`/api/poll` leva ~7 s por execução (eram ~18 s com o R2); o container usa ~100 MB
+de 450 MB e CPU perto de 0% entre execuções. O poll consulta o feed do
+radiosondy.info e o do SondeHub uma vez por execução (não por estação), então
+um cache no servidor não reduziria nada; os navegadores consultam as fontes
+direto.

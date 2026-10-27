@@ -3,6 +3,7 @@ import { recordCollected } from '@/app/lib/receiverCollect'
 import { parseRdzPmu, parseRdzSleep, parseRdzPower, parseRdzNet, parseRdzBoot, parseRdzOtaFail } from '@/app/lib/mqtt'
 import { writeInstalledFirmware, upsertKnownReceiver, writeReceiverLiveStatus, writeOtaFail } from '@/app/lib/blobStore'
 import { receiverKey } from '@/app/lib/receiverKey'
+import { parseHeard, notifyHeardSonde } from '@/app/lib/receiverHeard'
 
 // POST { prefix, pmu?, sleep?, power?, fw? } — reporte direto do firmware ao
 // acordar, sem passar por MQTT/cron. Substitui, pra persistência no R2, a
@@ -31,8 +32,15 @@ export async function POST(req: NextRequest) {
     const otaFail = body?.ota_fail ? parseRdzOtaFail(JSON.stringify(body.ota_fail), now) : null
     const fwVersion = typeof body?.fw?.version === 'string' ? body.fw.version.trim() : ''
 
+    // `heard`: o receptor decodificou uma sonda nova → aviso de lançamento na
+    // hora (ver app/lib/receiverHeard.ts). Não espera o envio ao Telegram: o
+    // firmware tem timeout curto e não pode ficar pendurado aqui.
+    const heard = body?.heard ? parseHeard(body.heard) : null
+    if (heard) void notifyHeardSonde(heard)
+
     if (!pmu && !sleep && !power && !net && !boot && !otaFail && !fwVersion) {
-      return NextResponse.json({ ok: false, error: 'nenhum dado reconhecido em pmu/sleep/power/net/boot/ota_fail/fw' }, { status: 400 })
+      if (heard) return NextResponse.json({ ok: true, heard: true })
+      return NextResponse.json({ ok: false, error: 'nenhum dado reconhecido em pmu/sleep/power/net/boot/ota_fail/fw/heard' }, { status: 400 })
     }
 
     // Um só instante pros dois escritos abaixo — ver comentário em

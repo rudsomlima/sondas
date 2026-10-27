@@ -13,6 +13,7 @@ import GeofenceMap from './components/GeofenceMap'
 
 interface TelegramSettingsView {
   chatId: string
+  adminChatId: string
   enabled: boolean
   notifyLaunch: boolean
   notifyLanding: boolean
@@ -31,7 +32,7 @@ interface TelegramSettingsView {
 }
 
 const EMPTY_SETTINGS: TelegramSettingsView = {
-  chatId: '', enabled: false, notifyLaunch: true, notifyLanding: true, notifyAnywhere: true,
+  chatId: '', adminChatId: '', enabled: false, notifyLaunch: true, notifyLanding: true, notifyAnywhere: true,
   notifyReceiverOffline: true, notifyReceiverOnline: true, receiverOfflineMinutes: 30,
   notifyLowBattery: true, notifyBatteryOk: true, lowBatteryVoltage: 3.5,
   watchedStationIds: [DEFAULT_STATION.id], stationRadiusKm: {},
@@ -88,6 +89,7 @@ export default function TelegramPage() {
         body: JSON.stringify({
           botToken: tokenToSave,
           chatId: settings.chatId,
+          adminChatId: settings.adminChatId,
           enabled: settings.enabled,
           notifyLaunch: settings.notifyLaunch,
           notifyLanding: settings.notifyLanding,
@@ -147,6 +149,32 @@ export default function TelegramPage() {
       setDetectMsg({ ok: false, text: e?.message || 'Falha ao detectar.' })
     } finally {
       setDetecting(false)
+    }
+  }
+
+  const [detectingAdmin, setDetectingAdmin] = useState(false)
+  const [adminMsg, setAdminMsg] = useState<{ ok: boolean; text: string } | null>(null)
+
+  // Alertas do sistema (cron parado etc.) vão só pra conversa PRIVADA com o
+  // bot, nunca pro grupo — por isso a detecção aqui só aceita chat privado.
+  async function handleDetectAdmin() {
+    setDetectingAdmin(true)
+    setAdminMsg(null)
+    try {
+      if (tokenInput.trim()) await handleSave()
+      const res = await fetch('/api/telegram-detect-chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'private' }),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json?.error || `erro ${res.status}`)
+      setSettingsState(s => ({ ...s, adminChatId: json.chatId }))
+      setAdminMsg({ ok: true, text: `Encontrado: ${json.label} (${json.chatId}). Clique em Salvar pra confirmar.` })
+    } catch (e: any) {
+      setAdminMsg({ ok: false, text: e?.message || 'Falha ao detectar.' })
+    } finally {
+      setDetectingAdmin(false)
     }
   }
 
@@ -270,6 +298,36 @@ export default function TelegramPage() {
               {detectMsg && (
                 <span className={`flex items-center gap-1.5 mt-1.5 text-[11px] ${detectMsg.ok ? 'text-emerald-400' : 'text-yellow-400'}`}>
                   {detectMsg.ok ? <CheckCircle2 size={11} /> : <XCircle size={11} />} {detectMsg.text}
+                </span>
+              )}
+            </div>
+
+            <div className="mb-4">
+              <label className="block text-xs text-gray-400 mb-1.5">Conversa privada para alertas do sistema</label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={settings.adminChatId}
+                  onChange={e => setSettingsState(s => ({ ...s, adminChatId: e.target.value }))}
+                  placeholder="ex.: 123456789"
+                  className="flex-1 min-w-0 bg-bg border border-border rounded-md text-sm text-white px-3 py-2 outline-none focus:border-blue-500 mono"
+                />
+                <button
+                  type="button"
+                  onClick={handleDetectAdmin}
+                  disabled={detectingAdmin || (!settings.hasToken && !tokenInput.trim())}
+                  className="flex items-center gap-1.5 px-3 py-2 bg-surface border border-border rounded-md text-xs text-gray-300 hover:text-white transition-all disabled:opacity-50 whitespace-nowrap flex-shrink-0"
+                >
+                  {detectingAdmin ? <Loader2 size={13} className="animate-spin" /> : <Search size={13} />}
+                  Detectar
+                </button>
+              </div>
+              <p className="text-[11px] text-faint mt-1.5 leading-relaxed">
+                Avisos como "o cron parou" vão só para esta conversa, nunca para o grupo. Abra o bot no Telegram em conversa privada, envie <span className="mono">/start</span> e use Detectar. Vazio = alertas do sistema desligados.
+              </p>
+              {adminMsg && (
+                <span className={`flex items-center gap-1.5 mt-1.5 text-[11px] ${adminMsg.ok ? 'text-emerald-400' : 'text-yellow-400'}`}>
+                  {adminMsg.ok ? <CheckCircle2 size={11} /> : <XCircle size={11} />} {adminMsg.text}
                 </span>
               )}
             </div>

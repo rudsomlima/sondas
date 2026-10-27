@@ -30,6 +30,7 @@ interface R2AnyFile {
 interface R2Metrics {
   configured: boolean
   missing?: string[]
+  local?: boolean
   error?: string
   period?: { start: string; end: string }
   operations?: { classA: number; classB: number; unclassified: number }
@@ -227,7 +228,10 @@ export default function R2Panel() {
 
         {metricsError && <p className="text-xs text-red-300">{metricsError}</p>}
         {metricsLoading && !metrics && <p className="text-xs text-gray-500">Consultando métricas do Cloudflare…</p>}
-        {metrics && !metrics.configured && (
+        {metrics?.local && (
+          <p className="text-xs text-gray-400">Os dados estão no disco do servidor (sem R2): não há cobrança nem métricas da Cloudflare. A lista de arquivos abaixo vem do disco.</p>
+        )}
+        {metrics && !metrics.configured && !metrics.local && (
           <div className="text-xs text-gray-400 space-y-1">
             <p>Para consultar os dados reais, configure no servidor <code>CLOUDFLARE_API_TOKEN</code> com permissão somente de leitura <b>Account Analytics: Read</b>.</p>
             <p>O token fica apenas no servidor. O ID da conta já vem de <code>R2_ACCOUNT_ID</code>.</p>

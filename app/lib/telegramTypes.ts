@@ -8,6 +8,10 @@
 export interface TelegramSettings {
   botToken: string
   chatId: string
+  // Conversa PRIVADA do dono com o bot, só pra alertas do sistema (cron
+  // parado, falha de armazenamento). Nunca o grupo: o grupo recebe só avisos
+  // de sonda. Ausente = alertas do sistema desligados.
+  adminChatId?: string
   enabled: boolean
   notifyLaunch: boolean
   notifyLanding: boolean

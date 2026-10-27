@@ -18,7 +18,7 @@ Não há suíte de testes configurada. Nenhuma variável de ambiente é obrigat�
 
 O app roda numa VM Oracle (`https://sondas-pu7iol.duckdns.org`), não mais na
 Vercel; o firmware do receptor fala `http://136.248.78.217` direto (sem relay).
-Publicar: `./deploy/oracle/deploy.sh`. O `/api/poll` diário roda pelo cron da
+Publicar: `./deploy/oracle/deploy.sh`. O `/api/poll` roda a cada 2 min pelo cron da
 VM (o `vercel.json` não tem mais `crons`). Guia completo, armadilhas e
 diagnóstico: `docs/ORACLE.md`.
 
@@ -79,7 +79,7 @@ Desligada, em TODO o app:
 
    Internamente faz scraping de `https://weather.uwyo.edu/cgi-bin/sounding?region=samer&TYPE=TEXT:LIST...&STNM={station}` (HTML) e parseia com regex linhas `Observations at HHZ DD Mon YYYY` em registros `Launch` (data/hora convertidas pra GMT-3). As respostas da Wyoming são instáveis (400/403/500 intermitentes sem relação com a requisição em si), então as buscas tentam de novo até 3x com backoff e timeout de 15s.
 
-2. **`app/lib/blobStore.ts`** — persiste um arquivo JSON por estação+ano no Cloudflare R2 (API compatível com S3 via `@aws-sdk/client-s3`). A estação padrão (82599) mantém o caminho legado `sondas/history-{year}.json`; qualquer outra estação usa `sondas/history-{station}-{year}.json`. Vira no-op completo se `R2_ACCOUNT_ID`/`R2_ACCESS_KEY_ID`/`R2_SECRET_ACCESS_KEY` não estiverem definidos (ex.: dev local sem `.env.local`), então a API continua funcionando localmente, só sem persistência entre requisições. Exige `R2_BUCKET_NAME` (padrão `"sondas"`).
+2. **`app/lib/blobStore.ts`** — **desde 2026-10-25 em produção os dados ficam em DISCO** (`DATA_DIR=/data`, volume `~/sondas-app/data` da VM): com `DATA_DIR` definido, `getClient()` devolve o `LocalStoreClient` (`app/lib/localStore.ts`), que imita Get/Put/List/Delete/Head do S3 (ETag, `If-Match`/`If-None-Match`, gravação atômica, trava por chave em `globalThis`), então nenhuma função do blobStore muda e as chaves seguem `sondas/...`. Backup diário em `~/backups` (`deploy/oracle/backup.sh`); ver `docs/ORACLE.md`. O texto abaixo descreve o formato e vale igual nos dois backends. Persiste um arquivo JSON por estação+ano no Cloudflare R2 (API compatível com S3 via `@aws-sdk/client-s3`). A estação padrão (82599) mantém o caminho legado `sondas/history-{year}.json`; qualquer outra estação usa `sondas/history-{station}-{year}.json`. Vira no-op completo se `R2_ACCOUNT_ID`/`R2_ACCESS_KEY_ID`/`R2_SECRET_ACCESS_KEY` não estiverem definidos (ex.: dev local sem `.env.local`), então a API continua funcionando localmente, só sem persistência entre requisições. Exige `R2_BUCKET_NAME` (padrão `"sondas"`).
    O painel de tráfego e estimativa de cobrança usa `CLOUDFLARE_API_TOKEN` com permissão `Account Analytics: Read` junto ao `R2_ACCOUNT_ID`; o token fica no servidor e consulta o GraphQL Analytics API.
 
 3. **Cache em memória** dentro de `route.ts` (Map `memoryCache`, por instância do servidor, chaveado por estação+ano+mês): mês atual cacheado por 1 hora, meses passados cacheados permanentemente pela vida da instância. Fica na frente do Blob store e da busca à Wyoming.
@@ -320,6 +320,17 @@ diagnostica nada — o ângulo separa problema de antena de problema de sinal.
   callsign do usuário aparece entre os receptores; guarda o relatório já
   calculado em `localStorage` (`sondas_reception_v1_*`), porque os quadros
   crus de um voo passam de 1 MB.
+- **Outra estação e extras (Fase 6)**: clicar no callsign de uma estação em "Quem
+  ouviu esta sonda" refaz a MESMA `analyzeReception` com a posição e o callsign
+  dela no lugar dos seus (posição vinda de `receiver-stations`; os quadros do voo
+  ficam em memória no hook, `framesRef`, sem rebaixar). O relatório traz
+  `extras` (`StationExtras`): alcance por azimute (8 setores), maior distância,
+  altitude/distância do último quadro e RSSI por faixa de distância com a curva
+  de espaço livre ANCORADA na primeira faixa (só o desvio entre faixas diz algo;
+  o ganho da antena é desconhecido). Ranking e evolução do alcance
+  (`ReceptionExtras.tsx`) vêm do registro de sondas e dos relatórios guardados em
+  `localStorage` (`sondas_reception_v2_*`; o prefixo subiu de v1 quando `extras`
+  foi criado). A altura da antena de outra estação é desconhecida (usa `alt`).
 - ⚠️ **O SondeHub deduplica telemetria**: cada quadro fica atribuído a um único
   uploader (quem subiu primeiro), então contagem de quadros por estação é um
   limite inferior e não serve pra comparar recepção. Por isso a cobertura é
@@ -368,12 +379,20 @@ desenhadas), `sondas/telegram-notify-state.json` (dedup de lançamento/pouso) e
 `sondas/telegram-receiver-alert-state.json` (nível offline/bateria por
 receptor). O token nunca volta pro navegador.
 
-- **Lançamento/pouso sem app aberto**: o cron `/api/poll` (cron-job.org, ~1
+- **Lançamento/pouso sem app aberto**: o cron `/api/poll` (cron da VM, a cada 2
   min) chama `notifyRecentEvents` em `liveFlightsCache.ts` pra cada estação em
   `watchedStationIds` (padrão: só a 82599). Vale qualquer sonda do feed
   (SondeHub/radiosondy.info) dentro do raio da estação (`stationRadiusKm`,
   padrão 300 km, 10–1000) — não depende de qual receptor a captou. Só eventos
   recentes (lançamento: último sinal < 20 min; pouso: < 3 h).
+- **Lançamento direto do receptor** (`app/lib/receiverHeard.ts`): o firmware,
+  ao decodificar uma sonda NOVA, manda `{prefix, heard:{serial,lat,lon,alt,freq,climb}}`
+  em `/api/receiver-report` (`reportHeard`, `conn-report.cpp`) e o aviso sai em
+  segundos, sem esperar o cron. Mesma regra e mesmo dedup do cron (quem chegar
+  primeiro avisa), só pra estações monitoradas e dentro do raio. O envio ao
+  Telegram NÃO é aguardado (o firmware tem timeout de 2 s). Com WiFi desligado
+  (Silencioso/Pulsado) não sai e o cron cobre. Firmware antigo continua
+  funcionando: sem `heard` nada muda.
 - **Regra única de envio**: `notifyFlightEvent` (`telegramEvents.ts`), usada
   também por `/api/telegram-notify` (detector do navegador,
   `useLaunchLandingWatcher`). O dedup `markNotifiedIfNew` (por sonda+evento,
@@ -502,7 +521,7 @@ completo que qualquer fonte sozinha, e é **ele que completa todos os mapas**.
   por 30 dias enquanto não for FOUND. O navegador ainda limita uma tentativa
   por serial a cada 10 min (`serialsNeedingEnrichment`).
 - **Sem ninguém com o app aberto**: `/api/poll` (pingado a cada poucos
-  minutos pelo cron-job.org) roda `backfillRegistry(4)` em paralelo com o
+  minutos pelo cron da VM) roda `backfillRegistry(4)` em paralelo com o
   cache de voos ao vivo — semeia o registro com as posições de lançamento do
   YearStore que ele ainda não tem e enriquece as 4 sondas mais recentes que
   ainda valem consulta. O cache de voos serve aos alertas durante a execução,
