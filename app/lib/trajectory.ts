@@ -5,7 +5,7 @@
  * Duas fontes, mesma saída:
  *  - fetchLiveTrajectory: GET api.v2.sondehub.org/sonde/{serial} — voo de
  *    hoje/recente, frames de alta resolução (CORS aberto, fetch do browser).
- *  - fetchArchiveTrajectory: bucket S3 sondehub-history (voos antigos; o
+ *  - fetchArchiveTrajectory: bucket S3 history.sondehub.org (voos antigos; o
  *    arquivo pode estar resumido a poucos frames — a análise tolera).
  */
 import { fetchSondeHubArchiveFramesForDay, SondeHubFrame } from './sondehub'
