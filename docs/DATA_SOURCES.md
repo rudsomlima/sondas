@@ -29,7 +29,7 @@ Base: `https://api.v2.sondehub.org`.
   área, sem baixar telemetria mundial;
 - `GET /sonde/{serial}`: trajetória recente de uma sonda conhecida;
 - `GET /sites`: catálogo, coordenadas, tipos e agenda conhecida dos locais;
-- bucket `https://sondehub-history.s3.amazonaws.com/launchsites/...`: arquivo
+- bucket `https://history.sondehub.org/launchsites/...`: arquivo
   histórico por estação/data/serial.
 
 O endpoint de telemetria global em alta resolução é rate-limited e a própria

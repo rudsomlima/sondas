@@ -451,7 +451,7 @@ export async function fetchSondeHubApproxLaunches(
     .filter(l => l.year === year && l.month === month)
 }
 
-const HISTORY_BUCKET = 'https://sondehub-history.s3.amazonaws.com'
+const HISTORY_BUCKET = 'https://history.sondehub.org'
 
 interface S3ListResult {
   keys: string[]
