@@ -157,39 +157,58 @@ export function RangeHistory({ history }: { history: ReportHistoryPoint[] }) {
   )
 }
 
-/** Estações que mais aparecem como receptoras no registro de sondas do app. */
-export function StationRanking({ ranking }: { ranking: RankedStation[] }) {
-  if (ranking.length === 0) return null
+const fmtDur = (a?: string, b?: string) => {
+  const ms = a && b ? new Date(b).getTime() - new Date(a).getTime() : NaN
+  if (!Number.isFinite(ms) || ms < 0) return '—'
+  const m = Math.round(ms / 60000)
+  return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, '0')}`
+}
+
+/** Estações que ouviram UMA sonda (a escolhida acima), segundo o registro do app. */
+export function StationRanking({ ranking, serial }: { ranking: RankedStation[]; serial: string | null }) {
+  if (!serial) return null
+  const top = ranking[0]?.frames ?? 0
   return (
     <div className="mb-4">
-      <p className="label-xs mb-2">Ranking das estações no registro do app</p>
-      <div className="overflow-x-auto">
-        <table className="w-full text-xs">
-          <thead>
-            <tr className="text-faint border-b border-border">
-              <th className="text-left font-normal pb-1.5 pr-3 w-8">#</th>
-              <th className="text-left font-normal pb-1.5 pr-3">estação</th>
-              <th className="text-right font-normal pb-1.5 pr-3">sondas ouvidas</th>
-              <th className="text-right font-normal pb-1.5">quadros (mín.)</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-border">
-            {ranking.map((r, i) => (
-              <tr key={r.callsign} className={r.mine ? 'text-white' : 'text-gray-400'}>
-                <td className="py-1.5 pr-3 mono">{i + 1}</td>
-                <td className="py-1.5 pr-3 mono whitespace-nowrap">
-                  {r.callsign}{r.mine && <span className="ml-1.5 badge badge-info text-[9px] px-1.5 py-0">você</span>}
-                </td>
-                <td className="py-1.5 pr-3 mono text-right">{r.flights.toLocaleString('pt-BR')}</td>
-                <td className="py-1.5 mono text-right">{r.frames.toLocaleString('pt-BR')}</td>
+      <p className="label-xs mb-2">Ranking das estações nesta sonda <span className="mono text-gray-300">{serial}</span></p>
+      {ranking.length === 0 ? (
+        <p className="text-xs text-faint">O registro do app ainda não tem quem ouviu esta sonda (ela entra no registro depois de alguns minutos de voo).</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-faint border-b border-border">
+                <th className="text-left font-normal pb-1.5 pr-3 w-8">#</th>
+                <th className="text-left font-normal pb-1.5 pr-3">estação</th>
+                <th className="text-left font-normal pb-1.5 pr-3 w-1/3">quadros (mín.)</th>
+                <th className="text-right font-normal pb-1.5">tempo ouvindo</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {ranking.map((r, i) => (
+                <tr key={r.callsign} className={r.mine ? 'text-white' : 'text-gray-400'}>
+                  <td className="py-1.5 pr-3 mono">{i + 1}</td>
+                  <td className="py-1.5 pr-3 mono whitespace-nowrap">
+                    {r.callsign}{r.mine && <span className="ml-1.5 badge badge-info text-[9px] px-1.5 py-0">você</span>}
+                  </td>
+                  <td className="py-1.5 pr-3">
+                    <div className="flex items-center gap-2">
+                      <div className="flex-1 h-1.5 rounded bg-border overflow-hidden min-w-[40px]">
+                        <div className={`h-full rounded ${r.mine ? 'bg-blue-400' : 'bg-gray-500'}`} style={{ width: `${top ? Math.max(2, (100 * r.frames) / top) : 0}%` }} />
+                      </div>
+                      <span className="mono w-14 text-right">{r.frames.toLocaleString('pt-BR')}</span>
+                    </div>
+                  </td>
+                  <td className="py-1.5 mono text-right whitespace-nowrap">{fmtDur(r.firstAt, r.lastAt)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
       <p className="text-[11px] text-faint mt-2 leading-relaxed">
-        Conta em quantas sondas do registro (este ano e o anterior) a estação aparece como receptora. Como o
-        SondeHub guarda cada quadro uma vez só, &quot;quadros&quot; é um mínimo e o ranking favorece quem sobe mais rápido.
+        Quem ouviu esta sonda e quantos quadros ficaram atribuídos a cada estação. O SondeHub guarda cada quadro
+        uma vez só, então &quot;quadros&quot; é um mínimo e favorece quem pegou o sinal primeiro.
       </p>
     </div>
   )

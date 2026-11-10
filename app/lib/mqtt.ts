@@ -81,6 +81,19 @@ export interface RdzNet {
   localIp?: string
   publicIp?: string
   rssi?: number // dBm do WiFi
+  sh?: RdzShUpload // envio ao SondeHub (só se sondehub.active no firmware)
+}
+
+// Situação do envio de telemetria ao SondeHub (ShStats em conn-sondehub.h):
+// o receptor pode estar decodificando e mesmo assim não enviando — é isto que
+// diferencia os dois casos.
+export interface RdzShUpload {
+  state?: number   // 4 = conectado e ocioso; 0 = desconectado; 8 = em erro/retentativa
+  queued?: number  // quadros esperando para sair
+  sent?: number    // confirmados pelo servidor desde o boot
+  dropped?: number // perdidos (fila cheia, memória, recusados)
+  failed?: number  // envios que falharam e foram refeitos
+  okAgeS?: number  // segundos desde o último ACK 2xx; ausente = nunca desde o boot
 }
 
 const IP_RE = /^[0-9a-fA-F.:]{3,45}$/
@@ -91,6 +104,14 @@ export function parseRdzNet(payload: string): RdzNet | null {
   if (typeof raw !== 'object' || raw === null) return null
   const ip = (v: unknown) => typeof v === 'string' && IP_RE.test(v) && v !== '0.0.0.0' ? v : undefined
   const net: RdzNet = { localIp: ip(raw.ip), publicIp: ip(raw.pub), rssi: num(raw.rssi) }
+  const sh = raw.sh as Record<string, unknown> | undefined
+  if (sh && typeof sh === 'object') {
+    const age = num(sh.ok_age)
+    net.sh = {
+      state: num(sh.st), queued: num(sh.q), sent: num(sh.sent), dropped: num(sh.drop), failed: num(sh.fail),
+      okAgeS: age != null && age >= 0 ? age : undefined,
+    }
+  }
   return net.localIp || net.publicIp ? net : null
 }
 

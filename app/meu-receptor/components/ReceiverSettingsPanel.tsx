@@ -4,6 +4,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { RadioTower, LocateFixed, Pencil, Trash2, Plus, KeyRound, Bell, BatteryMedium, ExternalLink, Wifi } from 'lucide-react'
 import type { AppSettings, KnownReceiver } from '@/app/lib/settings'
 import type { RdzConfig } from '@/app/lib/rdzConfig'
+import type { RdzShUpload } from '@/app/lib/mqtt'
 import { receiverKey } from '@/app/lib/receiverKey'
 import { PanelTitle } from './Collapsible'
 
@@ -27,12 +28,13 @@ interface ReceiverSummary {
   localIp: string | null
   publicIp: string | null
   rssi: number | null
+  sh: RdzShUpload | null // envio ao SondeHub (fila, enviados, perdidos)
 }
 
 // Estado ao vivo (bateria, visto há, IPs) muda a cada reporte; firmware quase
 // nunca — por isso o firmware é relido bem mais devagar.
 const LIVE_POLL_MS = 20_000
-const EMPTY_SUMMARY: ReceiverSummary = { lastSeenAt: null, battV: null, fwVersion: null, localIp: null, publicIp: null, rssi: null }
+const EMPTY_SUMMARY: ReceiverSummary = { lastSeenAt: null, battV: null, fwVersion: null, localIp: null, publicIp: null, rssi: null, sh: null }
 const FW_POLL_MS = 5 * 60_000
 
 // Resumo de cada receptor da lista (visto há, bateria, firmware, IPs),
@@ -65,6 +67,7 @@ function useReceiverSummaries(receivers: KnownReceiver[]): Record<string, Receiv
               localIp: s?.net?.localIp ?? null,
               publicIp: s?.net?.publicIp ?? null,
               rssi: s?.net?.rssi ?? null,
+              sh: s?.net?.sh ?? null,
             })
           })
           .catch(() => {})
@@ -256,6 +259,28 @@ export default function ReceiverSettingsPanel({
                           <span className="flex items-center gap-0.5 mono"><BatteryMedium size={10} /> {sum.battV.toFixed(2)} V</span>
                         )}
                       </div>
+                      {sum?.sh && (() => {
+                        // Receptor decodificando mas sem enviar: fila crescendo, ou sem ACK há minutos.
+                        const sh = sum.sh
+                        const stuck = (sh.queued ?? 0) > 0 && (sh.okAgeS == null || sh.okAgeS > 120)
+                        return (
+                          <div className={`text-[10px] flex items-center gap-2 flex-wrap mt-0.5 ${stuck ? 'text-amber-400' : 'text-faint'}`}
+                            title="Envio de telemetria ao SondeHub, como o receptor reportou na última mensagem">
+                            <span>SondeHub:</span>
+                            <span className="mono">{stuck ? 'sem confirmar' : 'ok'}</span>
+                            <span className="mono">fila {sh.queued ?? 0}</span>
+                            <span className="mono">enviados {sh.sent ?? 0}</span>
+                            {(sh.dropped ?? 0) > 0 && <span className="mono">perdidos {sh.dropped}</span>}
+                            {(sh.failed ?? 0) > 0 && <span className="mono">falhas {sh.failed}</span>}
+                            <span className="mono">{sh.okAgeS != null ? `último ACK há ${sh.okAgeS}s` : 'sem ACK desde o boot'}</span>
+                          </div>
+                        )
+                      })()}
+                      {isActive && typeof firmwareConfig?.['qrg.list'] === 'string' && firmwareConfig['qrg.list'] && (
+                        <div className="text-[10px] text-faint mt-0.5" title="Canais que o rádio percorre (qrg.txt + importados do SondeHub). + ativo, − desligado">
+                          Canais: <span className="mono">{String(firmwareConfig['qrg.list']).split(';').map(c => c.trim().replace(/^(\S+) (\S) ([+-])\s*(.*)$/, (_m, f, t, a, l) => `${f} MHz ${t === '4' ? 'RS41' : t}${a === '-' ? ' (off)' : ''}${l ? ' ' + l : ''}`)).join(' · ')}</span>
+                        </div>
+                      )}
                       {(sum?.localIp || sum?.publicIp) && (
                         <div className="text-[10px] text-faint flex items-center gap-2 flex-wrap mt-0.5">
                           {sum.localIp && (

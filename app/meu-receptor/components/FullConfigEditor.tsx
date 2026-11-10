@@ -6,6 +6,8 @@ import type { RdzConfig } from '@/app/lib/rdzConfig'
 import { isSensitiveKey, parseConfigTxt, configTxtFromChanges } from '@/app/lib/rdzConfig'
 import { RDZ_CONFIG_SECTIONS } from '@/app/lib/rdzConfigSections'
 import PowerConfigEditor from './PowerConfigEditor'
+import QrgListEditor from './QrgListEditor'
+import { parseQrgList, validateQrg } from '@/app/lib/qrg'
 import MultiFreqConfigEditor from './MultiFreqConfigEditor'
 import OledScreenEditor from './OledScreenEditor'
 import { PanelTitle } from './Collapsible'
@@ -94,6 +96,11 @@ export default function FullConfigEditor({ config, loadedAt, applying, applyErro
   }
 
   const hasChanges = Object.keys(changes).length > 0
+  // Lista de canais com erro (frequência fora da faixa, repetida, sem nenhuma ativa…): não deixa aplicar.
+  const qrgErrors = 'qrg.list' in changes
+    ? validateQrg(parseQrgList(changes['qrg.list']), parseInt(config['maxsonde'] ?? '', 10) || 0)
+    : []
+  const blocked = qrgErrors.length > 0
   const needsRebootChanged = RDZ_CONFIG_SECTIONS
     .flatMap(s => s.fields)
     .some(f => f.needsReboot && f.key in changes)
@@ -138,6 +145,19 @@ export default function FullConfigEditor({ config, loadedAt, applying, applyErro
         efeito de verdade depois que o receptor reiniciar (é uma estimativa nossa — o firmware
         não expõe essa informação por campo).
       </p>
+
+      {'qrg.list' in config && (
+        <details open className="mb-2 group">
+          <summary className="cursor-pointer select-none text-xs font-medium text-white py-2 px-1 hover:text-blue-400 transition-colors">
+            Canais (frequências)
+            <span className="text-faint font-normal"> · lista do qrg.txt</span>
+            {'qrg.list' in changes && <span className="text-amber-400 font-normal"> · alterada</span>}
+          </summary>
+          <div className="pl-1 pb-2">
+            <QrgListEditor config={config} changes={changes} setField={setField} />
+          </div>
+        </details>
+      )}
 
       {RDZ_CONFIG_SECTIONS.map(section => {
         const present = section.fields.filter(f => f.key in config)
@@ -224,7 +244,7 @@ export default function FullConfigEditor({ config, loadedAt, applying, applyErro
       <div className="mt-4 pt-4 border-t border-border flex flex-wrap items-center gap-2">
         <button
           onClick={() => onApply(changes, 'live')}
-          disabled={!hasChanges || applying}
+          disabled={!hasChanges || applying || blocked}
           className="flex items-center gap-2 px-4 py-2 bg-blue-600 rounded-md text-sm text-white hover:bg-blue-700 transition-all disabled:opacity-50"
         >
           {applying ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
@@ -232,13 +252,16 @@ export default function FullConfigEditor({ config, loadedAt, applying, applyErro
         </button>
         <button
           onClick={() => onApply(changes, 'reboot')}
-          disabled={!hasChanges || applying}
+          disabled={!hasChanges || applying || blocked}
           className="flex items-center gap-2 px-4 py-2 bg-surface border border-border rounded-md text-sm text-white hover:border-border-strong transition-all disabled:opacity-50"
           title="Grava a mudança e reinicia o receptor em seguida — necessário pros campos marcados 'reinício'"
         >
           <RotateCw size={14} />
           Aplicar e reiniciar
         </button>
+        {blocked && (
+          <span className="text-[11px] text-red-400">Corrija a lista de canais para poder aplicar.</span>
+        )}
         {needsRebootChanged && (
           <span className="text-[11px] text-amber-400">
             Algum campo alterado costuma precisar de reinício pra valer de verdade.

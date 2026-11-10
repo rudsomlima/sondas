@@ -10,6 +10,8 @@ import {
 import { getSettings, setSettings, DEFAULT_POWER_ESTIMATE, type PowerEstimateSettings } from '@/app/lib/settings'
 import { nowGMT3 } from '@/app/lib/types'
 import { POWER_COLORS } from '@/app/lib/powerColors'
+import { parseQrgList } from '@/app/lib/qrg'
+import PulseCycleChart from './PulseCycleChart'
 
 interface PowerConfigEditorProps {
   config: RdzConfig
@@ -154,7 +156,12 @@ export default function PowerConfigEditor({ config, changes, setField }: PowerCo
   }
 
   const segments = planDaySegments(plan)
-  const est = estimateConsumption(plan, estimate)
+  // Canais ativos de verdade (lista que o aparelho reportou) no lugar do número da calibração manual,
+  // pra o ciclo do Pulsado e a estimativa de consumo refletirem o que o rádio realmente percorre.
+  const activeChannels = parseQrgList(config['qrg.list']).filter(c => c.active).length
+  const estEff: PowerEstimateSettings = activeChannels > 0 ? { ...estimate, channels: activeChannels } : estimate
+  const est = estimateConsumption(plan, estEff)
+  const pulsePending = Object.keys(changes).some(k => k.startsWith('power.pulse_') || k === 'power.lvl_idle' || k === 'power.lvl_wait')
   const preset = matchPreset(plan)
   const usesPulse = plan.lvlIdle === LVL_PULSE || (plan.waitMin > 0 && plan.lvlWait === LVL_PULSE)
   const nowMin = (() => { const d = nowGMT3(); return d.getUTCHours() * 60 + d.getUTCMinutes() })()
@@ -381,7 +388,7 @@ export default function PowerConfigEditor({ config, changes, setField }: PowerCo
             <Row label="Pulsado: um ciclo a cada" hint={`Nota a sonda em até ~${plan.pulseEverySec} s depois que ela começa a transmitir (o voo dura horas — o atraso não perde nada)`}>
               <NumberInput value={val('power.pulse_every')} onChange={v => setField('power.pulse_every', v)} suffix="s" />
             </Row>
-            <Row label="Escutando cada frequência" hint={`Com ${estimate.channels} frequência(s) ativa(s): rádio ligado ~${Math.round(est.pulseDutyPct)}% do ciclo. A RS41 transmite 1x/s — 5 s costuma bastar`}>
+            <Row label="Escutando cada frequência" hint={`Com ${estEff.channels} frequência(s) ativa(s): rádio ligado ~${Math.round(est.pulseDutyPct)}% do ciclo. A RS41 transmite 1x/s — 5 s costuma bastar`}>
               <NumberInput value={val('power.pulse_listen')} onChange={v => setField('power.pulse_listen', v)} suffix="s" />
             </Row>
             {est.pulseDutyPct >= 100 && (
@@ -400,6 +407,9 @@ export default function PowerConfigEditor({ config, changes, setField }: PowerCo
           </>
         )}
       </Card>
+
+      {/* ── Ciclo do Pulsado, em escala ── */}
+      <PulseCycleChart plan={plan} est={est} estimate={estEff} qrgList={config['qrg.list']} pending={pulsePending} />
 
       {/* ── Voo ── */}
       <Card title="Voo e pouso">

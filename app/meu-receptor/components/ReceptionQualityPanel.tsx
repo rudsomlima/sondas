@@ -306,7 +306,7 @@ export default function ReceptionQualityPanel({ callsign, rxLat, rxLon, rxAltM }
             />
           )}
           <RangeHistory history={q.history} />
-          <StationRanking ranking={q.ranking} />
+          <StationRanking ranking={q.ranking} serial={q.serial} />
         </>
       )}
     </div>

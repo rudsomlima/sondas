@@ -34,11 +34,19 @@ export interface RecentFlight {
   heardByMe?: boolean // o registro diz que o seu callsign participou da recepção
 }
 
+/** Uma estação no ranking de UMA sonda (ver `ranking` abaixo). */
 export interface RankedStation {
   callsign: string
-  flights: number    // sondas do registro em que a estação aparece como receptora
-  frames: number     // soma dos quadros atribuídos a ela (mínimo, por causa da deduplicação)
+  frames: number      // quadros atribuídos a ela nesta sonda (mínimo, por causa da deduplicação)
+  firstAt?: string    // primeiro/último quadro ouvido por ela (ISO)
+  lastAt?: string
   mine: boolean
+}
+
+/** Quem ouviu cada sonda, como está no registro do app. */
+interface RegistryReceivers {
+  serial: string
+  receivers: { callsign: string; frames: number; firstAt?: string; lastAt?: string }[]
 }
 
 export interface ReportHistoryPoint {
@@ -100,7 +108,7 @@ export function useReceptionQuality(
   const [viewReport, setViewReport] = useState<ReceptionReport | null>(null)
   const [viewLoading, setViewLoading] = useState(false)
   const [viewError, setViewError] = useState<string | null>(null)
-  const [ranking, setRanking] = useState<RankedStation[]>([])
+  const [registry, setRegistry] = useState<RegistryReceivers[]>([])
   const [history, setHistory] = useState<ReportHistoryPoint[]>([])
   const stations = useReceiverStations()
 
@@ -118,18 +126,12 @@ export function useReceptionQuality(
         fetchRegistryYear(year),
         fetchRegistryYear(year - 1),
       ])
-      const tally = new Map<string, RankedStation>()
-      for (const r of [...reg, ...regPrev]) {
-        for (const x of r.receivers ?? []) {
-          const key = x.callsign.trim().toUpperCase()
-          if (!key) continue
-          const cur = tally.get(key) ?? { callsign: x.callsign.trim(), flights: 0, frames: 0, mine: key === me }
-          cur.flights++
-          cur.frames += x.frames ?? 0
-          tally.set(key, cur)
-        }
-      }
-      setRanking([...tally.values()].sort((a, b) => b.flights - a.flights || b.frames - a.frames).slice(0, 15))
+      setRegistry([...reg, ...regPrev].map(r => ({
+        serial: r.serial,
+        receivers: (r.receivers ?? []).filter(x => x.callsign?.trim()).map(x => ({
+          callsign: x.callsign.trim(), frames: x.frames ?? 0, firstAt: x.firstAt, lastAt: x.lastAt,
+        })),
+      })))
       const bySerial = new Map<string, RecentFlight>()
       for (const s of nearby) {
         const t = new Date(s.datetime).getTime()
@@ -226,6 +228,19 @@ export function useReceptionQuality(
   useEffect(() => { if (enabled) setHistory(readHistory(callsign)) }, [enabled, callsign])
 
   const selected = useMemo(() => flights.find(f => f.serial === serial) ?? null, [flights, serial])
+
+  // Ranking POR SONDA: as estações que ouviram a sonda escolhida, da que mais
+  // quadros pegou para a que menos pegou. (Antes era uma soma de todas as sondas
+  // do ano, que favorecia quem estava ligada há mais tempo e não dizia nada
+  // sobre uma sonda específica.)
+  const ranking = useMemo<RankedStation[]>(() => {
+    if (!serial) return []
+    const me = callsign.trim().toUpperCase()
+    const rec = registry.find(r => r.serial === serial)
+    return (rec?.receivers ?? [])
+      .map(x => ({ callsign: x.callsign, frames: x.frames, firstAt: x.firstAt, lastAt: x.lastAt, mine: x.callsign.toUpperCase() === me }))
+      .sort((a, b) => b.frames - a.frames)
+  }, [registry, serial, callsign])
 
   return {
     enabled, flights, listLoading, listError, serial, setSerial, selected,
